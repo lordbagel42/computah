@@ -1,0 +1,8 @@
+{
+  "runtime": "node",
+  "hooks": {
+    "get-manifest": "node --input-type=module -e \"import fs from 'node:fs'; process.stdout.write(fs.readFileSync('manifest.json', 'utf8'))\" --",
+    "start": "node --import tsx src/main.ts"
+  },
+  "config": { "sdk-managed-connection-enabled": true }
+}

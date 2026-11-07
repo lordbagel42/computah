@@ -11,6 +11,11 @@ Interaction and Workers to discover on demand; it is not a giant system prompt.
   tenant-scoped Rivet/Pi core with native durable Task delegation and compaction;
   runnable authenticated REST ingress with safe text projection and persistent
   official legacy Codex authentication support.
+- **Slack prototype implemented:** [Socket Mode adapter](slack.md) with durable
+  inbox-before-ACK, trusted existing core identity, private replies and explicit
+  uncertain-send handling. Local synthetic checks are not a live Slack install
+  or roundtrip. Dedicated app installation and private authorization are complete;
+  runtime activation and a real message roundtrip remain separate.
 - **Imported reference material:** faithful [Figma-to-Rune plan](../ui/IMPORT-PLAN.md),
   recovered standalone Canvas study and source reference images. These are not an
   implemented native app or finished Figma port.
@@ -25,9 +30,10 @@ Interaction and Workers to discover on demand; it is not a giant system prompt.
   Also verified rejected missing/forged tokens, idempotency/conflict handling,
   and Docker restart retaining exact public history and the old signed handle.
   The scoped Docker/Alchemy reconciler is enabled; see [operations](operations.md)
-  for the observed revision/image. Subsequent automatic main rollout is not yet
-  verified. No public ingress is provisioned.
-- **Planned:** Composio/Gmail onboarding, Slack, adaptive recall/Dreaming,
+  for the observed revision/image. Enabled-timer automatic main rollout and
+  post-rollout real follow-up/history preservation also passed. No public ingress
+  is provisioned.
+- **Planned:** Composio/Gmail onboarding, live Slack setup, adaptive recall/Dreaming,
   selected json-render native migration, Reflection and DEBUGSHARE/repair.
 - **Not claimed:** live integration-account onboarding, tested imported laptop
   build, production tenant isolation, exactly-once effects, forced OAuth refresh,
@@ -47,6 +53,8 @@ Interaction and Workers to discover on demand; it is not a giant system prompt.
   main-only integration and evidence requirements.
 - [nest-bagel operations](operations.md): persistent storage, private credentials,
   serialized Alchemy delivery, readiness receipts and recovery limitations.
+- [Slack prototype](slack.md): dedicated app setup, private identity mapping,
+  durable inbox, DM routing, delivery uncertainty and local/live verification.
 - [Native tools and credential boundaries](tools.md): first-class browser/search,
   Gmail/Executor, runtime secret references and later provider decisions.
 

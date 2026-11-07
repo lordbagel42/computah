@@ -1,0 +1,23 @@
+{
+  "name": "@computah/slack",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --ignoreConfig --noEmit --strict --skipLibCheck --types node --target es2023 --module nodenext src/*.ts test/*.ts",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@slack/socket-mode": "3.1.1",
+    "@slack/web-api": "8.3.0",
+    "tsx": "4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "typescript": "7.0.2"
+  }
+}

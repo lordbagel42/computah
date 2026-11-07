@@ -153,3 +153,14 @@ starting another registry. Aggregate counts confirmed three actual Task calls,
 three Worker user messages and three Worker replies. No raw entries or secrets
 were emitted and no inspector was exposed; real delegation is not inferred only
 from the public text answer.
+
+The enabled timer subsequently selected exact main revision
+`eb70afe9c4126fb54583d5a4c83e7d013b915bf9` without manual service start:
+trigger 22:54:31Z, container created 22:54:37.373944327Z and observed-ready receipt
+22:55:12.484Z. Running revision/image matched immutable image
+`sha256:776b60b2fcd64014e67eb0f00f71d56b5f6e11d2fa44d20b4f5469b04e4e2eb4`;
+reconciliation exited successfully and readiness reported real mode. A protected
+real follow-up after rollout preserved earlier public history and the old signed
+handle and recalled prior context. Installed updater, units and chat client
+byte-matched published source. This does not establish host-reboot or backup
+restore recovery. Slack activation is separate; see [its setup guide](slack.md).

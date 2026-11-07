@@ -1,8 +1,12 @@
 # Computah
 
-A durable, extensible personal agent. **Phase 0 is under construction**, not a
-deployed service. Rune is the selected experimental frontend; Pi may run locally
-on the user's laptop independently of the Rivet backend experiment.
+A durable, extensible personal agent. The protected Rivet/Pi backend is running
+on nest-bagel, with real-provider delegation, restart recovery and automatic
+main rollout verified; see [operations](docs/operations.md) for evidence and limits.
+The [Slack prototype](docs/slack.md) is locally checked; its dedicated app is
+installed, but the adapter is not yet live-activated or roundtrip-verified.
+Rune is the selected native frontend; the local-Pi study remains a separate
+experiment, not the product app's backend.
 
 Start with the [living self-spec](docs/index.md). Agents should read that index at
 startup and reread relevant pages when working on a subsystem. Docs describe

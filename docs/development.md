@@ -61,8 +61,8 @@ and project safe results rather than exposing raw Pi entries.
 Authenticated HTTP delegation/restart is locally exercised with a faux model.
 The deployment owner separately verified real legacy Codex HTTP requests,
 follow-up and Docker restart retaining exact history and the old signed handle;
-see `operations.md` for the observed revision/image and limits. Subsequent
-automatic main rollout remains unverified. The full streaming wire adapter is
+see `operations.md` for the observed revision/image and limits. Enabled-timer
+automatic main rollout and retained real follow-up also passed. The full streaming wire adapter is
 not implemented; health alone cannot establish provider operation.
 
 ## Evidence and recovery
