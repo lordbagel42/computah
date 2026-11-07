@@ -146,3 +146,10 @@ After a container restart with the same persistent data, exact public history
 and the old signed result handle survived, and a real follow-up recalled the
 earlier canary. These checks do not prove forced OAuth refresh, backup restore,
 arbitrary interrupted-task recovery or cross-version storage compatibility.
+
+A separate private in-container client inspected the configured principal's
+Interaction and primary Worker histories through the existing registry, without
+starting another registry. Aggregate counts confirmed three actual Task calls,
+three Worker user messages and three Worker replies. No raw entries or secrets
+were emitted and no inspector was exposed; real delegation is not inferred only
+from the public text answer.

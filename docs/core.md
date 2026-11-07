@@ -212,8 +212,9 @@ generation has been exercised in this orb. The deployment owner separately
 reported a real official legacy Codex canary on nest-bagel returning the exact
 synthetic requested text with `stopReason: stop`, followed by real protected HTTP
 requests/follow-up and Docker restart preserving exact history and the old signed
-handle. Public text projection does not by itself prove the real model called
-Task; direct local-only tool evidence is being checked separately. See
+handle. A separate private, in-container scoped history check confirmed three
+actual Task calls and three primary Worker user/assistant reply pairs. Only
+aggregate counts were emitted; no entries, secrets or inspector were exposed. See
 `operations.md` for the observed revision/image and recovery limits.
 
 The shared wire contract is owned by `packages/contracts`; core IDs and raw Pi

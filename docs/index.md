@@ -20,7 +20,9 @@ Interaction and Workers to discover on demand; it is not a giant system prompt.
 - **Unimplemented seam:** full streaming core-to-wire AgentAdapter;
   raw Pi histories are not the renderer-neutral protocol.
 - **Live-verified on nest-bagel:** protected real-mode legacy Codex HTTP requests
-  and follow-up, rejected missing/forged tokens, idempotency/conflict handling,
+  and follow-up; private actor-history inspection confirmed three actual Task
+  calls and three primary Worker request/reply pairs without publishing entries.
+  Also verified rejected missing/forged tokens, idempotency/conflict handling,
   and Docker restart retaining exact public history and the old signed handle.
   The scoped Docker/Alchemy reconciler is enabled; see [operations](operations.md)
   for the observed revision/image. Subsequent automatic main rollout is not yet
