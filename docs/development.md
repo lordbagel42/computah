@@ -59,9 +59,11 @@ is stable server-only key material. `COMPUTAH_MODE` defaults to `real` with requ
 or messages. Authenticate into configured bindings, check current grants per call
 and project safe results rather than exposing raw Pi entries.
 Authenticated HTTP delegation/restart is locally exercised with a faux model.
-The deployment owner separately verified an official legacy Codex model canary;
-deployed HTTP delegation/restart remains a separate milestone. The full streaming
-wire adapter is not implemented; health alone cannot establish provider operation.
+The deployment owner separately verified real legacy Codex HTTP requests,
+follow-up and Docker restart retaining exact history and the old signed handle;
+see `operations.md` for the observed revision/image and limits. Subsequent
+automatic main rollout remains unverified. The full streaming wire adapter is
+not implemented; health alone cannot establish provider operation.
 
 ## Evidence and recovery
 

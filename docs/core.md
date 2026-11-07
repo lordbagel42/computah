@@ -210,8 +210,11 @@ bootstrap also passed without credentials. The selected Codex catalog is checked
 at startup, not invented dynamically. No actual OAuth refresh or real provider
 generation has been exercised in this orb. The deployment owner separately
 reported a real official legacy Codex canary on nest-bagel returning the exact
-synthetic requested text with `stopReason: stop`. Authenticated deployed
-HTTP → Interaction → Worker → restart remains a separate live milestone.
+synthetic requested text with `stopReason: stop`, followed by real protected HTTP
+requests/follow-up and Docker restart preserving exact history and the old signed
+handle. Public text projection does not by itself prove the real model called
+Task; direct local-only tool evidence is being checked separately. See
+`operations.md` for the observed revision/image and recovery limits.
 
 The shared wire contract is owned by `packages/contracts`; core IDs and raw Pi
 entries are server-only. The full adapter still needs atomic snapshots, contiguous

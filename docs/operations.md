@@ -74,6 +74,14 @@ curl --fail http://127.0.0.1:8787/healthz
 sudo docker inspect computah-backend --format '{{.State.Status}} {{.Image}}'
 ```
 
+Install `deploy/chat.mjs` as `/usr/local/lib/computah/chat` (root-owned, mode 0755)
+for a host-only command-line client. On nest-bagel, run
+`sudo /usr/local/lib/computah/chat 'Hello Computah; ask your primary Worker to introduce itself.'`
+and then run it again with a follow-up. It uses the first configured operator
+binding from the protected env file, without putting the bearer in argv/output.
+It does not provide public ingress or a Rune UI. Ctrl-C/disconnection does not
+mean the durable turn was cancelled; the accepted handle remains queryable.
+
 Keep `COMPUTAH_CONNECTION_SECRET` and ingress token bindings stable. To rotate
 runtime/provider configuration, edit the protected file on the host and reconcile;
 the provider detects the changed contents and replaces the container. A change
@@ -125,3 +133,16 @@ Delivery evidence must distinguish bootstrap/faux from real-provider mode. A
 healthy deterministic service is useful operational validation, not a usable live
 agent milestone. Record an authenticated Interaction → Worker answer and a
 persisted follow-up using the chosen provider before calling that milestone done.
+
+## Observed host verification
+
+On 2026-11-07, main revision `facaddddcbe1729a2d788a3d32da32659e247f7a`
+ran on nest-bagel as immutable image
+`sha256:b0839d2171987340ff71d8eac38953872c1398b9a74117a6e4a5b1c77f907977`.
+Readiness reported real mode, and authenticated HTTP requests completed through
+legacy `openai-codex/gpt-6.1-sol`. Missing/forged bearers were rejected; duplicate
+submissions retained their handle and conflicting payloads were rejected.
+After a container restart with the same persistent data, exact public history
+and the old signed result handle survived, and a real follow-up recalled the
+earlier canary. These checks do not prove forced OAuth refresh, backup restore,
+arbitrary interrupted-task recovery or cross-version storage compatibility.

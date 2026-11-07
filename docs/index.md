@@ -19,13 +19,17 @@ Interaction and Workers to discover on demand; it is not a giant system prompt.
   independent blank-layout recovery. This is not Pi Durable or the Figma port.
 - **Unimplemented seam:** full streaming core-to-wire AgentAdapter;
   raw Pi histories are not the renderer-neutral protocol.
-- **Deployment scaffolding:** scoped Docker/Alchemy main-following updater and
-  [nest-bagel operations](operations.md). Timer activation and healthy runtime
-  evidence remain separate from publishing these files.
+- **Live-verified on nest-bagel:** protected real-mode legacy Codex HTTP requests
+  and follow-up, rejected missing/forged tokens, idempotency/conflict handling,
+  and Docker restart retaining exact public history and the old signed handle.
+  The scoped Docker/Alchemy reconciler is enabled; see [operations](operations.md)
+  for the observed revision/image. Subsequent automatic main rollout is not yet
+  verified. No public ingress is provisioned.
 - **Planned:** Composio/Gmail onboarding, Slack, adaptive recall/Dreaming,
-  configurable generative UI, Reflection, DEBUGSHARE/repair and deployment.
-- **Not claimed:** deployed service, live account connection, tested laptop build,
-  production tenant isolation, exactly-once effects or automatic runtime doc loading.
+  selected json-render native migration, Reflection and DEBUGSHARE/repair.
+- **Not claimed:** live integration-account onboarding, tested imported laptop
+  build, production tenant isolation, exactly-once effects, forced OAuth refresh,
+  backup restore or automatic runtime doc loading.
 
 ## Read by responsibility
 
