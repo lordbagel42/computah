@@ -1,0 +1,76 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Do not interrupt an active storage/container replacement. Older pending runs
+# may be cancelled by GitHub; cancelled is not an observed deployment success.
+concurrency:
+  group: computah-nest-bagel
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy / nest-bagel
+    # Bootstrap hold: remove the literal false only after route/key/trust setup.
+    # No repository variable can accidentally enable this setup packet.
+    if: ${{ false && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: nest-bagel
+    timeout-minutes: 40
+    steps:
+      - name: Deploy exact commit and await observed health
+        env:
+          DEPLOY_HOST: ${{ vars.COMPUTAH_DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.COMPUTAH_DEPLOY_PORT || '22' }}
+          DEPLOY_USER: ${{ vars.COMPUTAH_DEPLOY_USER || 'bagel' }}
+          DEPLOY_HOST_KEY: ${{ vars.COMPUTAH_DEPLOY_HOST_KEY }}
+          DEPLOY_KEY: ${{ secrets.COMPUTAH_DEPLOY_KEY }}
+          REVISION: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ -z "$DEPLOY_HOST" || -z "$DEPLOY_HOST_KEY" || -z "$DEPLOY_KEY" ]]; then
+            echo "Deployment route/key is not configured; no deployment was requested" >&2
+            exit 1
+          fi
+          key="$RUNNER_TEMP/computah-deploy-key"
+          hosts="$RUNNER_TEMP/computah-known-hosts"
+          trap 'rm -f "$key" "$hosts"' EXIT
+          printf '%s\n' "$DEPLOY_KEY" > "$key"
+          unset DEPLOY_KEY
+          printf 'computah-deploy %s\n' "$DEPLOY_HOST_KEY" > "$hosts"
+          # HostKeyAlias makes the same pin work with DNS, IPv4 or IPv6 routes.
+          ssh -T -p "$DEPLOY_PORT" -i "$key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=20 \
+            -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$hosts" \
+            -o HostKeyAlias=computah-deploy \
+            "$DEPLOY_USER@$DEPLOY_HOST" "/usr/local/lib/computah/deploy-request $REVISION" \
+            > "$RUNNER_TEMP/computah-deployment.json"
+          node -e '
+            const fs = require("node:fs");
+            try {
+              const path = process.argv[1];
+              const r = JSON.parse(fs.readFileSync(path, "utf8"));
+              if (r.revision !== process.env.REVISION || !/^sha256:[a-f0-9]{64}$/.test(r.image) ||
+                  !Number.isFinite(Date.parse(r.observedHealthyAt))) throw new Error();
+              const safe = JSON.stringify({ revision:r.revision, image:r.image, observedHealthyAt:r.observedHealthyAt });
+              fs.writeFileSync(path, safe);
+              console.log(safe);
+            } catch {
+              console.error("No matching deployment receipt returned");
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/computah-deployment.json"
+          {
+            echo '### Observed deployment'
+            echo '```json'
+            cat "$RUNNER_TEMP/computah-deployment.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

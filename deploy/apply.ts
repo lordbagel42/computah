@@ -26,7 +26,7 @@ for (let attempt = 0; attempt < 60; attempt++) {
     const response = await fetch("http://127.0.0.1:8787/healthz", {
       signal: AbortSignal.timeout(2000),
     });
-    if (response.ok) {
+    if (response.ok && (await response.json()).ready === true) {
       ready = true;
       break;
     }
@@ -38,11 +38,19 @@ for (let attempt = 0; attempt < 60; attempt++) {
 if (!ready) throw new Error("Computah failed readiness; no rollback attempted");
 const observed = execFileSync(
   "docker",
-  ["inspect", "computah-backend", "--format", "{{.Image}}"],
+  [
+    "inspect",
+    "computah-backend",
+    "--format",
+    '{{.State.Running}}|{{.Image}}|{{index .Config.Labels "computah.revision"}}',
+  ],
   { encoding: "utf8" },
 ).trim();
-if (observed !== process.env.COMPUTAH_IMAGE) {
-  throw new Error("Running image differs from the selected immutable artifact");
+if (
+  observed !==
+  `true|${process.env.COMPUTAH_IMAGE}|${process.env.COMPUTAH_REVISION}`
+) {
+  throw new Error("Running image/revision differs from the selected artifact");
 }
 const receipt = {
   revision: process.env.COMPUTAH_REVISION,

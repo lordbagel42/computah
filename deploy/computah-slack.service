@@ -1,0 +1,36 @@
+[Unit]
+Description=Computah private Slack Socket Mode adapter
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=computah-slack
+Group=computah-slack
+WorkingDirectory=/opt/computah-slack/current/apps/slack
+EnvironmentFile=/etc/computah-slack/runtime.env
+ExecStart=/opt/computah/toolchain/bin/node --import tsx src/main.ts
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=60
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/computah-slack
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=256M
+TasksMax=128
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

@@ -3,9 +3,22 @@
 set -euo pipefail
 umask 077
 export PATH=/opt/computah/toolchain/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+if (( $# > 1 )) || { (( $# == 1 )) && [[ ! $1 =~ ^[a-f0-9]{40}$ ]]; }; then
+  echo "Expected no argument or a full trusted main revision" >&2
+  exit 64
+fi
+requested=${1:-}
 exec 9>/run/lock/computah-deploy.lock
-flock -n 9 || exit 0
-test ! -e /etc/computah/HOLD || exit 0
+if [[ -n $requested ]]; then
+  flock -w 900 9 || exit 75
+else
+  flock -n 9 || exit 0
+fi
+if test -e /etc/computah/HOLD; then
+  [[ -z $requested ]] && exit 0
+  echo "Deployment is held; requested revision was not deployed" >&2
+  exit 75
+fi
 test -f /etc/computah/runtime.env
 test -f /etc/computah/provider.env
 if ! test -d /var/lib/computah/data || ! setpriv --reuid=1000 --regid=1000 --clear-groups \
@@ -19,7 +32,25 @@ if test ! -d "$repo"; then
   git clone --bare https://github.com/lordbagel42/computah.git "$repo"
 fi
 git --git-dir="$repo" fetch --no-tags origin main
-revision=$(git --git-dir="$repo" rev-parse FETCH_HEAD)
+head=$(git --git-dir="$repo" rev-parse FETCH_HEAD)
+revision=${requested:-$head}
+if ! git --git-dir="$repo" merge-base --is-ancestor "$revision" "$head"; then
+  echo "Requested revision is not trusted main history" >&2
+  exit 65
+fi
+high_water=/var/lib/computah/activation-revision
+previous=
+if test -f "$high_water"; then
+  previous=$(cat "$high_water")
+elif test -f /var/lib/computah/active.json; then
+  previous=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("/var/lib/computah/active.json", "utf8")).revision)')
+fi
+if [[ -n $previous && $previous != "$revision" ]]; then
+  if ! git --git-dir="$repo" merge-base --is-ancestor "$previous" "$revision"; then
+    echo "Requested revision predates or diverges from storage activation; refusing" >&2
+    exit 65
+  fi
+fi
 export COMPUTAH_REVISION=$revision
 release=/var/lib/computah/releases/$revision
 if test ! -f "$release/.complete"; then
@@ -40,4 +71,13 @@ COMPUTAH_IMAGE=$(cat "$image_id")
 export COMPUTAH_IMAGE
 cd "$release/deploy"
 pnpm install --frozen-lockfile
+# Persist before apply can open/migrate storage, even if readiness later fails.
+# This is not the healthy receipt, and is never rewound automatically.
+printf '%s\n' "$revision" > "$high_water.tmp"
+mv "$high_water.tmp" "$high_water"
 pnpm apply
+# Capture the request's receipt before releasing the shared lock. A later
+# deployment may replace active.json before the SSH wrapper resumes.
+if [[ -n ${COMPUTAH_DEPLOY_RECEIPT:-} ]]; then
+  cp /var/lib/computah/active.json "$COMPUTAH_DEPLOY_RECEIPT"
+fi

@@ -44,6 +44,97 @@ root/Docker access is privileged. Never publish full `docker inspect`, env-file
 contents, auth stores, application histories or runtime logs. Infisical integration
 is not implemented; these protected local files are the bootstrap boundary.
 
+## Actions handover and exact revisions
+
+The `Deploy / nest-bagel` job runs only for main push heads or manual main runs,
+using the `nest-bagel` environment. The environment allows only branch `main`,
+with no reviewers or wait timer. It supplies deployment history and scoped
+configuration, not resource provisioning or serialization. Native Actions job
+checks need no custom GitHub App or Checks API credential.
+
+The setup workflow has a literal `false` in its job condition, so repository or
+environment variables cannot accidentally enable it. A skipped check is not
+deployment evidence. After route/key/host-trust setup, publish the reviewed change
+removing that literal hold while retaining the main-only condition, then observe
+actual hosted deployment health before retiring the timer.
+
+Set environment variables `COMPUTAH_DEPLOY_HOST`, `COMPUTAH_DEPLOY_PORT`,
+`COMPUTAH_DEPLOY_USER` and `COMPUTAH_DEPLOY_HOST_KEY` (bare public host key), and
+private environment secret `COMPUTAH_DEPLOY_KEY`. Host identity is pinned; the
+workflow never accepts an unverified host key at runtime. The selected owner
+route is `bagel@hackclub.app:22`. The direct container IPv6 route was tested from
+hosted Ubuntu and failed because that runner had no IPv6 route, not because of
+SSH authentication. The existing GitHub integration returned 403 for secret
+provisioning; never export Amp credentials as a workaround.
+
+The Nest gateway currently authenticates onward as root using its own bastion
+key. Its documented source does not implement per-key forced-command options;
+do not claim `restrict,command=...` in a dashboard key is enforced. The dedicated
+deployment key is not an existing owner/Amp/June key. The separately installed
+direct `computah-deploy` SSH account does enforce `restrict` and
+`deploy/ssh-command.sh`, with sudo limited to the validated root-owned entry point.
+Those direct-account restrictions do not automatically carry through the gateway.
+Gateway activation must verify the actual selected route and record this boundary.
+
+The deployment owner verified owner-approved host pinning and an exact-revision
+request over the IPv4 gateway at `c48de6d`, with a fresh matching healthy receipt.
+That connection authenticated onward as root, not the restricted direct account.
+This is route evidence, not hosted Actions or deployment-only authority evidence.
+
+Install the reviewed `deploy-request.sh` and `ssh-command.sh` under
+`/usr/local/lib/computah`, and the validated `computah-deploy.sudoers` under
+`/etc/sudoers.d` only for the dedicated direct account. The entry point accepts
+one full SHA, invokes `reconcile.sh` with that exact revision and emits only a
+fresh matching public receipt. Build/apply diagnostics remain root-only under
+`/var/log/computah-deploy`; retention is manual. No-argument reconciliation still
+follows main for the timer/recovery path. Explicit requests wait on the shared
+lock, fail under HOLD, reject commits outside main history and refuse to replace
+a newer or divergent storage activation. Root-only `activation-revision` advances
+under the lock before apply can open/migrate storage, even if readiness fails;
+it is separate from `active.json`, the healthy receipt. Both timer and explicit
+requests honor this high-water mark. The request-specific healthy receipt is
+captured before releasing the lock, so a later deployment cannot substitute its
+receipt. A busy/held request is not green success.
+
+Success requires `ready:true` plus a running container with the exact image and
+revision label, followed by a fresh matching receipt. It is not merely build or
+Alchemy command success. Keep the timer enabled until an actual hosted Actions
+run succeeds end to end, then disable it with
+`systemctl disable --now computah-reconcile.timer`; do not run two normal delivery
+owners after handover. The installed updater and Docker supervision remain.
+Superseded pending Actions runs may be cancelled, never labelled deployed. One
+push checks its head SHA; intermediate commits in a multi-commit push do not each
+get a separate deployment job. No automatic cross-version storage rollback.
+
+## Separate Slack process
+
+`computah-slack.service` runs one unprivileged outbound-only Socket Mode process,
+not another core. Its root-owned source release lives at
+`/opt/computah-slack/releases/<sha>` with a `current` symlink. Prepare a release
+from canonical main with root/workspace/lock manifests and `apps/slack`, frozen
+production dependencies and direct Node entry; verify source/dependencies are
+readable by the service account. If pnpm's root store hardlinks retain private
+file modes, copy the release's dependency tree to separate inodes before making
+that copy readable; never chmod the shared store or unrelated releases.
+
+Protected `/etc/computah-slack/runtime.env` supplies dedicated new-app tokens,
+loopback core URL and paths. `/etc/computah-slack/bindings.json` is service-owned
+0600 and maps the verified Slack owner/workspace to the **existing** core principal,
+not a new actor. The private `/var/lib/computah-slack` directory is 0700 and holds
+the SQLite/WAL delivery journal. No core/provider data directory is mounted or
+given to this service. The unit allows 60 seconds to stop, uses the installed
+Node 24 toolchain, restarts on failure and exposes no HTTP listener. Readiness is
+the sanitized `computah.slack.ready` log after Slack installation, trusted viewer
+and Socket Mode checks, not merely systemd's active state.
+
+Source publication does not automatically switch this independently installed
+Slack release yet. Update the root-owned `current` link to a tested canonical
+release and restart the single unit; verify ready/stopped logs, retained journal
+and a real owner follow-up. Never run two replicas or blindly replay uncertain
+external posts. The one requested identification DM was handled separately; do
+not resend it on service startup. See [Slack setup](slack.md) for its exact wire,
+enterprise-install guard and unresolved delivery semantics.
+
 ## Launch and inspect
 
 After the tested source and server entry point are on main, install the provided

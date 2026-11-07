@@ -1,0 +1,2 @@
+# Root-owned deployment entry point validates its only argument and logs privately.
+computah-deploy ALL=(root) NOPASSWD: /usr/local/lib/computah/deploy-request *
