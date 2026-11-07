@@ -1,0 +1,111 @@
+import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { createClient } from "rivetkit/client";
+import { principalKey, readConfig } from "./config.js";
+import { createCore } from "./core.js";
+import { closeHttp, createHttpServer } from "./http.js";
+import { smokeProvider } from "./smoke-model.js";
+
+async function main() {
+  const config = readConfig(process.env);
+  // PORT belongs to this ingress, not to native child services.
+  delete process.env.PORT;
+  // Explicit mount only: never discover another application's local credentials.
+  // The official runtime owns file locking, refresh and provider-specific auth.
+  const models =
+    config.mode === "real"
+      ? await ModelRuntime.create({
+          ...(config.authFile
+            ? { authPath: config.authFile }
+            : { credentials: new InMemoryCredentialStore() }),
+          modelsPath: null,
+        })
+      : undefined;
+  if (models) {
+    for (const [provider, key] of Object.entries(config.apiKeys ?? {}))
+      await models.setRuntimeApiKey(provider, key);
+    const slash = config.model.indexOf("/");
+    if (
+      !models.getModel(
+        config.model.slice(0, slash),
+        config.model.slice(slash + 1),
+      )
+    )
+      throw new Error("COMPUTAH_MODEL is not in the pinned provider catalog");
+  }
+  const byScope = new Map(
+    [...config.principals.values()].map((principal) => [
+      principalKey(principal),
+      principal,
+    ]),
+  );
+  const core = createCore({
+    connectionSecret: config.secret,
+    authorize: (scope, capability) =>
+      byScope.get(principalKey(scope))?.capabilities.includes(capability) ??
+      false,
+    model: config.model,
+    models,
+    apiKeys:
+      config.mode === "faux"
+        ? { "computah-smoke": "explicit-smoke" }
+        : undefined,
+    providers:
+      config.mode === "faux"
+        ? { "computah-smoke": smokeProvider() }
+        : undefined,
+  });
+  let client: ReturnType<typeof createClient<typeof core.registry>> | undefined;
+  let http: ReturnType<typeof createHttpServer> | undefined;
+  let stopping = false;
+  const stop = async () => {
+    if (stopping) return;
+    stopping = true;
+    if (http?.listening) await closeHttp(http);
+    await core.close();
+    await client?.dispose();
+  };
+  const shutdown = () => {
+    void stop().then(
+      () => process.exit(0),
+      () => process.exit(1),
+    );
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
+  // Host owns signal shutdown: stop public admissions before draining the actors.
+  core.registry.config.shutdown = { disableSignalHandlers: true };
+  try {
+    await core.registry.startAndWait();
+    const runtime = core.registry.parseConfig();
+    client = createClient<typeof core.registry>({
+      endpoint: runtime.endpoint,
+      namespace: runtime.namespace,
+      token: runtime.token,
+      poolName: runtime.node.poolName,
+      headers: runtime.headers,
+    });
+    http = createHttpServer({ ...config, bind: core.attach(client) });
+    await new Promise<void>((resolve, reject) => {
+      http?.once("error", reject);
+      http?.listen(config.port, "0.0.0.0", resolve);
+    });
+    console.info(`computah.http.ready mode=${config.mode} port=${config.port}`);
+  } catch (error) {
+    await stop();
+    throw error;
+  }
+}
+
+void main().catch((error: unknown) => {
+  // Config errors contain names only. Never print SDK errors, env values or stack traces.
+  const message =
+    error instanceof Error &&
+    /^(COMPUTAH_|PORT |Invalid COMPUTAH_|Duplicate auth |Missing provider credential)/.test(
+      error.message,
+    )
+      ? error.message
+      : "Runtime startup failed";
+  console.error(`computah.start.failed ${message}`);
+  process.exit(1);
+});

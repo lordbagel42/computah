@@ -8,14 +8,16 @@ Interaction and Workers to discover on demand; it is not a giant system prompt.
 
 - **Implemented locally:** workspace scaffolding; renderer-neutral Effect Schema
   wire model, deterministic in-memory mock, synthetic JSON fixtures and tests;
-  tenant-scoped Rivet/Pi core with native durable Task delegation and compaction.
+  tenant-scoped Rivet/Pi core with native durable Task delegation and compaction;
+  runnable authenticated REST ingress with safe text projection and persistent
+  official legacy Codex authentication support.
 - **Imported reference material:** faithful [Figma-to-Rune plan](../ui/IMPORT-PLAN.md),
   recovered standalone Canvas study and source reference images. These are not an
   implemented native app or finished Figma port.
 - **Imported experiment:** generic [native Rune frontend](rune-pi.md), with local
   Pi coding-agent subprocess mode, deterministic mock, inert layout registry and
   independent blank-layout recovery. This is not Pi Durable or the Figma port.
-- **Unimplemented seam:** authenticated transport and core-to-wire AgentAdapter;
+- **Unimplemented seam:** full streaming core-to-wire AgentAdapter;
   raw Pi histories are not the renderer-neutral protocol.
 - **Deployment scaffolding:** scoped Docker/Alchemy main-following updater and
   [nest-bagel operations](operations.md). Timer activation and healthy runtime

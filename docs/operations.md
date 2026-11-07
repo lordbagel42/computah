@@ -89,11 +89,14 @@ Run the login interactively on nest-bagel, with the app's persistent provider
 directory as cwd, so `auth.json` is mode 0600 and refresh can write it. The server
 must explicitly load that store; merely creating the file is not authentication.
 
-For an already running container, the official OpenAI/ChatGPT flow is:
+Raygen selected **legacy Codex subscription auth**: Pi's `openai-codex` provider,
+not its newer `openai` login. Set `COMPUTAH_PI_AUTH_FILE=/data/provider/auth.json`
+and choose a `COMPUTAH_MODEL=openai-codex/<model>` from that provider's catalog.
+For an already running container, use the provider-owned legacy login:
 
 ```sh
 sudo docker exec -it computah-backend sh -c \
-  'umask 077; mkdir -p /data/provider; cd /data/provider; node /app/apps/server/node_modules/@earendil-works/pi-ai/dist/cli.js login openai'
+  'umask 077; mkdir -p /data/provider; cd /data/provider; node /app/apps/server/node_modules/@earendil-works/pi-ai/dist/cli.js login openai-codex'
 ```
 
 Complete the official browser prompts privately. Do not paste keys or callback

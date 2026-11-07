@@ -8,7 +8,9 @@ import {
 import type { PiProviderConfig } from "@rivet-dev/pi";
 import { setupTest } from "rivetkit/test";
 import { afterAll, expect, test } from "vitest";
+import { readConfig } from "../src/config.js";
 import { type Capability, createCore, type Scope } from "../src/core.js";
+import { closeHttp, createHttpServer } from "../src/http.js";
 
 const alice = { tenantId: "tenant-one", userId: "alice", agentId: "default" };
 const bob = { tenantId: "tenant-one", userId: "bob", agentId: "default" };
@@ -73,6 +75,7 @@ const provider: PiProviderConfig = {
               .filter((part) => part.type === "text")
               .map((part) => part.text)
               .join("")}`,
+            { stopReason: "length" },
           )
         : tools.includes("Task")
           ? fauxAssistantMessage(
@@ -164,6 +167,152 @@ test("real Rivet/Pi Task delegation, deduplication, Worker reuse, native compact
   expect(
     requests.every((request) => request.tools.every((name) => name === "Task")),
   ).toBe(true);
+});
+
+test("authenticated HTTP delegates through real actors, reuses the Worker, projects safe text and denies foreign handles", async (context) => {
+  const { client } = await setupTest(context, core.registry);
+  const tokens = [
+    randomBytes(32).toString("hex"),
+    randomBytes(32).toString("hex"),
+  ];
+  const config = readConfig({
+    COMPUTAH_MODE: "faux",
+    COMPUTAH_CONNECTION_SECRET: randomBytes(32).toString("hex"),
+    COMPUTAH_AUTH_JSON: JSON.stringify(
+      [alice, bob].map((scope, index) => ({
+        ...scope,
+        token: tokens[index],
+        capabilities: ["task.send", "history.read", "task.control"],
+      })),
+    ),
+  });
+  const server = createHttpServer({ ...config, bind: core.attach(client) });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("HTTP bind failed");
+  const base = `http://127.0.0.1:${address.port}`;
+  const request = (
+    path: string,
+    token = tokens[0],
+    method = "GET",
+    value?: unknown,
+  ) =>
+    fetch(`${base}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: value === undefined ? undefined : JSON.stringify(value),
+    });
+  try {
+    expect((await fetch(`${base}/healthz`)).status).toBe(200);
+    expect((await fetch(`${base}/v1/history`)).status).toBe(401);
+    expect((await request("/v1/viewer", "wrong")).status).toBe(401);
+    expect(
+      (
+        await request("/v1/submissions", tokens[0], "POST", {
+          text: "attack",
+          clientMutationId: "forged",
+          tenantId: "other",
+        })
+      ).status,
+    ).toBe(400);
+    const before = (
+      await core
+        .attach(client)(alice)
+        .history(core.attach(client)(alice).workerId())
+    ).items;
+    const admitted = await request("/v1/submissions", tokens[0], "POST", {
+      text: "HTTP private canary-879",
+      clientMutationId: "http-first",
+    });
+    expect(admitted.status).toBe(202);
+    const first = await admitted.json();
+    const completed = await request(`/v1/submissions/${first.id}?wait=true`);
+    expect(completed.status).toBe(200);
+    const answer = await completed.json();
+    expect(answer.submission.outcome).toBe("completed");
+    expect(answer.messages[0].blocks[0].text).toContain(
+      "Result: Work: HTTP private canary-879",
+    );
+    expect(Object.keys(answer.messages[0]).sort()).toEqual([
+      "blocks",
+      "createdAt",
+      "id",
+      "revision",
+      "role",
+      "submissionId",
+    ]);
+    expect(
+      (await request(`/v1/submissions/${first.id}`, tokens[1])).status,
+    ).toBe(403);
+    expect(
+      (await request(`/v1/submissions/${first.id}/cancel`, tokens[1], "POST"))
+        .status,
+    ).toBe(403);
+    expect(
+      (await request(`/v1/submissions/${first.id}/cancel`, tokens[0], "POST"))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await (
+          await request(`/v1/submissions/${first.id}/cancel`, tokens[0], "POST")
+        ).json()
+      ).status,
+    ).toBe("too-late");
+    expect(
+      (
+        await (
+          await request("/v1/submissions", tokens[0], "POST", {
+            text: "HTTP private canary-879",
+            clientMutationId: "http-first",
+          })
+        ).json()
+      ).id,
+    ).toBe(first.id);
+    expect(
+      (
+        await request("/v1/submissions", tokens[0], "POST", {
+          text: "changed",
+          clientMutationId: "http-first",
+        })
+      ).status,
+    ).toBe(409);
+    const followup = await (
+      await request("/v1/submissions", tokens[0], "POST", {
+        text: "HTTP followup-421",
+        clientMutationId: "http-second",
+      })
+    ).json();
+    expect(
+      (await request(`/v1/submissions/${followup.id}?wait=true`)).status,
+    ).toBe(200);
+    const after = (
+      await core
+        .attach(client)(alice)
+        .history(core.attach(client)(alice).workerId())
+    ).items;
+    for (const entry of before)
+      expect(after.find((item) => item.id === entry.id)).toEqual(entry);
+    expect(JSON.stringify(after)).toContain("HTTP followup-421");
+    const history = await (await request("/v1/history")).json();
+    expect(JSON.stringify(history)).toContain("HTTP private canary-879");
+    expect(
+      history.messages.every(
+        (message: { role: string; blocks: { kind: string }[] }) =>
+          ["user", "assistant"].includes(message.role) &&
+          message.blocks.every((block) => block.kind === "text"),
+      ),
+    ).toBe(true);
+    expect(
+      JSON.stringify(await (await request("/v1/history", tokens[1])).json()),
+    ).not.toContain("HTTP private canary-879");
+  } finally {
+    await closeHttp(server);
+  }
 });
 
 test("two users cannot read, submit to, or control each other's actor histories", async (context) => {

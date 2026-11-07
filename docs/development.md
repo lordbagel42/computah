@@ -48,10 +48,9 @@ root edits through integration and runnable `apps/server` additions with the cor
 owner; do not create competing server bootstraps. Separate checkouts must fetch
 the exact published source rather than assuming local uncommitted files transfer.
 
-The current core remains a library, not a healthy deployed HTTP backend. The core
-owner is implementing transport/auth/config in `apps/server` and `docs/core.md`;
-the deployment owner must not create a competing server entry. Planned launch
-contract: Node >=22.19, production tsx start script, bind `PORT`, expose
+The runnable core includes transport/auth/config in `apps/server` and
+`docs/core.md`; the deployment owner must not create a competing server entry.
+Launch contract: Node >=22.19, production tsx start script, bind `PORT`, expose
 `GET /healthz` only after real registry startup. `COMPUTAH_AUTH_JSON` is a secret
 array of token-to-tenant/user/agent/capability bindings; `COMPUTAH_CONNECTION_SECRET`
 is stable server-only key material. `COMPUTAH_MODE` defaults to `real` with required
@@ -59,8 +58,10 @@ is stable server-only key material. `COMPUTAH_MODE` defaults to `real` with requ
 `faux` is an explicit smoke mode, never a silent fallback. No values belong in Git
 or messages. Authenticate into configured bindings, check current grants per call
 and project safe results rather than exposing raw Pi entries.
-Public authentication, the wire adapter and real-provider operation remain
-unimplemented until separately exercised; a health-only stub cannot satisfy them.
+Authenticated HTTP delegation/restart is locally exercised with a faux model.
+The deployment owner separately verified an official legacy Codex model canary;
+deployed HTTP delegation/restart remains a separate milestone. The full streaming
+wire adapter is not implemented; health alone cannot establish provider operation.
 
 ## Evidence and recovery
 
