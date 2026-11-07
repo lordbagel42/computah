@@ -1,0 +1,15 @@
+[Unit]
+Description=Reconcile trusted Computah main with Alchemy
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/local/lib/computah/reconcile
+TimeoutStartSec=15min
+Nice=10
+StandardOutput=journal
+StandardError=journal

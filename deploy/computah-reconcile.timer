@@ -1,0 +1,10 @@
+[Unit]
+Description=Follow Computah GitHub main on nest-bagel
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=60s
+Unit=computah-reconcile.service
+
+[Install]
+WantedBy=timers.target

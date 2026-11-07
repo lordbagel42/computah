@@ -1,0 +1,9 @@
+.git
+.amp
+.alchemy
+**/node_modules
+**/target
+**/.env*
+deploy
+ui
+experiments

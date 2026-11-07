@@ -17,6 +17,9 @@ Interaction and Workers to discover on demand; it is not a giant system prompt.
   independent blank-layout recovery. This is not Pi Durable or the Figma port.
 - **Unimplemented seam:** authenticated transport and core-to-wire AgentAdapter;
   raw Pi histories are not the renderer-neutral protocol.
+- **Deployment scaffolding:** scoped Docker/Alchemy main-following updater and
+  [nest-bagel operations](operations.md). Timer activation and healthy runtime
+  evidence remain separate from publishing these files.
 - **Planned:** Composio/Gmail onboarding, Slack, adaptive recall/Dreaming,
   configurable generative UI, Reflection, DEBUGSHARE/repair and deployment.
 - **Not claimed:** deployed service, live account connection, tested laptop build,
@@ -34,6 +37,8 @@ Interaction and Workers to discover on demand; it is not a giant system prompt.
   secret handles and owner self-shipping versus other-user escalation.
 - [Development and recovery](development.md): commands, packet ownership,
   main-only integration and evidence requirements.
+- [nest-bagel operations](operations.md): persistent storage, private credentials,
+  serialized Alchemy delivery, readiness receipts and recovery limitations.
 - [Native tools and credential boundaries](tools.md): first-class browser/search,
   Gmail/Executor, runtime secret references and later provider decisions.
 

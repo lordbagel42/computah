@@ -1,0 +1,21 @@
+{
+  "name": "computah-deploy",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.0.0",
+  "scripts": {
+    "apply": "tsx apply.ts",
+    "typecheck": "tsc --ignoreConfig --types node --noEmit --strict --skipLibCheck --target es2023 --module nodenext *.ts"
+  },
+  "dependencies": {
+    "@alchemy.run/docker": "2.0.0-beta.85",
+    "@effect/platform-node": "4.1.2",
+    "alchemy": "2.0.0-beta.85",
+    "effect": "4.1.2",
+    "tsx": "4.23.15"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}
