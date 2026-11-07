@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "conversationId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "submissionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "clientMutationId": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": ["conversationId", "submissionId", "clientMutationId"],
+  "additionalProperties": false,
+  "$defs": {}
+}

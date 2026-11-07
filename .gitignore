@@ -1,0 +1,8 @@
+node_modules/
+.amp/
+dist/
+target/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo

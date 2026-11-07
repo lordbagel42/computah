@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "number",
+      "enum": [1]
+    },
+    "conversationId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "cursor": {
+      "type": "string"
+    },
+    "messages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "submissionId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "type": "string",
+            "enum": ["user", "assistant", "system"]
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": ["text"]
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["id", "kind", "text"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": ["component"]
+                    },
+                    "component": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "componentVersion": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "props": {
+                      "type": "object"
+                    },
+                    "fallback": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "component",
+                    "componentVersion",
+                    "props",
+                    "fallback"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "submissionId",
+          "role",
+          "createdAt",
+          "revision",
+          "blocks"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "submissions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "clientMutationId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "streaming",
+              "completed",
+              "failed",
+              "cancelled",
+              "unknown"
+            ]
+          }
+        },
+        "required": ["id", "clientMutationId", "outcome"],
+        "additionalProperties": false
+      }
+    },
+    "connections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "provider": {
+            "type": "string",
+            "minLength": 1
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "disconnected",
+              "connecting",
+              "connected",
+              "expired",
+              "error",
+              "unknown"
+            ]
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": ["id", "provider", "displayName", "state", "capabilities"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "version",
+    "conversationId",
+    "revision",
+    "cursor",
+    "messages",
+    "submissions",
+    "connections"
+  ],
+  "additionalProperties": false,
+  "$defs": {}
+}

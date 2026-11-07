@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>June — responsive presence</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #000;
+        color: #f5f5f5;
+      }
+
+      * { box-sizing: border-box; }
+      body { margin: 0; }
+      ::selection { background: #48405b; color: #fff; }
+
+      main {
+        min-height: 100svh;
+        width: min(100%, 640px);
+        margin-inline: auto;
+        padding: 28px 24px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      h1 { margin: 0; font-size: 16px; font-weight: 500; }
+      .stage { flex: 1; display: grid; place-items: center; min-height: 240px; width: 100%; }
+      figure { position: relative; margin: 0; width: min(320px, 100%); }
+      canvas { display: block; width: 320px; max-width: 100%; height: auto; }
+      figcaption { position: absolute; bottom: 18px; width: 100%; background: #000; text-align: center; font-size: 16px; line-height: 24px; }
+      footer { display: grid; justify-items: center; gap: 16px; width: 100%; }
+      p { margin: 0; font-size: 13px; color: #b0b0b0; line-height: 1.5; }
+      .states { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+      .states button { min-width: 0; padding-inline: 16px; }
+      .states button[aria-pressed="true"] { background: #ededed; color: #111; border-color: #ededed; }
+      .states button[aria-pressed="true"]:hover { background: #fff; }
+      .input-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 16px; width: min(420px, 100%); }
+      .input-controls[hidden] { display: none; }
+      .input-controls label { grid-column: 1 / -1; text-align: center; }
+      label { font-size: 13px; color: #b0b0b0; }
+      input[type="range"] { width: 100%; height: 44px; margin: 0; font: inherit; accent-color: #c9b4ee; }
+      .note { max-width: 38ch; text-align: center; }
+
+      button {
+        min-height: 44px;
+        min-width: 140px;
+        padding: 10px 20px;
+        border: 1px solid #383838;
+        border-radius: 999px;
+        background: #111;
+        color: #f5f5f5;
+        font: inherit;
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      button:hover:not(:disabled) { background: #242424; }
+      button:focus-visible, input:focus-visible { outline: 2px solid #c9b4ee; outline-offset: 4px; }
+      button:disabled { cursor: default; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>June</h1>
+      <div class="stage">
+        <figure>
+          <canvas width="640" height="480" role="img" aria-label="June’s neon presence" aria-describedby="activity-label">
+            June is represented by a small cluster of blooming neon dots.
+          </canvas>
+          <figcaption id="activity-label" role="status" aria-live="polite">Idle</figcaption>
+        </figure>
+      </div>
+      <footer>
+        <div class="states" role="group" aria-label="Preview June’s activity">
+          <button type="button" data-state="idle" aria-pressed="true">Idle</button>
+          <button type="button" data-state="listening" aria-pressed="false">Listening</button>
+          <button type="button" data-state="thinking" aria-pressed="false">Thinking</button>
+          <button type="button" data-state="speaking" aria-pressed="false">Speaking</button>
+          <button type="button" data-state="working" aria-pressed="false">Working</button>
+        </div>
+        <div id="input-controls" class="input-controls" hidden>
+          <label for="input-level">Simulated input level</label>
+          <input id="input-level" type="range" min="0" max="1" step="0.01" value="0.4" />
+          <button id="auto-input" type="button" aria-pressed="true">Pause demo input</button>
+        </div>
+        <button id="motion-toggle" type="button">Pause motion</button>
+        <p class="note">Preview only — not connected to June or your microphone.</p>
+      </footer>
+    </main>
+    <script>
+      (() => {
+        const canvas = document.querySelector("canvas");
+        const button = document.querySelector("#motion-toggle");
+        const activityLabel = document.querySelector("#activity-label");
+        const stateButtons = [...document.querySelectorAll("[data-state]")];
+        const inputControls = document.querySelector("#input-controls");
+        const inputLevel = document.querySelector("#input-level");
+        const autoButton = document.querySelector("#auto-input");
+        const context = canvas.getContext("2d");
+        const layer = document.createElement("canvas");
+        const ink = layer.getContext("2d");
+        const density = Math.min(window.devicePixelRatio || 1, 2);
+        const size = 160;
+        const tau = Math.PI * 2;
+        const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+        const states = {
+          idle: { spread: 0.9, wander: 8.5, pace: 1.15, glow: 0.72, input: 0 },
+          listening: { spread: 0.95, wander: 7.5, pace: 1.3, glow: 0.9, input: 0.75 },
+          thinking: { spread: 0.83, wander: 11, pace: 1.7, glow: 0.94, input: 0 },
+          speaking: { spread: 0.96, wander: 9.5, pace: 1.45, glow: 1, input: 1 },
+          working: { spread: 0.95, wander: 11.5, pace: 1.9, glow: 0.96, input: 0 },
+        };
+        const particles = [];
+        const weights = Object.fromEntries(Object.keys(states).map(key => [key, key === "idle" ? 1 : 0]));
+        const pointer = { x: 0, y: 0 };
+        const look = { x: 0, y: 0 };
+        let state = "idle";
+        let clock = 0;
+        let wanderClock = 0;
+        let level = 0;
+        let manualLevel = 0.4;
+        let autoInput = true;
+        let paused = false;
+        let inView = true;
+        let frame = null;
+        let previousTime = null;
+
+        canvas.width = 320 * density;
+        canvas.height = 240 * density;
+        layer.width = size * density;
+        layer.height = size * density;
+        context.setTransform(density, 0, 0, density, 0, 0);
+        ink.setTransform(density, 0, 0, density, 0, 0);
+
+        const grain = (x, y) => {
+          const value = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+          return value - Math.floor(value);
+        };
+
+        // Smooth, aperiodic target changes: no angle advances and no orbit driver.
+        function noise(seed, time) {
+          const cell = Math.floor(time);
+          const fraction = time - cell;
+          const blend = fraction ** 3 * (fraction * (fraction * 6 - 15) + 10);
+          return (grain(seed, cell) * (1 - blend) + grain(seed, cell + 1) * blend) * 2 - 1;
+        }
+
+        const coreCount = 96;
+        const fringeCount = 24;
+        for (let index = 0; index < coreCount + fringeCount; index++) {
+          const angle = index * 2.399963229728653;
+          // Keep the approved core exactly as it was; extend only its outer annulus.
+          const radius = Math.sqrt((index + 0.5) / coreCount) * 21;
+          const homeX = radius * Math.cos(angle);
+          const homeY = radius * Math.sin(angle);
+          particles.push({
+            homeX, homeY, x: homeX * 0.9, y: homeY * 0.9, vx: 0, vy: 0,
+            wanderScale: index < coreCount ? 1 : 0.65,
+            radius: 1.45 + grain(index, 5) * 0.5,
+            seed: index + 100,
+            group: index % 3,
+            orientation: grain(index, 2) * tau,
+            offset: grain(index, 4) * 32,
+            hue: grain(index, 9) * 360,
+          });
+        }
+
+        function parameters() {
+          return Object.fromEntries(Object.keys(states.idle).map(key => [key,
+            Object.entries(states).reduce((sum, [name, values]) => sum + values[key] * weights[name], 0),
+          ]));
+        }
+
+        function demoLevel(time) {
+          const phrase = time % 5.5;
+          return Math.min(1, [[0.6, 0.16], [0.98, 0.12], [1.6, 0.22], [2.1, 0.14], [2.8, 0.25], [3.7, 0.3]]
+            .reduce((sum, [center, width]) => sum + 0.85 * Math.exp(-(((phrase - center) / width) ** 2)), 0));
+        }
+
+        function target(particle, params) {
+          const breath = noise(17, clock * 0.24);
+          const gather = (noise(21, clock * 0.65) + 1) / 2;
+          const work = weights.working * Math.max(0, noise(31 + particle.group, clock * 0.9));
+          const spread = params.spread * (1 + breath * 0.035 + level * params.input * 0.22
+            - weights.thinking * gather * 0.13);
+          const lean = 0.2 + weights.listening * 0.8;
+          const stretchX = 1 + weights.working * 0.1;
+          const stretchY = 1 - weights.working * 0.08;
+          const time = wanderClock + particle.offset;
+          const x = particle.homeX * spread * stretchX
+            + noise(particle.seed, time) * params.wander * particle.wanderScale
+            + weights.thinking * noise(41 + particle.group, wanderClock * 1.4) * 2.5;
+          const y = particle.homeY * spread * stretchY
+            + noise(particle.seed + 200, time) * params.wander * particle.wanderScale
+            + weights.thinking * noise(51 + particle.group, wanderClock * 1.4) * 2.5;
+          // More travel inside the body, not a bigger or more scattered cloud.
+          const confinement = Math.min(1, 24 * spread / Math.max(1, Math.hypot(x / stretchX, y / stretchY)));
+          return {
+            x: x * confinement + look.x * lean + noise(6, clock * 0.2),
+            y: y * confinement + look.y * lean + noise(7, clock * 0.2),
+            radius: particle.radius * (1 + noise(particle.seed + 300, clock * 0.45) * 0.08
+              + level * params.input * 0.18 + work * 0.12),
+            squish: noise(particle.seed + 400, clock * 0.6) * 0.065,
+          };
+        }
+
+        function integrate(dt) {
+          clock += dt;
+          const blend = 1 - Math.exp(-dt / 0.4);
+          for (const key of Object.keys(states)) weights[key] += ((key === state ? 1 : 0) - weights[key]) * blend;
+          const params = parameters();
+          wanderClock += dt * params.pace;
+          const requestedLevel = params.input > 0.01 ? (autoInput ? demoLevel(clock) : manualLevel) : 0;
+          level += (requestedLevel - level) * (1 - Math.exp(-dt / (requestedLevel > level ? 0.075 : 0.2)));
+          look.x += (pointer.x - look.x) * blend;
+          look.y += (pointer.y - look.y) * blend;
+          const spring = 32;
+          const drag = 10;
+          for (const particle of particles) {
+            const destination = target(particle, params);
+            particle.vx += ((destination.x - particle.x) * spring - particle.vx * drag) * dt;
+            particle.vy += ((destination.y - particle.y) * spring - particle.vy * drag) * dt;
+            particle.x += particle.vx * dt;
+            particle.y += particle.vy * dt;
+          }
+        }
+
+        function advance(seconds) {
+          if (!Number.isFinite(seconds) || seconds < 0 || seconds > 30) throw new RangeError("Advance must be between 0 and 30 seconds.");
+          const steps = Math.ceil(seconds * 120);
+          for (let step = 0; step < steps; step++) integrate(seconds / steps);
+        }
+
+        function draw() {
+          const params = parameters();
+          ink.clearRect(0, 0, size, size);
+          for (const particle of particles) {
+            const { radius, squish } = target(particle, params);
+            const hue = particle.hue + noise(particle.seed + 500, clock * 0.12) * 6;
+            const lightness = 56 + params.glow * 5 + level * params.input * 3;
+            ink.fillStyle = `hsl(${hue} 100% ${lightness}% / 0.92)`;
+            ink.beginPath();
+            ink.ellipse(80 + particle.x, 80 + particle.y, radius * (1 + squish), radius * (1 - squish),
+              particle.orientation, 0, tau);
+            ink.fill();
+          }
+          context.fillStyle = "#000";
+          context.fillRect(0, 0, 320, 240);
+          context.save();
+          context.globalCompositeOperation = "lighter";
+          context.globalAlpha = 0.8 * params.glow;
+          context.filter = "blur(12px)";
+          context.drawImage(layer, 80, 40, size, size);
+          context.globalAlpha = 0.9 * params.glow;
+          context.filter = "blur(4px)";
+          context.drawImage(layer, 80, 40, size, size);
+          context.restore();
+          context.drawImage(layer, 80, 40, size, size);
+          if (autoInput && !inputControls.hidden) inputLevel.value = level;
+        }
+
+        function stop() {
+          if (frame !== null) cancelAnimationFrame(frame);
+          frame = null;
+          previousTime = null;
+        }
+
+        function tick(now) {
+          if (previousTime !== null) advance(Math.min((now - previousTime) / 1000, 0.05));
+          previousTime = now;
+          draw();
+          frame = requestAnimationFrame(tick);
+        }
+
+        function sync() {
+          const shouldRun = !paused && !motion.matches && inView && !document.hidden;
+          if (shouldRun && frame === null) {
+            frame = requestAnimationFrame(tick);
+          } else if (!shouldRun) {
+            stop();
+          }
+          button.disabled = motion.matches;
+          button.textContent = motion.matches ? "Reduced motion" : paused ? "Play motion" : "Pause motion";
+          autoButton.textContent = autoInput ? "Pause demo input" : "Play demo input";
+          autoButton.setAttribute("aria-pressed", String(autoInput));
+        }
+
+        function settle() {
+          for (const key of Object.keys(states)) weights[key] = key === state ? 1 : 0;
+          const params = parameters();
+          level = params.input ? (autoInput ? 0.35 : manualLevel) : 0;
+          for (const particle of particles) {
+            const destination = target(particle, params);
+            particle.x = destination.x;
+            particle.y = destination.y;
+            particle.vx = particle.vy = 0;
+          }
+          draw();
+        }
+
+        function setState(next) {
+          if (!Object.hasOwn(states, next)) throw new RangeError("Unknown presence state.");
+          state = next;
+          const selected = stateButtons.find(item => item.dataset.state === next);
+          activityLabel.textContent = selected.textContent;
+          for (const item of stateButtons) item.setAttribute("aria-pressed", String(item === selected));
+          inputControls.hidden = next !== "listening" && next !== "speaking";
+          if (motion.matches || paused) settle();
+          sync();
+        }
+
+        function setLevel(next) {
+          if (!Number.isFinite(next) || next < 0 || next > 1) throw new RangeError("Input level must be between 0 and 1.");
+          manualLevel = next;
+          autoInput = false;
+          inputLevel.value = next;
+          if (motion.matches || paused) settle();
+          sync();
+        }
+
+        for (const item of stateButtons) item.addEventListener("click", () => setState(item.dataset.state));
+        inputLevel.addEventListener("input", () => setLevel(Number(inputLevel.value)));
+        autoButton.addEventListener("click", () => {
+          autoInput = !autoInput;
+          if (!autoInput) manualLevel = level;
+          if (motion.matches || paused) settle();
+          sync();
+        });
+        button.addEventListener("click", () => { paused = !paused; sync(); });
+        motion.addEventListener("change", () => { if (motion.matches) settle(); sync(); });
+        document.addEventListener("visibilitychange", sync);
+        new IntersectionObserver(([entry]) => { inView = entry.isIntersecting; sync(); }).observe(canvas);
+        canvas.addEventListener("pointermove", event => {
+          const bounds = canvas.getBoundingClientRect();
+          pointer.x = Math.max(-1, Math.min(1, (event.clientX - bounds.left) / bounds.width * 2 - 1)) * 4;
+          pointer.y = Math.max(-1, Math.min(1, (event.clientY - bounds.top) / bounds.height * 2 - 1)) * 4;
+        });
+        canvas.addEventListener("pointerleave", () => { pointer.x = pointer.y = 0; });
+
+        // Host inputs are explicit; this prototype never opens a microphone or connection.
+        window.junePresence = Object.freeze({
+          setState, setLevel,
+          get state() { return state; },
+          get running() { return frame !== null; },
+          get level() { return level; },
+          pause() { paused = true; sync(); },
+          play() { paused = false; sync(); },
+          advance(seconds) {
+            paused = true;
+            stop();
+            advance(seconds);
+            draw();
+            sync();
+          },
+          reset() {
+            paused = true;
+            stop();
+            clock = wanderClock = level = 0;
+            look.x = look.y = pointer.x = pointer.y = 0;
+            autoInput = true;
+            manualLevel = 0.4;
+            inputLevel.value = 0.4;
+            setState("idle");
+          },
+        });
+
+        settle();
+        sync();
+      })();
+    </script>
+  </body>
+</html>

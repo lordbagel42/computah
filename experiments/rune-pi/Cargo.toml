@@ -1,0 +1,15 @@
+[package]
+name = "computah-rune-pi"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+rune = { git = "https://github.com/anomalyco/rune", rev = "99c123d6b2127d1226c72dec37919e51019142ff" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.dev]
+debug = 0

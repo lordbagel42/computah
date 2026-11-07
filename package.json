@@ -1,0 +1,21 @@
+{
+  "name": "computah",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.0.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "format": "biome format --write .",
+    "check": "biome check . && pnpm -r --if-present schema:check",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.6",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "7.0.2"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@computah/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./mock": "./src/mock.ts"
+  },
+  "scripts": {
+    "schema": "tsx scripts/export-schema.ts",
+    "schema:check": "tsx scripts/export-schema.ts --check",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "effect": "4.1.2"
+  }
+}

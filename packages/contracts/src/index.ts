@@ -1,0 +1,247 @@
+import { Schema } from "effect";
+
+/** Wire version, not a permission or backend implementation version. */
+export const WireVersion = Schema.Literal(1);
+export const Id = Schema.String.check(Schema.isMinLength(1));
+export const Revision = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isGreaterThanOrEqualTo(0),
+);
+export const Outcome = Schema.Literals([
+  "accepted",
+  "streaming",
+  "completed",
+  "failed",
+  "cancelled",
+  "unknown",
+]);
+export type Outcome = typeof Outcome.Type;
+
+export const Viewer = Schema.Struct({
+  tenantId: Id,
+  userId: Id,
+  agentId: Id,
+  displayName: Schema.String,
+  capabilities: Schema.Array(Schema.String),
+});
+export type Viewer = typeof Viewer.Type;
+
+/** Safe projections only; the host owns origin, credentials and grant bindings. */
+export const AccountHandle = Schema.Struct({
+  id: Id,
+  alias: Schema.String,
+  status: Schema.Literals([
+    "pending",
+    "ready",
+    "needs-human",
+    "unknown",
+    "revoked",
+    "error",
+  ]),
+  capabilities: Schema.Array(Schema.String),
+});
+export type AccountHandle = typeof AccountHandle.Type;
+export const BrowserSessionHandle = Schema.Struct({
+  id: Id,
+  accountId: Schema.NullOr(Id),
+  status: Schema.Literals([
+    "created",
+    "authenticated",
+    "needs-human",
+    "expired",
+    "closed",
+    "unknown",
+  ]),
+  capabilities: Schema.Array(Schema.String),
+});
+export type BrowserSessionHandle = typeof BrowserSessionHandle.Type;
+
+export const TextBlock = Schema.Struct({
+  id: Id,
+  kind: Schema.Literal("text"),
+  text: Schema.String,
+});
+export const ComponentBlock = Schema.Struct({
+  id: Id,
+  kind: Schema.Literal("component"),
+  component: Id,
+  componentVersion: Revision,
+  props: Schema.Record(Schema.String, Schema.Json),
+  fallback: Schema.String,
+});
+export const Block = Schema.Union([TextBlock, ComponentBlock]);
+export const Message = Schema.Struct({
+  id: Id,
+  submissionId: Schema.NullOr(Id),
+  role: Schema.Literals(["user", "assistant", "system"]),
+  createdAt: Schema.String,
+  revision: Revision,
+  blocks: Schema.Array(Block),
+});
+export type Message = typeof Message.Type;
+
+export const Submission = Schema.Struct({
+  id: Id,
+  clientMutationId: Id,
+  outcome: Outcome,
+});
+export type Submission = typeof Submission.Type;
+export const Connection = Schema.Struct({
+  id: Id,
+  provider: Id,
+  displayName: Schema.String,
+  state: Schema.Literals([
+    "disconnected",
+    "connecting",
+    "connected",
+    "expired",
+    "error",
+    "unknown",
+  ]),
+  capabilities: Schema.Array(Schema.String),
+});
+export const Snapshot = Schema.Struct({
+  version: WireVersion,
+  conversationId: Id,
+  revision: Revision,
+  cursor: Schema.String,
+  messages: Schema.Array(Message),
+  submissions: Schema.Array(Submission),
+  connections: Schema.Array(Connection),
+});
+export type Snapshot = typeof Snapshot.Type;
+
+export const SendRequest = Schema.Struct({
+  conversationId: Id,
+  clientMutationId: Id,
+  text: Schema.String,
+});
+export type SendRequest = typeof SendRequest.Type;
+export const CancelRequest = Schema.Struct({
+  conversationId: Id,
+  submissionId: Id,
+  clientMutationId: Id,
+});
+export type CancelRequest = typeof CancelRequest.Type;
+export const CancelResult = Schema.Struct({
+  submissionId: Id,
+  status: Schema.Literals(["requested", "cancelled", "too-late", "unknown"]),
+});
+export type CancelResult = typeof CancelResult.Type;
+
+const eventFields = {
+  version: WireVersion,
+  eventId: Id,
+  cursor: Id,
+  conversationId: Id,
+  revision: Revision,
+};
+export const StreamEvent = Schema.Union([
+  Schema.Struct({
+    ...eventFields,
+    kind: Schema.Literal("submission"),
+    submission: Submission,
+  }),
+  Schema.Struct({
+    ...eventFields,
+    kind: Schema.Literal("message"),
+    message: Message,
+  }),
+  Schema.Struct({
+    ...eventFields,
+    kind: Schema.Literal("resync-required"),
+    reason: Schema.Literals(["expired-cursor", "gap"]),
+  }),
+]);
+export type StreamEvent = typeof StreamEvent.Type;
+
+export const WireError = Schema.Struct({
+  code: Schema.Literals([
+    "not-found",
+    "unauthenticated",
+    "forbidden",
+    "conflict",
+    "invalid-request",
+    "unavailable",
+  ]),
+  message: Schema.String,
+  correlationId: Id,
+  retryable: Schema.Boolean,
+});
+export type WireError = typeof WireError.Type;
+
+/** Context is bound by the host; no method accepts a client-supplied Viewer. */
+export interface AgentAdapter {
+  viewer(): Promise<Viewer>;
+  snapshot(conversationId: string): Promise<Snapshot>;
+  send(request: SendRequest): Promise<Submission>;
+  cancel(request: CancelRequest): Promise<CancelResult>;
+  subscribe(
+    request: { readonly conversationId: string; readonly cursor: string },
+    signal?: AbortSignal,
+  ): AsyncIterable<StreamEvent>;
+}
+
+export function isTerminal(outcome: Outcome): boolean {
+  return (
+    outcome === "completed" || outcome === "failed" || outcome === "cancelled"
+  );
+}
+
+/** Client reducer: full-block updates deliberately avoid ambiguous text deltas. */
+export function applyEvent(snapshot: Snapshot, event: StreamEvent): Snapshot {
+  if (event.conversationId !== snapshot.conversationId)
+    throw new Error("Wrong conversation");
+  if (event.kind === "resync-required") throw new Error("Snapshot required");
+  if (event.revision <= snapshot.revision) return snapshot;
+  if (event.revision !== snapshot.revision + 1)
+    throw new Error("Snapshot required");
+  if (event.kind === "submission") {
+    const current = snapshot.submissions.find(
+      (item) => item.id === event.submission.id,
+    );
+    if (
+      current &&
+      isTerminal(current.outcome) &&
+      current.outcome !== event.submission.outcome
+    ) {
+      throw new Error("Terminal outcome cannot change");
+    }
+    return {
+      ...snapshot,
+      revision: event.revision,
+      cursor: event.cursor,
+      submissions: [
+        ...snapshot.submissions.filter(
+          (item) => item.id !== event.submission.id,
+        ),
+        event.submission,
+      ],
+    };
+  }
+  const current = snapshot.messages.find(
+    (item) => item.id === event.message.id,
+  );
+  const submission = snapshot.submissions.find(
+    (item) => item.id === event.message.submissionId,
+  );
+  if (
+    event.message.role === "assistant" &&
+    submission &&
+    isTerminal(submission.outcome)
+  ) {
+    throw new Error("Message after terminal outcome");
+  }
+  if (current && event.message.revision <= current.revision)
+    throw new Error("Stale message revision");
+  return {
+    ...snapshot,
+    revision: event.revision,
+    cursor: event.cursor,
+    messages: current
+      ? snapshot.messages.map((item) =>
+          item.id === event.message.id ? event.message : item,
+        )
+      : [...snapshot.messages, event.message],
+  };
+}

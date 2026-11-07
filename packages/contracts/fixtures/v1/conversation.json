@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "clock": "2026-01-01T12:00:00.000Z",
+  "timezone": "UTC",
+  "viewer": {
+    "tenantId": "fixture-alpha",
+    "userId": "same-user",
+    "agentId": "june",
+    "displayName": "June",
+    "capabilities": ["message.send", "message.cancel"]
+  },
+  "snapshot": {
+    "version": 1,
+    "conversationId": "fixture-conversation",
+    "revision": 0,
+    "cursor": "fixture-start",
+    "messages": [
+      {
+        "id": "welcome",
+        "submissionId": null,
+        "role": "assistant",
+        "createdAt": "2026-01-01T12:00:00.000Z",
+        "revision": 0,
+        "blocks": [
+          {
+            "id": "card",
+            "kind": "component",
+            "component": "restaurant.card",
+            "componentVersion": 99,
+            "props": {
+              "name": "Synthetic Ramen",
+              "photo": null,
+              "hours": null
+            },
+            "fallback": "Synthetic Ramen — photo and hours unknown. Component version unavailable."
+          }
+        ]
+      }
+    ],
+    "submissions": [],
+    "connections": [
+      {
+        "id": "gmail-placeholder",
+        "provider": "gmail",
+        "displayName": "Not connected",
+        "state": "disconnected",
+        "capabilities": []
+      }
+    ]
+  },
+  "send": {
+    "conversationId": "fixture-conversation",
+    "clientMutationId": "fixture-send-1",
+    "text": "Hello June"
+  },
+  "events": [
+    {
+      "version": 1,
+      "eventId": "e1",
+      "cursor": "c1",
+      "conversationId": "fixture-conversation",
+      "revision": 1,
+      "kind": "submission",
+      "submission": {
+        "id": "s1",
+        "clientMutationId": "fixture-send-1",
+        "outcome": "accepted"
+      }
+    },
+    {
+      "version": 1,
+      "eventId": "e2",
+      "cursor": "c2",
+      "conversationId": "fixture-conversation",
+      "revision": 2,
+      "kind": "message",
+      "message": {
+        "id": "m1",
+        "submissionId": "s1",
+        "role": "user",
+        "createdAt": "2026-01-01T12:00:00.000Z",
+        "revision": 0,
+        "blocks": [{ "id": "b1", "kind": "text", "text": "Hello June" }]
+      }
+    },
+    {
+      "version": 1,
+      "eventId": "e3",
+      "cursor": "c3",
+      "conversationId": "fixture-conversation",
+      "revision": 3,
+      "kind": "message",
+      "message": {
+        "id": "m2",
+        "submissionId": "s1",
+        "role": "assistant",
+        "createdAt": "2026-01-01T12:00:00.000Z",
+        "revision": 0,
+        "blocks": [
+          {
+            "id": "b2",
+            "kind": "text",
+            "text": "Hello from the synthetic fixture."
+          }
+        ]
+      }
+    },
+    {
+      "version": 1,
+      "eventId": "e4",
+      "cursor": "c4",
+      "conversationId": "fixture-conversation",
+      "revision": 4,
+      "kind": "submission",
+      "submission": {
+        "id": "s1",
+        "clientMutationId": "fixture-send-1",
+        "outcome": "completed"
+      }
+    }
+  ]
+}

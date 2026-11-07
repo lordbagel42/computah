@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "theme": {
+    "background": "#000000",
+    "surface": "#191919",
+    "text": "#f5f5f5",
+    "muted": "#b5b5b5",
+    "gap": 16.0,
+    "padding": 24.0,
+    "radius": 16.0
+  },
+  "root": {
+    "kind": "column",
+    "version": 1,
+    "id": "workspace",
+    "children": [
+      {
+        "kind": "text",
+        "version": 1,
+        "id": "welcome",
+        "text": "June · Local playground"
+      },
+      { "kind": "transcript", "version": 1, "id": "conversation" },
+      { "kind": "composer", "version": 1, "id": "composer" }
+    ]
+  }
+}

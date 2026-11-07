@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "enum": [
+        "not-found",
+        "unauthenticated",
+        "forbidden",
+        "conflict",
+        "invalid-request",
+        "unavailable"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "correlationId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "retryable": {
+      "type": "boolean"
+    }
+  },
+  "required": ["code", "message", "correlationId", "retryable"],
+  "additionalProperties": false,
+  "$defs": {}
+}

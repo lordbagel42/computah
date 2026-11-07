@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "clientMutationId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "streaming",
+        "completed",
+        "failed",
+        "cancelled",
+        "unknown"
+      ]
+    }
+  },
+  "required": ["id", "clientMutationId", "outcome"],
+  "additionalProperties": false,
+  "$defs": {}
+}
