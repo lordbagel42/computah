@@ -1,0 +1,21 @@
+name: Route preflight
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/route-preflight.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ipv6-route:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check direct Nest SSH reachability
+        run: |
+          ip -6 route
+          timeout 15 ssh-keyscan -6 -T 10 -p 22 2a01:4f9:3080:3192::1945
