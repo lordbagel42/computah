@@ -1,5 +1,39 @@
 # Native verification receipt
 
+## Runtime acceptance increment
+
+Shared observability consumption base:
+`330af03b29c9da0b386eca54cead2c01b2b65e26`. The actual public
+`startObservability('native')`/`runtimeLog` API is used; no exporter fork or server
+key is included in the native bundle.
+
+- Native Node checks pass, including the real host subprocess against a private
+  local REST fixture. Its cancellation HTTP 503 produces status, not an error that
+  clears Stop. EOF preserves the final result and drains IPC before telemetry.
+- The real shared SDK/positive-schema relay and structured logger are exercised
+  against a captured test sink. Native IPC → native.core parentage and the actual
+  outgoing W3C carrier match; the failed request has error status. Private prompt,
+  bearer, signed handle and identity canaries are absent from both sink payloads.
+  This is local export-path proof, **not production Axiom ingestion**.
+- Client transport abort retains the acknowledged outbox/mutation. Reconnect
+  completes without another admission. Relative state paths are made absolute
+  before changing the host cwd; existing checkpoint/draft recovery stays intact.
+- Cargo fmt/Clippy/all Rust tests pass on this source increment. The renderer is
+  still Rune with the same pin; no React/DOM or separate Pi runtime was added.
+- `scripts/acceptance.mjs` is an explicit operator-run real-service entry, not a
+  fixture automatically run by CI. It includes actual host-process follow-up,
+  lost successful ACK, reconnect and conditional cancellation evidence. It must
+  be executed against the authorized private service before claiming live proof.
+- The new source installer requires an unused prefix and does not replace the
+  Mac experiment, credentials or state. Graphical relaunch/rollback and lifetime
+  single-instance locking remain separate limitations; run one process per state.
+
+The original source cut below was published as
+[`9e364e0`](https://github.com/lordbagel42/computah/commit/9e364e0149d82ca8b5006cae72923d7af9134356).
+Its historical source-only receipts do not establish the runtime gates above.
+
+## Original source-cut receipts
+
 Original implementation base: `eb70afe9c4126fb54583d5a4c83e7d013b915bf9`.
 Shipping readiness base: `49fda8502ad3a8c6d0c29f79e63e7d66677f2751`, fetched
 origin/HEAD and rebased local main without conflicts. apps/native is still entirely
@@ -22,7 +56,7 @@ production/platform acceptance is inferred from source publication.
 - Original-base root `pnpm format`, `pnpm check`, `pnpm typecheck`, `pnpm test`: pass. Includes
   existing durable core's faux-model real Rivet/Pi SQLite/HTTP tests; not a live
   production model request from this frontend.
-- `node --test scripts/*.test.mjs`: pass. Actual json-render/core API, SpecStream
+- `node --import tsx --test scripts/*.test.mjs`: pass. Actual json-render/core API, SpecStream
   chunk boundaries, resolved state/visibility, action rejection, malformed specs,
   blank/card distinctions, Divider, limits and metadata retention.
 - The REST fixture exercises exact body keys, bearer header, signed-handle
@@ -81,6 +115,7 @@ ran below realtime on the orb; no smooth physical-device performance claim.
 - lintapple was not run: this is a native Rune surface, not a Chromium DOM. Native
   accessibility tree/input checks and inspected native captures were used instead.
 
-Dependency request to integrator: exact `@json-render/core` 0.22.0 and `zod` 4.6.7.
-Root lockfile entries are deliberately excluded for canonical reconciliation.
+Published pins: exact `@json-render/core` 0.22.0 and `zod` 4.6.7. The runtime
+increment adds `@computah/observability` workspace dependency and `tsx` 4.23.15,
+with the native importer reconciled in the root lockfile.
 No secrets, production histories, binary/target output or runtime state are included.

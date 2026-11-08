@@ -2,11 +2,26 @@
   "name": "@computah/native",
   "private": true,
   "type": "module",
+  "files": [
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "src",
+    "scripts",
+    "fixtures",
+    "layout.json",
+    "README.md",
+    "DESIGN.md",
+    "VERIFICATION.md"
+  ],
   "scripts": {
-    "test": "node --test scripts/*.test.mjs"
+    "test": "node --import tsx --test scripts/*.test.mjs",
+    "install:app": "node --import tsx scripts/install.mjs"
   },
   "dependencies": {
+    "@computah/observability": "workspace:*",
     "@json-render/core": "0.22.0",
+    "tsx": "4.23.15",
     "zod": "4.6.7"
   }
 }

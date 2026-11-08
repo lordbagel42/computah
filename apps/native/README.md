@@ -30,6 +30,44 @@ For the real REST adapter, use the trusted host environment's `COMPUTAH_URL`
 values or place them in generated JSON. Current nest-bagel loopback access/auth
 provisioning is a separate task; health alone is not authentication proof.
 
+### User-local installation
+
+From a fully installed canonical source checkout, with Cargo/Node/pnpm on PATH:
+
+```sh
+pnpm --filter @computah/native install:app "$HOME/.local/opt/computah-native/<revision>"
+"$HOME/.local/opt/computah-native/<revision>/bin/computah-native" --demo
+```
+
+Use a **new unused absolute prefix**, not the state directory or the experiment's
+Computah.app. The installer builds the pinned native binary, deploys its production
+JS dependencies/assets, and publishes a relocatable shell launcher. It never
+replaces an existing directory, modifies PATH, provisions credentials, or changes
+drafts/outboxes. The bundle excludes Cargo target/cache and private runtime files.
+It still requires system Node and the platform graphics libraries. This is a
+source-built launcher, not a signed/notarized app or mobile package. Omit `--demo`
+only with the trusted private endpoint and separately provisioned bearer in the
+launch environment. Relative `COMPUTAH_STATE` is resolved against the launch cwd
+before the host changes cwd; moving the bundle must not relocate pending work.
+
+### Explicit real-service acceptance
+
+An authorized operator can run `node --import tsx scripts/acceptance.mjs` with the
+existing trusted `COMPUTAH_URL`/`COMPUTAH_TOKEN` supplied privately. This makes three
+harmless real turns: a Task-requesting canary, a context-recalling follow-up and a
+cancellation attempt. It deliberately loses a **successful real admission ACK**,
+reloads the private outbox and asserts identical mutation/handle on retry. It checks
+forged-bearer denial, authenticated viewer/history, real result, reconnect history,
+follow-up recall and truthful cancellation reconciliation. A too-fast finished
+turn is explicitly marked as skipped cancellation, not cancellation proof.
+Requests stop after a ten-minute acceptance deadline (plus one in-flight HTTP
+deadline). Failed acceptance retains its private outbox for operator recovery.
+Only booleans/categories and trace IDs are emitted, never history/credentials or
+signed handles. Public answer text cannot prove Worker invocation: the operator
+must separately verify private aggregate Task/Worker evidence. This entry is not
+automatically run in tests, install or startup, and its existence is not a live
+receipt. Never point it at an unapproved endpoint or run duplicate concurrent turns.
+
 ## Composition, recovery and transport
 
 `layout.json` is the default version-1 entire composition: header, sidebar,
@@ -48,6 +86,11 @@ Recovered layout/draft/demo history are atomically saved in a version-1 private
 file under `~/.local/share/computah-native` (macOS: Library/Application Support).
 Override with `COMPUTAH_STATE`. Invalid checkpoints are retained, not overwritten.
 Real conversation history is loaded from the core, not cached as a second brain.
+
+EOF drains active host commands before telemetry shutdown. SIGTERM aborts only
+local HTTP transport, retains the saved mutation/outbox, and attempts a bounded
+ten-second drain; it never sends remote cancellation. Failed Stop requests report
+unknown cancellation without clearing the still-active Send/Stop state.
 
 The host GETs authenticated viewer and every opaque history page. It POSTs only
 `{text,clientMutationId}`: **not** the shared SendRequest with conversationId,
@@ -69,7 +112,7 @@ tree is not a new public protocol and must not replace those schemas.
 
 ## Local owner source capability
 
-`node scripts/owner.mjs read <source>` returns content plus SHA-256.
+`node --import tsx scripts/owner.mjs read <source>` returns content plus SHA-256.
 `write <source> <base-sha>` accepts replacement source on stdin, rejecting stale
 bases, non-allowlisted names and symlinks. `build` runs fixed tests, fmt, Clippy and
 build steps and records a candidate hash; it does not replace the running app.
@@ -84,10 +127,30 @@ with the owner's OS permissions. Only `chat.send {message}` is available to
 generated Button actions. Backend owner-tool registration and app packaging are
 separate integration work; no second production model runtime is introduced.
 
+## Content-free observability
+
+The private Node host, REST adapter, installer and owner CLI reuse
+`@computah/observability`, not a client-specific exporter. Fixed native process,
+IPC, materialization, recovery and core-request operations emit lifecycle/status
+outcomes; only W3C IDs propagate to the configured trusted core, with redirects
+rejected. No content, bearer, signed handle, scope identity, local path or source
+body is logged. Native IPC spans remain active through polling/recovery and have
+child HTTP spans; structured logs inherit their trace IDs. Invalid generated UI,
+failed disk checkpoints, denied auth, failed HTTP and unknown cancellation are
+observable without exposing their payloads.
+
+Collection is optional and uses the **existing protected host** telemetry config:
+`COMPUTAH_AXIOM_INGEST_TOKEN` and, for logs, `COMPUTAH_AXIOM_LOG_DATASET`.
+No server ingest key or client authorization is bundled or auto-provisioned.
+Exporter errors fail open; buffering/drain remain bounded and best-effort. Rust
+GPU draw timings, text/IME handling and the interval before Node starts are not
+instrumented by these Node spans. Local sink tests are not an actual Axiom receipt;
+see [verification](VERIFICATION.md) and [observability](../../docs/observability.md).
+
 ## Verify
 
 ```sh
-node --test scripts/*.test.mjs
+node --import tsx --test scripts/*.test.mjs
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked

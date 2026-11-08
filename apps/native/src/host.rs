@@ -11,10 +11,22 @@ pub struct Host {
     pub events: Receiver<Value>,
 }
 
+pub fn app_root() -> std::path::PathBuf {
+    std::env::var_os("COMPUTAH_APP_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+}
+
 impl Host {
     pub fn start(demo: bool, state: &std::path::Path) -> std::io::Result<Self> {
+        // The installed bundle supplies its own assets/dependencies; it must not
+        // depend on the machine or checkout where this binary was compiled.
+        let root = app_root();
         let mut command = Command::new("node");
-        command.arg(concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/host.mjs"));
+        command
+            .current_dir(&root)
+            .args(["--import", "tsx"])
+            .arg(root.join("scripts/host.mjs"));
         if demo {
             command.arg("--demo");
         }

@@ -77,7 +77,7 @@ impl Default for State {
 }
 
 fn state_path() -> PathBuf {
-    std::env::var_os("COMPUTAH_STATE")
+    let path = std::env::var_os("COMPUTAH_STATE")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
@@ -91,7 +91,10 @@ fn state_path() -> PathBuf {
             } else {
                 "app.json"
             })
-        })
+        });
+    // The Node host changes cwd to its installed assets. Resolve once, without
+    // canonicalizing a checkpoint that might not exist yet.
+    std::path::absolute(path).expect("Cannot resolve the native state directory")
 }
 
 fn initial() -> State {
@@ -359,7 +362,9 @@ fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
         let marker = PathBuf::from(format!("{}.relaunch", path.display()));
         if marker.exists() {
             let verified = std::process::Command::new("node")
-                .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/owner.mjs"))
+                .current_dir(host::app_root())
+                .args(["--import", "tsx"])
+                .arg(host::app_root().join("scripts/owner.mjs"))
                 .arg("verify-candidate")
                 .arg(&path)
                 .stdout(std::process::Stdio::null())
@@ -368,10 +373,9 @@ fn poll(s: &mut State, _: f64, tx: &mut Tx) -> bool {
                 .is_ok_and(|status| status.success());
             let _ = std::fs::remove_file(marker);
             if verified {
-                let mut candidate = std::process::Command::new(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/target/debug/computah-native"
-                ));
+                let mut candidate = std::process::Command::new(
+                    host::app_root().join("target/debug/computah-native"),
+                );
                 candidate.env("COMPUTAH_STATE", &path);
                 if s.demo {
                     candidate.arg("--demo");
@@ -886,7 +890,9 @@ fn restaurant(s: &State, n: &Node) -> El {
 
 fn fixture(s: &mut State, name: &str) {
     let output = std::process::Command::new("node")
-        .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/render.mjs"))
+        .current_dir(host::app_root())
+        .args(["--import", "tsx"])
+        .arg(host::app_root().join("scripts/render.mjs"))
         .arg(name)
         .output()
         .unwrap();

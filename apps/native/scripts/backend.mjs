@@ -2,6 +2,11 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import {
+  currentTraceHeaders,
+  runtimeLog,
+  traceOperation,
+} from "@computah/observability";
 
 export async function atomicJson(path, value) {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -29,34 +34,76 @@ export class Backend {
     this.emit = emit;
     this.pending = null;
     this.running = false;
+    this.controller = new AbortController();
   }
-  async request(path, body) {
-    const response = await fetch(new URL(path, this.url), {
-      method: body === undefined ? "GET" : "POST",
-      redirect: "error",
-      headers: {
-        authorization: `Bearer ${this.token}`,
-        "content-type": "application/json",
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: AbortSignal.timeout(30000),
+  close() {
+    // Stop this client's transport only. This NEVER cancels durable remote work.
+    this.controller.abort();
+  }
+  async request(path, body, operation = "http") {
+    return traceOperation("native.core", async (span) => {
+      let status;
+      try {
+        const response = await fetch(new URL(path, this.url), {
+          method: body === undefined ? "GET" : "POST",
+          redirect: "error",
+          headers: {
+            ...currentTraceHeaders(),
+            authorization: `Bearer ${this.token}`,
+            "content-type": "application/json",
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: AbortSignal.any([
+            this.controller.signal,
+            AbortSignal.timeout(30000),
+          ]),
+        });
+        status = response.status;
+        span.setAttribute("http.response.status_code", response.status);
+        if (![200, 202].includes(response.status)) {
+          // Never echo remote bodies, bearer values or transport exception details.
+          throw new Error(
+            response.status === 401
+              ? "Sign-in required"
+              : response.status === 403
+                ? "Access denied"
+                : response.status === 409
+                  ? "Mutation conflict; pending request retained"
+                  : "Request failed; retry safely",
+          );
+        }
+        const raw = await response.text();
+        if (Buffer.byteLength(raw) > 8 * 1024 * 1024)
+          throw new Error("Response exceeds budget");
+        const value = JSON.parse(raw);
+        span.setAttribute("outcome", "success");
+        runtimeLog("native.core", {
+          operation,
+          outcome: "success",
+          status_code: response.status,
+        });
+        return value;
+      } catch (error) {
+        const outcome =
+          status === 401 || status === 403
+            ? "denied"
+            : error.name === "TimeoutError"
+              ? "timeout"
+              : "error";
+        span.setAttribute("outcome", outcome);
+        runtimeLog(
+          "native.core",
+          {
+            operation,
+            outcome,
+            reason: status === undefined ? "transport" : "http",
+            ...(status === undefined ? {} : { status_code: status }),
+          },
+          "error",
+        );
+        throw error;
+      }
     });
-    if (![200, 202].includes(response.status)) {
-      // Never echo remote bodies, bearer values or transport exception details.
-      throw new Error(
-        response.status === 401
-          ? "Sign-in required"
-          : response.status === 403
-            ? "Access denied"
-            : response.status === 409
-              ? "Mutation conflict; pending request retained"
-              : "Request failed; retry safely",
-      );
-    }
-    const raw = await response.text();
-    if (Buffer.byteLength(raw) > 8 * 1024 * 1024)
-      throw new Error("Response exceeds budget");
-    return JSON.parse(raw);
   }
   async connect() {
     const viewer = await this.request("/v1/viewer");
@@ -103,6 +150,8 @@ export class Backend {
     do {
       const page = await this.request(
         `/v1/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+        undefined,
+        "history",
       );
       if (
         page.version !== 1 ||
@@ -121,10 +170,27 @@ export class Backend {
     this.emit({ type: "history", messages });
   }
   async save() {
-    await atomicJson(this.outbox, {
-      version: 1,
-      binding: this.binding,
-      pending: this.pending,
+    return traceOperation("native.recovery", async (span) => {
+      try {
+        await atomicJson(this.outbox, {
+          version: 1,
+          binding: this.binding,
+          pending: this.pending,
+        });
+        span.setAttribute("outcome", "success");
+        runtimeLog("native.recovery", {
+          operation: "recovery",
+          outcome: "success",
+        });
+      } catch (error) {
+        span.setAttribute("outcome", "error");
+        runtimeLog(
+          "native.recovery",
+          { operation: "recovery", outcome: "error", reason: "storage_failed" },
+          "error",
+        );
+        throw error;
+      }
     });
   }
   async send(text) {
@@ -149,10 +215,14 @@ export class Backend {
       this.emit({ type: "pending", text: this.pending.text });
       this.emit({ type: "busy", value: true });
       if (!this.pending.id) {
-        const admitted = await this.request("/v1/submissions", {
-          text: this.pending.text,
-          clientMutationId: this.pending.clientMutationId,
-        }); // Deliberately not the shared SendRequest: REST forbids conversationId.
+        const admitted = await this.request(
+          "/v1/submissions",
+          {
+            text: this.pending.text,
+            clientMutationId: this.pending.clientMutationId,
+          },
+          "submit",
+        ); // Deliberately not the shared SendRequest: REST forbids conversationId.
         if (
           admitted.version !== 1 ||
           typeof admitted.id !== "string" ||
@@ -165,6 +235,8 @@ export class Backend {
       while (this.pending) {
         const result = await this.request(
           `/v1/submissions/${encodeURIComponent(this.pending.id)}?wait=true`,
+          undefined,
+          "wait",
         );
         if (
           result.version !== 1 ||
@@ -214,11 +286,12 @@ export class Backend {
         type: "status",
         text: "Admission is unsettled · Retry to recover its handle; disconnect is not cancellation",
       });
-      return;
+      return "unknown";
     }
     const result = await this.request(
       `/v1/submissions/${encodeURIComponent(this.pending.id)}/cancel`,
       {},
+      "cancel",
     );
     if (!["cancelled", "too-late", "unknown"].includes(result.status))
       throw new Error("Unsupported cancellation response");
@@ -231,5 +304,6 @@ export class Backend {
             ? "Too late to cancel · reconciling final result"
             : "Cancellation unknown · work may continue",
     });
+    return result.status;
   }
 }

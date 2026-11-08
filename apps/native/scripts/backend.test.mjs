@@ -160,4 +160,27 @@ test("REST boundary pages history, recovers ambiguous admission without duplicat
     "rejected request must not strand an outbox entry",
   );
   assert.equal(mutations.length, 2);
+  terminal = false;
+  const interrupted = after.send("Keep this exact request");
+  const interruptedFailure = assert.rejects(interrupted);
+  while (!after.pending?.id)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  after.close();
+  await interruptedFailure;
+  const pending = JSON.parse(await readFile(outbox, "utf8")).pending;
+  assert.equal(pending.id, "signed/handle?");
+  const restarted = new Backend({
+    ...options,
+    emit: (event) => events.push(event),
+  });
+  await restarted.connect();
+  assert.equal(restarted.pending.clientMutationId, pending.clientMutationId);
+  terminal = true;
+  await restarted.send();
+  assert.equal(
+    mutations.length,
+    3,
+    "transport shutdown/reconnect must not readmit an acknowledged turn",
+  );
+  assert.equal(restarted.pending, null);
 });
