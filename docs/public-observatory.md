@@ -88,6 +88,13 @@ The shared backend credential and grants were not narrowed or rotated. Retain th
 new dedicated Worker credential for redeployment; do not restore a broader ambient
 token. Private-content activation remains a separate content/deployment decision.
 
+Optional `OBSERVATORY_LIVE_TOKEN` is a separate, dedicated secret binding for the
+planned authenticated live-lifecycle push endpoint, not an Axiom query/ingest
+credential or public-ID HMAC. Absent/empty configuration is disabled; configured
+tokens must have at least 32 characters. Provision and retain it privately and
+preserve it on redeploy. Backend activation awaits checked source adoption and
+independent endpoint acceptance; this binding alone does not enable live push.
+
 Optional `COMPUTAH_AXIOM_INGEST_TOKEN` enables an isolated fixed-schema edge OTLP
 emitter, not the Node bootstrap. It emits only HTTP/poll lifetimes, fixed outcomes,
 random IDs and dropped-count scalars; no URL/request/error data. One DO owns its

@@ -41,6 +41,9 @@ export default Alchemy.Stack(
         COMPUTAH_AXIOM_INGEST_TOKEN: Redacted.make(
           process.env.COMPUTAH_AXIOM_INGEST_TOKEN ?? "",
         ),
+        OBSERVATORY_LIVE_TOKEN: Redacted.make(
+          process.env.OBSERVATORY_LIVE_TOKEN ?? "",
+        ),
       },
       observability: { enabled: true, headSamplingRate: 1 },
     });
