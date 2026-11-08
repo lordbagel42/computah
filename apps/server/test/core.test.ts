@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { rm } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import type { SubmissionObservationEvent } from "@computah/contracts";
 import {
   createFauxCore,
@@ -203,7 +204,13 @@ test("authenticated HTTP delegates through real actors, reuses the Worker, proje
       })),
     ),
   });
-  const server = createHttpServer({ ...config, bind: core.attach(client) });
+  let ready = true;
+  const server = createHttpServer({
+    ...config,
+    bind: core.attach(client),
+    revision: "synthetic-revision",
+    ready: () => ready,
+  });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (!address || typeof address === "string")
@@ -330,6 +337,60 @@ test("authenticated HTTP delegates through real actors, reuses the Worker, proje
     expect(
       JSON.stringify(await (await request("/v1/history", tokens[1])).json()),
     ).not.toContain("HTTP private canary-879");
+    expect(await (await fetch(`${base}/healthz`)).json()).toEqual({
+      ready: true,
+      mode: "faux",
+      revision: "synthetic-revision",
+    });
+    // Start a body before draining, but finish it after readiness turns false.
+    const received = new Promise<void>((resolve) =>
+      server.once("request", () => resolve()),
+    );
+    let finishBody: (() => void) | undefined;
+    const slowStatus = new Promise<number | undefined>((resolve, reject) => {
+      const slow = httpRequest(
+        `${base}/v1/submissions`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${tokens[0]}`,
+            "content-type": "application/json",
+          },
+        },
+        (response) => {
+          response.resume();
+          resolve(response.statusCode);
+        },
+      );
+      slow.once("error", reject);
+      slow.flushHeaders();
+      finishBody = () =>
+        slow.end(
+          JSON.stringify({
+            text: "slow body must not be admitted",
+            clientMutationId: "slow-drain",
+          }),
+        );
+    });
+    await received;
+    ready = false;
+    finishBody?.();
+    expect(await slowStatus).toBe(503);
+    const health = await fetch(`${base}/healthz`);
+    expect(health.status).toBe(503);
+    expect((await health.json()).ready).toBe(false);
+    expect(
+      (
+        await request("/v1/submissions", tokens[0], "POST", {
+          text: "must not be admitted",
+          clientMutationId: "during-drain",
+        })
+      ).status,
+    ).toBe(503);
+    ready = true;
+    expect(
+      JSON.stringify(await (await request("/v1/history")).json()),
+    ).not.toContain("must not be admitted");
   } finally {
     await closeHttp(server);
   }

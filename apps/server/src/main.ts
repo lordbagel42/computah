@@ -59,14 +59,16 @@ async function main() {
   });
   let client: ReturnType<typeof createClient<typeof core.registry>> | undefined;
   let http: ReturnType<typeof createHttpServer> | undefined;
-  let stopping = false;
-  const stop = async () => {
-    if (stopping) return;
-    stopping = true;
-    if (http?.listening) await closeHttp(http);
-    await core.close();
-    await client?.dispose();
-  };
+  let startup: Promise<void> | undefined;
+  let stopping: Promise<void> | undefined;
+  const stop = () =>
+    (stopping ??= (async () => {
+      // Do not race native startup/HTTP listen against storage shutdown.
+      await startup?.catch(() => {});
+      if (http?.listening) await closeHttp(http);
+      await core.close();
+      await client?.dispose();
+    })());
   const shutdown = () => {
     void stop().then(
       () => process.exit(0),
@@ -77,8 +79,9 @@ async function main() {
   process.once("SIGINT", shutdown);
   // Host owns signal shutdown: stop public admissions before draining the actors.
   core.registry.config.shutdown = { disableSignalHandlers: true };
-  try {
+  startup = (async () => {
     await core.registry.startAndWait();
+    if (stopping) return;
     const runtime = core.registry.parseConfig();
     client = createClient<typeof core.registry>({
       endpoint: runtime.endpoint,
@@ -87,12 +90,20 @@ async function main() {
       poolName: runtime.node.poolName,
       headers: runtime.headers,
     });
-    http = createHttpServer({ ...config, bind: core.attach(client) });
+    http = createHttpServer({
+      ...config,
+      bind: core.attach(client),
+      revision: process.env.COMPUTAH_REVISION,
+      ready: () => !stopping,
+    });
     await new Promise<void>((resolve, reject) => {
       http?.once("error", reject);
       http?.listen(config.port, "0.0.0.0", resolve);
     });
     console.info(`computah.http.ready mode=${config.mode} port=${config.port}`);
+  })();
+  try {
+    await startup;
   } catch (error) {
     await stop();
     throw error;

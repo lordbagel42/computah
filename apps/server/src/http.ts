@@ -156,6 +156,8 @@ async function body(
 
 export function createHttpServer(options: {
   mode: "real" | "faux";
+  revision?: string;
+  ready?: () => boolean;
   secret: string;
   principals: Map<string, Principal>;
   bind(scope: Scope): CoreSession;
@@ -200,9 +202,16 @@ export function createHttpServer(options: {
     try {
       const url = new URL(request.url ?? "/", "http://computah.internal");
       if (request.method === "GET" && url.pathname === "/healthz") {
-        reply(200, { ready: true, mode: options.mode });
+        const ready = options.ready?.() ?? true;
+        reply(ready ? 200 : 503, {
+          ready,
+          mode: options.mode,
+          revision: options.revision,
+        });
         return;
       }
+      if (options.ready && !options.ready())
+        throw new HttpError(503, "unavailable");
       const bearer = /^Bearer (\S+)$/i.exec(
         request.headers.authorization ?? "",
       )?.[1];
@@ -252,6 +261,9 @@ export function createHttpServer(options: {
           input.clientMutationId.length > 200
         )
           throw new HttpError(400, "invalid-request");
+        // Headers may predate shutdown while a slow request body arrives later.
+        if (options.ready && !options.ready())
+          throw new HttpError(503, "unavailable");
         const admitted = await session.submit(
           session.interactionId,
           input.text,

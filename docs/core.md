@@ -196,16 +196,16 @@ configuring container termination; a running long-poll may add up to25 seconds.
 
 Every `/v1` request needs `Authorization: Bearer <configured-token>`.
 
-| Request                             | Response                                                                                                      |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `GET /healthz`                      | Unauthenticated `{ready:true,mode}` after registry startup; **not** provider authentication/entitlement proof |
-| `GET /v1/viewer`                    | Trusted viewer binding and fixed `conversationId:"primary"`                                                   |
-| `POST /v1/submissions`              | Strict `{text,clientMutationId}` →202 signed `id`; retries reuse it, conflicting text→409                     |
-| `GET /v1/submissions/:id`           | Status and projected final answer;202 pending,200 terminal                                                    |
-| `GET /v1/submissions/:id?wait=true` | Wait up to25s; timeout returns current status, does not cancel work                                           |
-| `GET /v1/submissions/:id/events`    | Authenticated SSE: resync, live text/state replacements, authoritative terminal result                        |
-| `POST /v1/submissions/:id/cancel`   | Truthful cancellation result; `already_placed`→`unknown`, settled→`too-late`                                  |
-| `GET /v1/history?cursor=...`        | Paged original user/final assistant text and signed next cursor                                               |
+| Request                             | Response                                                                                                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /healthz`                      | Unauthenticated `{ready,mode,revision?}` after registry startup;503 while stopping; **not** provider authentication/entitlement proof |
+| `GET /v1/viewer`                    | Trusted viewer binding and fixed `conversationId:"primary"`                                                                           |
+| `POST /v1/submissions`              | Strict `{text,clientMutationId}` →202 signed `id`; retries reuse it, conflicting text→409                                             |
+| `GET /v1/submissions/:id`           | Status and projected final answer;202 pending,200 terminal                                                                            |
+| `GET /v1/submissions/:id?wait=true` | Wait up to25s; timeout returns current status, does not cancel work                                                                   |
+| `GET /v1/submissions/:id/events`    | Authenticated SSE: resync, live text/state replacements, authoritative terminal result                                                |
+| `POST /v1/submissions/:id/cancel`   | Truthful cancellation result; `already_placed`→`unknown`, settled→`too-late`                                                          |
+| `GET /v1/history?cursor=...`        | Paged original user/final assistant text and signed next cursor                                                                       |
 
 All scope comes from server configuration. Public submission/cursor handles are
 HMAC-bound to exact scope and purpose; another user's token cannot use them.

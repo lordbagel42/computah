@@ -30,6 +30,68 @@ No other services, volumes or host infrastructure are adopted. Container
 replacement stops the old process before the new one starts; brief downtime is
 expected. There is no automatic old-image rollback across Pi storage migrations.
 
+## Low-interruption deployment boundary
+
+The supported path is **prepare while serving → isolated candidate preflight →
+stop/drain the old writer → start the new writer → exact-revision readiness**.
+It is not blue-green or a zero-downtime guarantee. Alchemy's official
+[Docker lifecycle documentation](https://alchemy.run/docker/local-services/)
+and the pinned 2.0.0-beta.85 provider both specify delete-first replacement.
+The [Pi Durable storage contract](https://unpkg.com/@earendil-works/pi-durable@1.5.0/README.md)
+requires one owning process per store; SQLite WAL is not a distributed writer
+lease. Never run two native engines against `/var/lib/computah/data`, mount a
+live copy as a candidate, or split auth/checkpoints from the actor store.
+
+Image build and deploy dependency installation already happen while the old
+backend serves. Each release's `apply.ts` now runs that exact immutable image in
+a disposable `--network none` container with no host ports, no real env files,
+no persistent mounts and a UID 1000 tmpfs HOME. It checks actual native startup,
+authenticated faux submission → completed result, then clean
+SIGTERM exit, before invoking Alchemy. A 120-second outer deadline removes only
+that uniquely named candidate on timeout. A failed preflight leaves the old
+backend serving; it does not relax the conservative activation high-water mark
+already advanced by the installed updater. This is artifact validation, **not**
+a production-storage migration rehearsal, provider authentication check or proof
+of real-model generation. Budget extra candidate memory (limit 768 MiB) while
+the old backend remains running; the host must have that headroom.
+
+The new HTTP process listens only after native registry startup. Readiness now
+includes `revision`, and apply requires `ready:true`, `mode:"real"`, the selected
+revision and matching running Docker image/label before publishing its receipt.
+Readiness has a 60-second elapsed deadline after apply (plus at most one bounded
+HTTP attempt), polled every 100 ms. This detects readiness sooner; it does not
+make the underlying engine start faster. No public traffic proxy or new platform
+is introduced. Connections go directly to the single loopback listener.
+
+Shutdown shares one promise across signals and startup errors, fences new HTTP
+admissions and waits for startup before closing the registry. Existing HTTP/SSE
+connections have the existing five-second close window; native registry shutdown
+then uses its engine/default grace budget, inside Docker's 60-second stop timeout.
+These are bounded drains, not a promise every model turn finishes. At the limit,
+streams disconnect and clients must reconnect/resnapshot or poll their retained
+signed result handle. Retry uncertain admission with the **same** mutation ID;
+do not interpret disconnection as cancellation or blindly replay side effects.
+Checkpoint recovery remains subject to the native runtime's actual guarantees.
+
+The independent bus on 8792 stays up during backend replacements: do not change
+its dedicated HOME, SQLite/LMDB, signing secret, auth or replay offsets. Slack
+remains one service with one delivery journal; backend deployment neither starts
+a second Socket Mode owner nor restarts/migrates its journal. Backlogged core
+admissions retain their journal mutation identity; uncertain Slack posts still
+require reconciliation, not automatic resend.
+
+There is an irreducible backend interruption between old admission close and new
+native readiness. Measure it with an independent 100 ms observer of 8787 **and**
+8792 across the actual Actions rollout: retain last old success, first failure,
+last failure, first selected-revision success, failure count, latency and Docker
+die/start times. Report the sampling/timeout resolution and workload. Build time,
+container creation → receipt time, and a successful health check alone are not
+outage measurements. Idle health continuity is not in-flight real-model proof.
+No automatic rollback is safe after a candidate has opened/migrated production
+storage: forward-fix, or explicitly review a compatible offline recovery plan.
+This path reduces avoidable failed activations but does not claim a measured
+subsecond outage until a real rollout establishes one.
+
 | Path                                     | Purpose                                                                                   |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
 | `/opt/computah/toolchain`                | Dedicated Node 24.22.0 and pnpm 12.0.0                                                    |
