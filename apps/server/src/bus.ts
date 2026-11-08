@@ -4,6 +4,7 @@ import {
   type BusReceipt,
   BusSendRequest,
 } from "@computah/contracts";
+import { traceOperation } from "@computah/observability";
 import { Schema } from "effect";
 import { actor, setup, UserError } from "rivetkit";
 import { type Client, createClient } from "rivetkit/client";
@@ -66,94 +67,157 @@ export function createBus(options: {
     agentId: key[2],
     audience: key[3],
   });
-  const pump = async (c: {
-    key: string[];
-    actorId: string;
-    db: RawAccess;
-    vars: { pumping: boolean };
-    abortSignal: AbortSignal;
-  }) => {
-    if (c.vars.pumping) return;
-    c.vars.pumping = true;
-    try {
-      const scope = scopeOf(c.key);
-      if (options.dispatch && (await options.authorize(scope, "task.send"))) {
-        const queued = await c.db.execute(
-          "SELECT mutation, text, receipt FROM receipts WHERE status = 'queued' ORDER BY rowid LIMIT 1",
-        );
-        if (queued[0]) {
-          const old = receipt(queued[0]);
-          // Dispatch must reconcile this stable ID, including a lost admission/result response.
-          const result = await options.dispatch(scope, {
-            text: String(queued[0].text),
-            clientMutationId: `bus:${createHash("sha256").update(old.id).digest("hex")}`,
-          });
-          await permit(scope, "task.send");
-          const next: BusReceipt = {
-            ...old,
-            status: result.status,
-            submissionId: result.submissionId,
-          };
-          await c.db.transaction(
-            async (tx) => {
-              await tx.execute(
-                "UPDATE receipts SET status = ?, receipt = ? WHERE mutation = ?",
-                next.status,
-                JSON.stringify(next),
-                old.clientMutationId,
-              );
-              await tx.execute(
-                "INSERT INTO outbox(payload) VALUES (?)",
-                JSON.stringify(
-                  Schema.decodeUnknownSync(BusOutput)({
-                    version: 1,
-                    receipt: next,
-                    text: result.status === "completed" ? result.text : null,
-                  }),
-                ),
-              );
-            },
-            { name: "bus.complete" },
+  const pump = async (
+    c: {
+      key: string[];
+      actorId: string;
+      db: RawAccess;
+      vars: { pumping: boolean };
+      abortSignal: AbortSignal;
+    },
+    phase: "input" | "prepare" | "poll",
+  ) =>
+    traceOperation("bus.pump", async (span) => {
+      span.setAttribute("phase", phase);
+      if (c.vars.pumping) {
+        span.setAttribute("outcome", "waiting");
+        return;
+      }
+      c.vars.pumping = true;
+      try {
+        const scope = scopeOf(c.key);
+        if (options.dispatch && (await options.authorize(scope, "task.send"))) {
+          const queued = await c.db.execute(
+            "SELECT mutation, text, receipt FROM receipts WHERE status = 'queued' ORDER BY rowid LIMIT 1",
           );
+          if (queued[0]) {
+            const old = receipt(queued[0]);
+            // Dispatch must reconcile this stable ID, including a lost admission/result response.
+            const result = await options.dispatch(scope, {
+              text: String(queued[0].text),
+              clientMutationId: `bus:${createHash("sha256").update(old.id).digest("hex")}`,
+            });
+            await permit(scope, "task.send");
+            const next: BusReceipt = {
+              ...old,
+              status: result.status,
+              submissionId: result.submissionId,
+            };
+            await c.db.transaction(
+              async (tx) => {
+                await tx.execute(
+                  "UPDATE receipts SET status = ?, receipt = ? WHERE mutation = ?",
+                  next.status,
+                  JSON.stringify(next),
+                  old.clientMutationId,
+                );
+                await tx.execute(
+                  "INSERT INTO outbox(payload) VALUES (?)",
+                  JSON.stringify(
+                    Schema.decodeUnknownSync(BusOutput)({
+                      version: 1,
+                      receipt: next,
+                      text: result.status === "completed" ? result.text : null,
+                    }),
+                  ),
+                );
+              },
+              { name: "bus.complete" },
+            );
+          }
         }
-      }
-      await permit(scope, "history.read");
-      const url = new URL(busStreamPath(scope), options.streamBaseUrl);
-      const created = await fetch(url, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        signal: AbortSignal.any([c.abortSignal, AbortSignal.timeout(5000)]),
-      });
-      if (
-        created.status !== 201 &&
-        created.status !== 200 &&
-        created.status !== 204
-      )
-        throw new Error("stream unavailable");
-      const rows = await c.db.execute(
-        "SELECT seq, payload FROM outbox WHERE sent = 0 ORDER BY seq LIMIT 32",
-      );
-      for (const row of rows) {
         await permit(scope, "history.read");
-        const result = await fetch(url, {
-          method: "POST",
-          body: String(row.payload),
-          headers: {
-            "content-type": "application/json",
-            "Producer-Id": c.actorId,
-            "Producer-Epoch": "0",
-            "Producer-Seq": String(Number(row.seq) - 1),
-          },
-          signal: AbortSignal.any([c.abortSignal, AbortSignal.timeout(5000)]),
+        const url = new URL(busStreamPath(scope), options.streamBaseUrl);
+        await traceOperation("bus.stream.create", async (attempt) => {
+          const signal = AbortSignal.any([
+            c.abortSignal,
+            AbortSignal.timeout(5000),
+          ]);
+          attempt.setAttribute("http.request.method", "PUT");
+          try {
+            const created = await fetch(url, {
+              method: "PUT",
+              headers: { "content-type": "application/json" },
+              signal,
+            });
+            attempt.setAttribute("http.response.status_code", created.status);
+            await created.body?.cancel();
+            if (![201, 200, 204].includes(created.status))
+              throw new Error("stream unavailable");
+            attempt.setAttribute("outcome", "success");
+          } catch (error) {
+            attempt.setAttribute(
+              "outcome",
+              c.abortSignal.aborted
+                ? "cancelled"
+                : signal.aborted
+                  ? "timeout"
+                  : "error",
+            );
+            throw error;
+          }
         });
-        if (!result.ok) throw new Error("stream append unavailable");
-        await result.body?.cancel();
-        await c.db.execute("UPDATE outbox SET sent = 1 WHERE seq = ?", row.seq);
+        const rows = await c.db.execute(
+          "SELECT seq, payload FROM outbox WHERE sent = 0 ORDER BY seq LIMIT 32",
+        );
+        for (const row of rows) {
+          await permit(scope, "history.read");
+          await traceOperation("bus.stream.append", async (attempt) => {
+            const signal = AbortSignal.any([
+              c.abortSignal,
+              AbortSignal.timeout(5000),
+            ]);
+            attempt.setAttribute("http.request.method", "POST");
+            try {
+              const result = await fetch(url, {
+                method: "POST",
+                body: String(row.payload),
+                headers: {
+                  "content-type": "application/json",
+                  "Producer-Id": c.actorId,
+                  "Producer-Epoch": "0",
+                  "Producer-Seq": String(Number(row.seq) - 1),
+                },
+                signal,
+              });
+              attempt.setAttribute("http.response.status_code", result.status);
+              await result.body?.cancel();
+              if (!result.ok) throw new Error("stream append unavailable");
+              await c.db.execute(
+                "UPDATE outbox SET sent = 1 WHERE seq = ?",
+                row.seq,
+              );
+              attempt.setAttribute("outcome", "success");
+            } catch (error) {
+              attempt.setAttribute(
+                "outcome",
+                c.abortSignal.aborted
+                  ? "cancelled"
+                  : signal.aborted
+                    ? "timeout"
+                    : "error",
+              );
+              throw error;
+            }
+          });
+        }
+        span.setAttribute("outcome", "success");
+      } catch (error) {
+        span.setAttribute(
+          "outcome",
+          c.abortSignal.aborted
+            ? "cancelled"
+            : error instanceof Error && error.name === "TimeoutError"
+              ? "timeout"
+              : error instanceof UserError && error.message === "forbidden"
+                ? "denied"
+                : "error",
+        );
+        throw error;
+      } finally {
+        c.vars.pumping = false;
       }
-    } finally {
-      c.vars.pumping = false;
-    }
-  };
+    });
   const bus = actor({
     db: db({
       onMigrate: async (database) => {
@@ -183,7 +247,7 @@ export function createBus(options: {
         action: "pump",
         maxHistory: 0,
       });
-      c.waitUntil(pump(c).catch(() => {}));
+      c.waitUntil(pump(c, "prepare").catch(() => {}));
     },
     actions: {
       admit: async (c, input: BusSendRequest) => {
@@ -232,7 +296,7 @@ export function createBus(options: {
           },
           { name: "bus.admit" },
         );
-        c.waitUntil(pump(c).catch(() => {}));
+        c.waitUntil(pump(c, "input").catch(() => {}));
         return accepted;
       },
       receipt: async (c, id: string) => {
@@ -256,7 +320,7 @@ export function createBus(options: {
         return receipt(rows[0]);
       },
       pump: async (c) => {
-        await pump(c);
+        await pump(c, "poll");
       },
     },
   });

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
+import { traceOperation } from "@computah/observability";
 import type { Client } from "rivetkit/client";
 import { type Bus, type BusScope, busScopeKey, busStreamPath } from "./bus.js";
 
@@ -58,49 +59,100 @@ export function createBusHttp(
         url.pathname === "/v1/bus/stream" &&
         (request.method === "GET" || request.method === "HEAD")
       ) {
-        await permit("history.read");
-        if (
-          [...url.searchParams.keys()].some(
-            (key) => !["offset", "live", "cursor"].includes(key),
-          ) ||
-          (url.searchParams.has("live") &&
-            !["sse", "long-poll"].includes(url.searchParams.get("live") ?? ""))
-        ) {
-          reply(400, { code: "invalid-request" });
-          return;
-        }
-        const controller = new AbortController();
-        response.once("close", () => controller.abort());
-        const target = new URL(busStreamPath(scope), bus.streamBaseUrl);
-        target.search = url.search;
-        const upstream = await fetch(target, {
-          method: request.method,
-          signal: controller.signal,
-          redirect: "error",
-        });
-        await permit("history.read");
-        const headers: Record<string, string> = { "cache-control": "no-store" };
-        for (const name of [
-          "content-type",
-          "stream-next-offset",
-          "stream-up-to-date",
-          "stream-closed",
-          "stream-cursor",
-        ]) {
-          const value = upstream.headers.get(name);
-          if (value) headers[name] = value;
-        }
-        response.writeHead(upstream.status, headers);
-        if (upstream.body)
-          for await (const chunk of Readable.fromWeb(
-            upstream.body as Parameters<typeof Readable.fromWeb>[0],
-          )) {
+        await traceOperation("bus.replay", async (span) => {
+          span.setAttributes({
+            "http.request.method": request.method ?? "unknown",
+            resumed:
+              url.searchParams.has("offset") &&
+              url.searchParams.get("offset") !== "-1",
+          });
+          const controller = new AbortController();
+          const disconnect = () => {
+            if (!response.writableFinished) controller.abort();
+          };
+          response.once("close", disconnect);
+          const completed = new Promise<void>((resolve) => {
+            response.once("finish", resolve);
+            response.once("close", resolve);
+          });
+          let upstream: Response | undefined;
+          try {
             await permit("history.read");
-            if (!response.write(chunk))
-              await once(response, "drain", { signal: controller.signal });
-            if (response.destroyed) break;
+            if (
+              [...url.searchParams.keys()].some(
+                (key) => !["offset", "live", "cursor"].includes(key),
+              ) ||
+              (url.searchParams.has("live") &&
+                !["sse", "long-poll"].includes(
+                  url.searchParams.get("live") ?? "",
+                ))
+            ) {
+              reply(400, { code: "invalid-request" });
+              span.setAttribute("outcome", "invalid_input");
+              return;
+            }
+            const target = new URL(busStreamPath(scope), bus.streamBaseUrl);
+            target.search = url.search;
+            upstream = await fetch(target, {
+              method: request.method,
+              signal: controller.signal,
+              redirect: "error",
+            });
+            span.setAttribute("http.response.status_code", upstream.status);
+            await permit("history.read");
+            const headers: Record<string, string> = {
+              "cache-control": "no-store",
+            };
+            for (const name of [
+              "content-type",
+              "stream-next-offset",
+              "stream-up-to-date",
+              "stream-closed",
+              "stream-cursor",
+            ]) {
+              const value = upstream.headers.get(name);
+              if (value) headers[name] = value;
+            }
+            response.writeHead(upstream.status, headers);
+            if (upstream.body)
+              for await (const chunk of Readable.fromWeb(
+                upstream.body as Parameters<typeof Readable.fromWeb>[0],
+              )) {
+                await permit("history.read");
+                if (!response.write(chunk))
+                  await once(response, "drain", { signal: controller.signal });
+                if (response.destroyed) break;
+              }
+            controller.signal.throwIfAborted();
+            response.end();
+            await completed;
+            controller.signal.throwIfAborted();
+            if (!upstream.ok) throw new Error("stream replay unavailable");
+            span.setAttribute("outcome", "success");
+          } catch (error) {
+            span.setAttribute(
+              "outcome",
+              controller.signal.aborted
+                ? "cancelled"
+                : error instanceof Error && error.message === "forbidden"
+                  ? "denied"
+                  : "error",
+            );
+            // Complete failure responses inside the same operation, not after its span.
+            if (!response.writableEnded && !response.destroyed) {
+              if (response.headersSent) response.destroy();
+              else if (error instanceof Error && error.message === "forbidden")
+                reply(403, { code: "forbidden" });
+              else reply(503, { code: "unavailable" });
+            }
+            throw error;
+          } finally {
+            controller.abort();
+            await upstream?.body?.cancel().catch(() => {});
+            await completed;
+            response.removeListener("close", disconnect);
           }
-        response.end();
+        });
         return;
       }
       const session = bus.attach(client)(scope);
@@ -141,6 +193,7 @@ export function createBusHttp(
       }
       reply(404, { code: "not-found" });
     } catch (error) {
+      if (response.writableEnded || response.destroyed) return;
       if (response.headersSent) {
         response.destroy();
         return;

@@ -9,6 +9,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { startObservability, traceHttp } from "@computah/observability";
 import { DurableStreamTestServer } from "@durable-streams/server";
 import { setupTest } from "rivetkit/test";
 import { expect, test } from "vitest";
@@ -406,6 +407,25 @@ test("bus actor dispatch uses only authorized Interaction admission and reconcil
 });
 
 test("native actor reopens pending outbox and recovers append-success/lost-ack with actual producer dedup", async (context) => {
+  const originalFetch = globalThis.fetch;
+  const exported: string[] = [];
+  const logged: string[] = [];
+  const previousToken = process.env.COMPUTAH_AXIOM_INGEST_TOKEN;
+  const previousDataset = process.env.COMPUTAH_AXIOM_LOG_DATASET;
+  process.env.COMPUTAH_AXIOM_INGEST_TOKEN = "synthetic-bus-trace-token";
+  process.env.COMPUTAH_AXIOM_LOG_DATASET = "computah-bus-test-logs";
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://api.axiom.co/v1/traces") {
+      exported.push(String(init?.body));
+      return new Response("{}", { status: 200 });
+    }
+    if (String(input) === "https://api.axiom.co/v1/logs") {
+      logged.push(String(init?.body));
+      return new Response("{}", { status: 200 });
+    }
+    return originalFetch(input, init);
+  };
+  const telemetry = await startObservability("bus");
   const scope = { ...alice, audience: "commit-gap-isolated" };
   const dataDir = await mkdtemp(join(tmpdir(), "computah-bus-gap-"));
   const streams = new DurableStreamTestServer({
@@ -416,45 +436,72 @@ test("native actor reopens pending outbox and recovers append-success/lost-ack w
   const target = await streams.start();
   let available = false;
   let drop = true;
+  let hang = false;
+  let hanging = false;
   const appends: number[] = [];
   const proxy = createHttpProxy(async (request, response) => {
-    if (!available) {
-      response.writeHead(503);
-      response.end();
-      return;
-    }
-    const body: Buffer[] = [];
-    for await (const chunk of request) body.push(Buffer.from(chunk));
-    const headers: Record<string, string> = {};
-    for (const name of [
-      "content-type",
-      "producer-id",
-      "producer-epoch",
-      "producer-seq",
-    ]) {
-      const value = request.headers[name];
-      if (typeof value === "string") headers[name] = value;
-    }
-    const upstream = await fetch(new URL(request.url ?? "/", target), {
-      method: request.method,
-      headers,
-      ...(body.length ? { body: Buffer.concat(body) } : {}),
-    });
-    const bytes = Buffer.from(await upstream.arrayBuffer());
-    if (request.method === "POST") {
-      appends.push(upstream.status);
-      if (drop) {
-        drop = false;
-        available = false;
-        response.destroy();
+    try {
+      if (hang) {
+        hanging = true;
         return;
       }
+      if (!available) {
+        response.writeHead(503);
+        response.end();
+        return;
+      }
+      const body: Buffer[] = [];
+      for await (const chunk of request) body.push(Buffer.from(chunk));
+      const headers: Record<string, string> = {};
+      for (const name of [
+        "content-type",
+        "producer-id",
+        "producer-epoch",
+        "producer-seq",
+      ]) {
+        const value = request.headers[name];
+        if (typeof value === "string") headers[name] = value;
+      }
+      const controller = new AbortController();
+      response.once("close", () => {
+        if (!response.writableFinished) controller.abort();
+      });
+      const upstream = await fetch(new URL(request.url ?? "/", target), {
+        method: request.method,
+        headers,
+        signal: controller.signal,
+        ...(body.length ? { body: Buffer.concat(body) } : {}),
+      });
+      if (request.method === "GET" || request.method === "HEAD") {
+        const headers: Record<string, string> = {};
+        for (const name of ["content-type", "stream-next-offset"]) {
+          const value = upstream.headers.get(name);
+          if (value) headers[name] = value;
+        }
+        response.writeHead(upstream.status, headers);
+        if (upstream.body)
+          for await (const chunk of upstream.body) response.write(chunk);
+        response.end();
+        return;
+      }
+      const bytes = Buffer.from(await upstream.arrayBuffer());
+      if (request.method === "POST") {
+        appends.push(upstream.status);
+        if (drop) {
+          drop = false;
+          available = false;
+          response.destroy();
+          return;
+        }
+      }
+      response.writeHead(upstream.status, {
+        "content-type":
+          upstream.headers.get("content-type") ?? "application/json",
+      });
+      response.end(bytes);
+    } catch {
+      response.destroy();
     }
-    response.writeHead(upstream.status, {
-      "content-type":
-        upstream.headers.get("content-type") ?? "application/json",
-    });
-    response.end(bytes);
   });
   await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
   const streamBaseUrl = `http://127.0.0.1:${(proxy.address() as { port: number }).port}`;
@@ -532,6 +579,7 @@ test("native actor reopens pending outbox and recovers append-success/lost-ack w
       });
     };
     const http = createBusHttp(bus, client, principals);
+    traceHttp(http);
     try {
       await new Promise<void>((resolve) =>
         http.listen(0, "127.0.0.1", resolve),
@@ -591,6 +639,68 @@ test("native actor reopens pending outbox and recovers append-success/lost-ack w
       });
       expect(deniedEgress.status).toBe(403);
       expect(await deniedEgress.json()).toEqual({ code: "forbidden" });
+      principals.clear();
+      principals.set(oldPrincipal.tokenHash, oldPrincipal);
+      bus.authorize = () => true;
+      const replayRequest = (query: string, init: RequestInit = {}) =>
+        fetch(`${base}/v1/bus/stream?${query}`, {
+          ...init,
+          headers: {
+            authorization: `Bearer ${aliceToken}`,
+            traceparent: `00-${"a".repeat(32)}-${"b".repeat(16)}-01`,
+          },
+        });
+      const replayed = await replayRequest("offset=-1");
+      expect(replayed.status).toBe(200);
+      expect((await replayed.json()).length).toBeGreaterThanOrEqual(2);
+      // Offset contents must never become attributes, even when supplied by a client.
+      const invalid = await replayRequest(
+        "offset=private-offset-canary&live=invalid",
+      );
+      expect(invalid.status).toBe(400);
+      await invalid.body?.cancel();
+      const head = await replayRequest("offset=-1", { method: "HEAD" });
+      expect(head.status).toBe(200);
+      const offset = head.headers.get("stream-next-offset");
+      expect(offset).toBeTruthy();
+      const resumed = await replayRequest(
+        `offset=${encodeURIComponent(offset as string)}`,
+      );
+      expect(resumed.status).toBe(200);
+      expect(await resumed.json()).toEqual([]);
+      const abort = new AbortController();
+      const live = await replayRequest(
+        `offset=${encodeURIComponent(offset as string)}&live=sse`,
+        { signal: abort.signal },
+      );
+      expect(live.status).toBe(200);
+      const reader = live.body?.getReader();
+      await reader?.read();
+      await delay(1200);
+      abort.abort();
+      await reader?.cancel().catch(() => {});
+      bus.authorize = () => false;
+      const deniedReplay = await replayRequest("offset=-1");
+      expect(deniedReplay.status).toBe(403);
+      await deniedReplay.body?.cancel();
+      bus.authorize = () => true;
+      available = false;
+      const failedReplay = await replayRequest("offset=-1");
+      expect(failedReplay.status).toBe(503);
+      await failedReplay.body?.cancel();
+      available = true;
+      // Native cron really attempts publication without a browser/admission.
+      hang = true;
+      for (let i = 0; !hanging && i < 100; i++) await delay(100);
+      expect(hanging).toBe(true);
+      await delay(5500);
+      hang = false;
+      await session.pump();
+      // Shutdown must cancel an actual in-flight scheduled network attempt.
+      hanging = false;
+      hang = true;
+      for (let i = 0; !hanging && i < 100; i++) await delay(100);
+      expect(hanging).toBe(true);
     } finally {
       await new Promise<void>((resolve) => {
         http.close(() => resolve());
@@ -605,5 +715,182 @@ test("native actor reopens pending outbox and recovers append-success/lost-ack w
     });
     await streams.stop();
     await rm(dataDir, { recursive: true, force: true });
+    await telemetry.close();
+    globalThis.fetch = originalFetch;
+    if (previousToken === undefined)
+      delete process.env.COMPUTAH_AXIOM_INGEST_TOKEN;
+    else process.env.COMPUTAH_AXIOM_INGEST_TOKEN = previousToken;
+    if (previousDataset === undefined)
+      delete process.env.COMPUTAH_AXIOM_LOG_DATASET;
+    else process.env.COMPUTAH_AXIOM_LOG_DATASET = previousDataset;
   }
+  type ExportedSpan = {
+    name: string;
+    traceId: string;
+    spanId: string;
+    parentSpanId?: string;
+    startTimeUnixNano: string;
+    endTimeUnixNano: string;
+    status: { code: number };
+    attributes: {
+      key: string;
+      value: {
+        stringValue?: string;
+        doubleValue?: number;
+        boolValue?: boolean;
+      };
+    }[];
+  };
+  const spans: ExportedSpan[] = exported.flatMap((body) =>
+    JSON.parse(body).resourceSpans.flatMap(
+      (resource: { scopeSpans: { spans: ExportedSpan[] }[] }) =>
+        resource.scopeSpans.flatMap((scope) => scope.spans),
+    ),
+  );
+  const attribute = (span: Pick<ExportedSpan, "attributes">, key: string) =>
+    span.attributes.find((attribute) => attribute.key === key)?.value;
+  const named = (name: string) =>
+    spans.filter((span) => span.name === `computah.${name}`);
+  expect(
+    named("bus.pump").some(
+      (span) => attribute(span, "phase")?.stringValue === "prepare",
+    ),
+  ).toBe(true);
+  expect(
+    named("bus.pump").some(
+      (span) => attribute(span, "phase")?.stringValue === "poll",
+    ),
+  ).toBe(true);
+  expect(
+    named("bus.stream.create").some(
+      (span) =>
+        attribute(span, "http.response.status_code")?.doubleValue === 503 &&
+        span.status.code === 2,
+    ),
+  ).toBe(true);
+  expect(
+    named("bus.stream.create").some(
+      (span) =>
+        attribute(span, "outcome")?.stringValue === "timeout" &&
+        span.status.code === 2 &&
+        BigInt(span.endTimeUnixNano) - BigInt(span.startTimeUnixNano) >=
+          4_500_000_000n,
+    ),
+  ).toBe(true);
+  expect(
+    named("bus.stream.create").some(
+      (span) =>
+        attribute(span, "outcome")?.stringValue === "cancelled" &&
+        span.status.code === 2,
+    ),
+  ).toBe(true);
+  expect(
+    named("bus.stream.append").some(
+      (span) =>
+        attribute(span, "outcome")?.stringValue === "error" &&
+        span.status.code === 2,
+    ),
+  ).toBe(true);
+  expect(
+    named("bus.stream.append").some(
+      (span) =>
+        attribute(span, "http.response.status_code")?.doubleValue === 204 &&
+        attribute(span, "outcome")?.stringValue === "success",
+    ),
+  ).toBe(true);
+  for (const span of [
+    ...named("bus.stream.create"),
+    ...named("bus.stream.append"),
+  ]) {
+    const parent = named("bus.pump").find(
+      (pump) =>
+        pump.spanId === span.parentSpanId && pump.traceId === span.traceId,
+    );
+    expect(parent).toBeDefined();
+    // SDK spans individually anchor Date.now() to a monotonic clock; compare durations,
+    // not sub-millisecond wall-clock ordering between independently anchored spans.
+    expect(
+      BigInt(parent?.endTimeUnixNano ?? "0") -
+        BigInt(parent?.startTimeUnixNano ?? "0"),
+    ).toBeGreaterThanOrEqual(
+      BigInt(span.endTimeUnixNano) - BigInt(span.startTimeUnixNano),
+    );
+  }
+  const replays = named("bus.replay");
+  for (const outcome of [
+    "success",
+    "error",
+    "denied",
+    "invalid_input",
+    "cancelled",
+  ])
+    expect(
+      replays.some(
+        (span) => attribute(span, "outcome")?.stringValue === outcome,
+      ),
+    ).toBe(true);
+  expect(
+    replays.some(
+      (span) =>
+        attribute(span, "resumed")?.boolValue === true &&
+        attribute(span, "outcome")?.stringValue === "success",
+    ),
+  ).toBe(true);
+  expect(
+    replays.some(
+      (span) =>
+        attribute(span, "outcome")?.stringValue === "cancelled" &&
+        BigInt(span.endTimeUnixNano) - BigInt(span.startTimeUnixNano) >=
+          1_000_000_000n,
+    ),
+  ).toBe(true);
+  for (const span of replays) {
+    expect(span.traceId).toBe("a".repeat(32));
+    const parent = spans.find((parent) => parent.spanId === span.parentSpanId);
+    expect(parent?.name).toBe("computah.http");
+    expect(parent?.parentSpanId).toBe("b".repeat(16));
+  }
+  const records: Pick<ExportedSpan, "attributes" | "traceId" | "spanId">[] =
+    logged.flatMap((body) =>
+      JSON.parse(body).resourceLogs.flatMap(
+        (resource: {
+          scopeLogs: {
+            logRecords: Pick<
+              ExportedSpan,
+              "attributes" | "traceId" | "spanId"
+            >[];
+          }[];
+        }) => resource.scopeLogs.flatMap((scope) => scope.logRecords),
+      ),
+    );
+  for (const outcome of ["timeout", "cancelled"])
+    expect(
+      records.some(
+        (record) =>
+          attribute(record, "operation")?.stringValue === "bus.stream.create" &&
+          attribute(record, "outcome")?.stringValue === outcome &&
+          spans.some(
+            (span) =>
+              span.traceId === record.traceId && span.spanId === record.spanId,
+          ),
+      ),
+    ).toBe(true);
+  expect(
+    records.some(
+      (record) =>
+        attribute(record, "operation")?.stringValue === "bus.replay" &&
+        attribute(record, "reason")?.stringValue === "invalid_input" &&
+        attribute(record, "outcome")?.stringValue !== "success",
+    ),
+  ).toBe(true);
+  for (const canary of [
+    secret,
+    aliceToken,
+    bobToken,
+    "private evidence",
+    scope.audience,
+    "private-offset-canary",
+    "synthetic-bus-trace-token",
+  ])
+    expect([...exported, ...logged].join("\n")).not.toContain(canary);
 }, 120000);

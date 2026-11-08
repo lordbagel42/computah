@@ -107,3 +107,35 @@ offset/replay/SSE/long-poll, executable no-model import guards on startup/restar
 the optional deterministic Interaction seam, and faulted publication recovery.
 Run `test/bus.test.ts` alongside the existing core suite. These are offline tests,
 not proof of provider Fast entitlement or permission to resume model execution.
+
+## Operational tracing
+
+The bus emits explicit `computah.bus.pump` spans for wake, admission-triggered
+background work and cron/explicit pump attempts (`phase=prepare`, `input`, `poll`).
+An already-running pump records `outcome=waiting` rather than starting concurrent
+publication. Each actual stream PUT and POST has a nested
+`computah.bus.stream.create` or `computah.bus.stream.append` span, covering fetch,
+response cleanup and, for appends, the SQL sent acknowledgement. Failed, timed-out
+and cancelled attempts end before the background caller swallows/retries them.
+Stable producer sequences and uncertain-append deduplication remain unchanged.
+
+`computah.bus.replay` covers authenticated GET/HEAD replay and live proxy lifetime,
+including authorization checks, upstream fetch/body consumption, downstream
+backpressure, response completion/disconnect and upstream cancellation cleanup.
+Only a `resumed` boolean describes replay position; no offset, cursor, URL,
+producer ID, scope, receipt handle or message content is exported. Supported active
+HTTP context parents the replay span; create/append attempts inherit their active
+pump context. Persisted receipt-to-pump causal carriers across restart are separate
+work, not established by these operational spans. Standalone dispatch remains
+disabled; no bus-to-backend run linkage is claimed.
+
+The native recovery test verifies emitted spans through the actual Node exporter
+and sanitizing loopback relay into an intercepted synthetic Axiom sink. It checks
+create failure, lost append acknowledgement, deduplicated retry, cron timeout,
+replay/resume, denial, invalid query and live disconnect, including parentage,
+lifetimes and private-content canaries. Shared operation-completion logs accompany
+these spans; the test also checks linked timeout/cancel records and that resolved
+invalid input is not logged as success. This is local runtime/export proof, not
+enabled production collection or live Axiom ingestion. Existing bounded,
+best-effort fail-open export applies; no new exporter or per-message trace queue
+is introduced.
