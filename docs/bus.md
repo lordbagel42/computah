@@ -94,6 +94,12 @@ Ambiguous append responses retry the same sequence, using actual protocol dedup.
 SQL and stream storage are separate commits; no distributed atomicity or
 exactly-once external side effects are claimed.
 
+Admission acknowledges durable intent, not stream publication. The internal pump
+attempt handles one bounded batch; a busy attempt records `outcome=waiting` and
+returns without joining the active pump. Neither admission nor a pump invocation
+is a drain/completion barrier. Observe publication through Durable Streams replay
+or a live read from a saved offset, not an immediate snapshot after admission.
+
 `bus-core.ts` is an explicit optional seam used only by deterministic native tests:
 resolve an authorized scope session, submit to `session.interactionId` with the
 stable receipt-derived mutation ID, reconcile that same result and project safe

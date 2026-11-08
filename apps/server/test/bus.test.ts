@@ -438,6 +438,15 @@ test("native actor reopens pending outbox and recovers append-success/lost-ack w
   let drop = true;
   let hang = false;
   let hanging = false;
+  let markConcurrentAppend: () => void = () => {};
+  const concurrentAppendStarted = new Promise<void>((resolve) => {
+    markConcurrentAppend = resolve;
+  });
+  let concurrentAppendClosed = false;
+  let releaseConcurrentAppend: () => void = () => {};
+  const concurrentAppendGate = new Promise<void>((resolve) => {
+    releaseConcurrentAppend = resolve;
+  });
   const appends: number[] = [];
   const proxy = createHttpProxy(async (request, response) => {
     try {
@@ -452,6 +461,17 @@ test("native actor reopens pending outbox and recovers append-success/lost-ack w
       }
       const body: Buffer[] = [];
       for await (const chunk of request) body.push(Buffer.from(chunk));
+      if (
+        request.method === "POST" &&
+        JSON.parse(Buffer.concat(body).toString()).receipt.clientMutationId ===
+          "concurrent"
+      ) {
+        response.once("close", () => {
+          concurrentAppendClosed = true;
+        });
+        markConcurrentAppend();
+        await concurrentAppendGate;
+      }
       const headers: Record<string, string> = {};
       for (const name of [
         "content-type",
@@ -555,7 +575,43 @@ test("native actor reopens pending outbox and recovers append-success/lost-ack w
       ),
     );
     expect(new Set(duplicates.map((receipt) => receipt.id)).size).toBe(1);
+    await Promise.race([
+      concurrentAppendStarted,
+      delay(15000).then(() => {
+        throw new Error("Concurrent outbox append did not start");
+      }),
+    ]);
+    // A busy pump returns without joining the active append.
     await session.pump();
+    const beforePublication = await fetch(
+      new URL(`${busStreamPath(scope)}?offset=-1`, target),
+    );
+    expect(beforePublication.status).toBe(200);
+    expect(await beforePublication.json()).toEqual([
+      { version: 1, receipt: first, text: null },
+    ]);
+    const pending = await session.timing(duplicates[0].id);
+    expect(pending.outputs).toHaveLength(1);
+    expect(pending.outputs?.[0].acknowledgedAtMs).toBeNull();
+    expect(
+      concurrentAppendClosed,
+      "Held append must not time out before release",
+    ).toBe(false);
+    const offset = beforePublication.headers.get("stream-next-offset");
+    expect(offset).toBeTruthy();
+    const published = fetch(
+      new URL(
+        `${busStreamPath(scope)}?offset=${encodeURIComponent(offset as string)}&live=long-poll`,
+        target,
+      ),
+      { signal: AbortSignal.timeout(15000) },
+    );
+    releaseConcurrentAppend();
+    const delivered = await published;
+    expect(delivered.status).toBe(200);
+    expect(await delivered.json()).toEqual([
+      { version: 1, receipt: duplicates[0], text: null },
+    ]);
     const concurrent = await fetch(
       new URL(`${busStreamPath(scope)}?offset=-1`, target),
     );
@@ -708,6 +764,7 @@ test("native actor reopens pending outbox and recovers append-success/lost-ack w
       });
     }
   } finally {
+    releaseConcurrentAppend();
     await bus.registry.shutdown();
     await new Promise<void>((resolve) => {
       proxy.close(() => resolve());
@@ -760,6 +817,13 @@ test("native actor reopens pending outbox and recovers append-success/lost-ack w
   expect(
     named("bus.pump").some(
       (span) => attribute(span, "phase")?.stringValue === "poll",
+    ),
+  ).toBe(true);
+  expect(
+    named("bus.pump").some(
+      (span) =>
+        attribute(span, "phase")?.stringValue === "poll" &&
+        attribute(span, "outcome")?.stringValue === "waiting",
     ),
   ).toBe(true);
   expect(
