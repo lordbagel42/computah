@@ -21,6 +21,22 @@ test("durable carriers remain unique and restorable without telemetry enabled", 
   const second = createTraceCarrier("slack.job");
   assert.match(first.traceparent ?? "", /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/);
   assert.notEqual(first.traceparent, second.traceparent);
+  const child = createTraceCarrier("slack.job", [], first);
+  assert.equal(
+    child.traceparent?.split("-")[1],
+    first.traceparent?.split("-")[1],
+  );
+  assert.notEqual(
+    child.traceparent?.split("-")[2],
+    first.traceparent?.split("-")[2],
+  );
+  const invalid = createTraceCarrier("slack.job", [], {
+    traceparent: "invalid",
+  });
+  assert.notEqual(
+    invalid.traceparent?.split("-")[1],
+    first.traceparent?.split("-")[1],
+  );
   assert.deepEqual(withTraceContext(first, currentTraceHeaders), first);
   await withTraceContext(second, async () => {
     await Promise.resolve();
@@ -253,6 +269,11 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
         job.traceparent?.split("-")[1],
         incoming.traceparent?.split("-")[1],
       );
+      const child = createTraceCarrier("slack.admit", [], incoming);
+      assert.equal(
+        child.traceparent?.split("-")[1],
+        incoming.traceparent?.split("-")[1],
+      );
       await traceOperation(
         "slack.submit",
         async () => {
@@ -397,6 +418,10 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
   const submitted = spans.find((span) => span.name === "computah.slack.submit");
   assert.ok(job);
   assert.equal(job.parentSpanId, undefined);
+  const causal = spans.find((span) => span.name === "computah.slack.admit");
+  const receive = spans.find((span) => span.name === "computah.slack.step");
+  assert.equal(causal?.traceId, receive?.traceId);
+  assert.equal(causal?.parentSpanId, receive?.spanId);
   assert.equal(submitted?.traceId, job.traceId);
   assert.equal(submitted?.parentSpanId, job.spanId);
   const intervals = spans.filter(

@@ -278,6 +278,12 @@ const categories = new Set([
   "unconfigured",
   "operations_discover",
   "message_timing",
+  "self_docs_discover",
+  "self_docs_read",
+  "axiom_discover",
+  "axiom_read",
+  "web_search",
+  "web_extract",
   "correlation_unavailable",
   "time_range_unavailable",
   "target_not_found_or_legacy_or_scan_limit",
@@ -846,11 +852,14 @@ export function currentTraceHeaders(): Record<string, string> {
   };
 }
 
-/** New durable identity, independent of ambient receive/pump spans, even without an SDK. */
+/** Durable identity. Independent by default; explicit causal parents survive without an SDK. */
 export function createTraceCarrier(
   operation: string,
   links: readonly Record<string, string>[] = [],
+  parent?: Record<string, string>,
 ): Record<string, string> {
+  const parentContext = traceParent(parent?.traceparent);
+  const inherited = trace.getSpanContext(parentContext);
   const span = trace.getTracer("computah").startSpan(
     `computah.${operation}`,
     {
@@ -859,14 +868,15 @@ export function createTraceCarrier(
         return remote ? [{ context: remote }] : [];
       }),
     },
-    ROOT_CONTEXT,
+    parentContext,
   );
   const current = span.spanContext();
   span.end();
   return {
-    traceparent: isSpanContextValid(current)
-      ? `00-${current.traceId}-${current.spanId}-${current.traceFlags.toString(16).padStart(2, "0")}`
-      : `00-${randomBytes(16).toString("hex")}-${randomBytes(8).toString("hex")}-01`,
+    traceparent:
+      isSpanContextValid(current) && current.spanId !== inherited?.spanId
+        ? `00-${current.traceId}-${current.spanId}-${current.traceFlags.toString(16).padStart(2, "0")}`
+        : `00-${inherited?.traceId ?? randomBytes(16).toString("hex")}-${randomBytes(8).toString("hex")}-${inherited?.traceFlags.toString(16).padStart(2, "0") ?? "01"}`,
   };
 }
 
