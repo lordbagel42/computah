@@ -1,11 +1,14 @@
 # Slack prototype
 
-Status: adapter implementation; dedicated Slack app created, approved and installed
-through official CLI, **not yet live message-roundtrip verified or activated**. It uses
+Status: routing/status, subscriptions/burst batching and bounded first-mention
+context are implemented in source, pending canonical publication and a separately
+coordinated runtime upgrade. This packet leaves the published manifest, permissions
+and installed app untouched. Wider app grants requested earlier are not established
+by this source change. No live upgraded routing or typing proof is claimed. It uses
 official `@slack/socket-mode` 3.1.1 and `@slack/web-api` 8.3.0, no separate model,
 Pi instance or bot history. Protected core REST admission/result calls reuse the
 existing tenant/user/agent Interaction and persistent Task/Worker. There is no
-streaming, subscription, revision replay, OAuth onboarding service or rich UI.
+streaming, bulk history retrieval, revision replay, OAuth onboarding service or rich UI.
 
 ## Minimum dedicated app setup
 
@@ -41,8 +44,30 @@ still name workspace T0266FRGM, plus explicit `enterpriseId:E09V59WQY1E`; never
 replace workspace identity with the enterprise ID. Exact per-event team/user and
 channel allowlists remain mandatory. This is not permission for other workspaces.
 
-The manifest needs only `app_mentions:read`, `im:history`, `im:write`, `chat:write`;
-events `app_mention` and `message.im`. For a CLI-controlled test run, `slack run`
+The published manifest is retained unchanged: only `app_mentions:read`, `im:history`,
+`im:write`, `chat:write`, with `app_mention` and `message.im` events. Ordinary DM
+chat needs no expansion. The source can handle subscribed channel replies, but
+Slack must first be configured to deliver `message.channels`/`message.groups`
+with corresponding observed history grants before that feature can work live.
+Native status additionally needs observed `assistant:write` and explicit runtime
+opt-in. Bounded thread context skips retrieval without the appropriate history
+grant. These are runtime/install dependencies, not new permission requests in this
+packet. No public ingress or broader workspace enrollment is introduced.
+
+An earlier owner-requested experiment copied the 44 bot/30 user scope lists from
+June revision `4ca93fb3973f2106013f90cc50bedd4943ff00a9`, validated/synced an Agent
+manifest and opened install request `Ar0CFUFGQAM8`. At the last read-only credential
+check, the dedicated bot still had only the original four scopes; the approval and
+installation-refresh resolution has not been verified. That experiment's expanded
+manifest is **not included in this source packet**. Do not sync the manifest,
+request new permissions, rotate tokens or repeat login as a side effect of source
+integration. An authorized operator must separately verify the selected app's
+actual configuration and installed grants before enabling dependent features.
+No user token is loaded or used for impersonation; broader grants would never
+auto-enroll users or authorize exporting histories. Slack does not offer an app
+setting that forces placement in an individual's sidebar.
+
+For a CLI-controlled test run, `slack run`
 supplies app/bot tokens directly to the start hook as environment variables.
 Our backend URL/private binding/journal configuration must still be supplied.
 Do not print those variables or extract existing apps' credentials. Persistent
@@ -54,8 +79,8 @@ It did not start a model/server or deploy to nest-bagel; the temporary hook was
 removed. No CLI user-login credentials are transferred to the runtime host.
 Socket Mode is enabled in the manifest. Invite it only to the explicitly approved
 prototype channel (#raygen-builds-an-ai by default; resolve its actual ID).
-No workspace-wide history, user email/read, channel discovery, files or admin
-scope is requested. Installation can require workspace-admin approval.
+Do not expand the workspace grant beyond T0266FRGM. Installation changes can
+require workspace-admin approval and are not performed by this source packet.
 
 Socket Mode uses Slack's authenticated outbound WebSocket and SDK envelope ACK,
 so no public ingress, signing secret or HTTP signature verifier is required. Do
@@ -65,13 +90,14 @@ uses its installation bot token; OAuth client secrets/redirects are unnecessary.
 Current connected Executor discovery exposes no Slack app-admin tool. No CLI or
 login context existed in this orb or on nest-bagel; CLI was installed in this orb
 only. Manual app settings at <https://api.slack.com/apps?new_app=1> are a fallback,
-not the preferred ask. Installation/approval is now verified; runtime provisioning
-and a live message roundtrip remain unverified.
+not the preferred ask. Initial installation/approval was verified. This source
+packet makes no new runtime or live roundtrip claim; consult the deployment record
+for the separately coordinated backend/Slack resumption.
 
 ## Private runtime configuration
 
 Run `pnpm --filter @computah/slack start` with Node >=22.19 (uses `node:sqlite`),
-after the integrator installs the pinned package and updates the root lockfile.
+using the existing pinned workspace dependencies; this packet adds no packages.
 For supervision, prefer direct `node --import tsx src/main.ts` with working
 directory `apps/slack`, without pnpm bootstrap at runtime. Readiness emits only
 `computah.slack.ready` after binding validation and socket connection. SIGTERM/
@@ -86,13 +112,14 @@ HTTP health port; readiness is startup evidence, not continuous provider proof.
 Provision secrets directly via protected operator environment/config; **never
 paste credentials in Amp, model prompts, Git, manifests or logs**:
 
-| Variable                       | Purpose                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------- |
-| `SLACK_BOT_TOKEN`              | Dedicated installation bot token                                                |
-| `SLACK_APP_TOKEN`              | Dedicated app-level Socket Mode token                                           |
-| `COMPUTAH_CORE_URL`            | Protected backend origin; loopback HTTP on nest-bagel port8787, otherwise HTTPS |
-| `COMPUTAH_SLACK_BINDINGS_FILE` | Absolute private mode0600 JSON file described below                             |
-| `COMPUTAH_SLACK_DB`            | Absolute SQLite journal path in dedicated mode0700 persistent directory         |
+| Variable                        | Purpose                                                                            |
+| ------------------------------- | ---------------------------------------------------------------------------------- |
+| `SLACK_BOT_TOKEN`               | Dedicated installation bot token                                                   |
+| `SLACK_APP_TOKEN`               | Dedicated app-level Socket Mode token                                              |
+| `COMPUTAH_CORE_URL`             | Protected backend origin; loopback HTTP on nest-bagel port8787, otherwise HTTPS    |
+| `COMPUTAH_SLACK_BINDINGS_FILE`  | Absolute private mode0600 JSON file described below                                |
+| `COMPUTAH_SLACK_DB`             | Absolute SQLite journal path in dedicated mode0700 persistent directory            |
+| `COMPUTAH_SLACK_STATUS_ENABLED` | Optional native threaded status; defaults off, set `true` after grant verification |
 
 Bindings are a private JSON array, each entry containing `teamId`, `slackUserId`,
 `tenantId`, `userId`, `agentId`, `coreToken`, `channelIds` (array of explicit Slack
@@ -100,6 +127,15 @@ channel IDs), and optional `enterpriseId` required for an organization installat
 The operator must obtain real Slack IDs and map them to an existing
 trusted core principal. Reuse the user's existing principal scope, not a new
 Slack-specific actor. Never derive these fields from message text or a model.
+For approved shared channel replies, add optional `channelBindings`, an array of
+`{channelId,tenantId,userId,agentId,coreToken}` with protected values provisioned by
+the operator. Each `channelId` must also be in that user's `channelIds`. Its scope
+must differ from **every private binding** and may not be reused across different
+channel audiences. The same approved channel can share a principal between its
+mapped participants. Startup verifies each channel token's `/v1/viewer` too.
+The core must be provisioned with that distinct scope/token in its private
+`COMPUTAH_AUTH_JSON`; the adapter never mints principals or trusts body-supplied
+actor identity. No channel credential means no channel admission or private fallback.
 Startup verifies the bot installation team (or exact explicit enterprise for an
 organization token) and every binding against `/v1/viewer`,
 including `task.send`/`history.read`; the bearer principal owns actor identity.
@@ -110,7 +146,13 @@ Run exactly **one adapter process** per journal/installation. Keep journal and
 WAL files private; they contain input text and scoped result handles, not secrets
 or full histories. Persist them across restarts, on local durable storage; no
 network filesystems. The delivery journal is not the canonical Pi transcript.
-There is no active-active ownership/locking or automatic journal migration.
+There is no active-active ownership/locking. Startup adds the `status` cleanup
+and `ready` queue columns plus nullable `context_before` when opening an older
+journal, plus receipt-alias and thread-subscription tables. Legacy queued work is
+immediately eligible and never retroactively enriched; subscriptions
+start empty and are established by newly admitted mentions. Existing receipts retain their original
+destinations: private jobs are not retroactively moved to a channel. Back up the
+private journal before upgrade; old executables cannot insert into the new schema.
 Deployment owner must supervise it separately, allow outbound Slack HTTPS/WSS,
 and give it private access to the existing loopback backend, without exposing
 Rivet/inspector. A separate container cannot reach host loopback by default;
@@ -120,17 +162,138 @@ files are part of this packet; deployment owner owns that integration.
 
 ## Routing and disclosure
 
-Mapped users can DM the app, including DM thread follow-ups. Their replies stay
-in the originating DM thread. A mention in an explicitly allowlisted channel or
-channel thread admits work, but its result goes to the **requester's private DM**,
-not that shared thread. Every surface uses the same primary Interaction.
-No channel contents are fetched, no other users' messages are used, and no output
-is posted to channels. Channel admission permission cannot authorize disclosing
-private Interaction/email history to a broader audience. Shared channel replies
-need a future audience-safe core projection; they are deliberately not implemented.
-Channel follow-ups must mention the bot again; ordinary channel replies are not
-subscribed. Bot messages, edits, deletions, unmapped users/teams and nonallowlisted
+Mapped users' ordinary DM replies are **top-level by default**. An incoming DM
+thread reply stays in its chosen thread. To opt in explicitly, start a message
+`Reply in thread: ...` (also accepts `Reply in a thread:` / `Reply in this thread:`
+and optional `Please`). To escape a thread for one answer, use `Reply top-level: ...`.
+These anchored, case-insensitive per-message instructions are stripped before
+submission; quoted/embedded requests do not change routing. They are not sticky
+preferences and are never interpreted from model output.
+
+Mentions in explicitly allowlisted, **channel-bound** channels reply inside
+`thread_ts ?? ts`, never top-level broadcasts, even if their text asks otherwise.
+They use the channel's separate trusted Interaction and Workers, not the owner's
+private primary history. Shared memory is **channel-wide, not thread-isolated**:
+thread timestamps route replies, not authority. Use separate preconfigured
+principals/audience policy before supporting narrower or dynamic audiences.
+Only the bounded first-mention thread context described below is fetched.
+Permissions alone do not declassify private history.
+An admitted mention subscribes its thread under that exact trusted channel audience.
+Later ordinary replies in that thread from mapped participants with the same
+channel audience are admitted without another mention. Subscriptions survive restart,
+expire after 90 days without admitted activity and retain at most 1000 recently
+active threads. They grant neither user enrollment nor a new audience: every event
+still checks its sender, team, channel allowlist and channel binding. A changed
+principal does not inherit old subscriptions. No unrelated channel messages are
+admitted. Bot messages, edits, deletions, unmapped users/teams and nonallowlisted
 channels are ignored and ACKed. Oversized/empty inputs are ignored.
+
+## First-mention thread context
+
+For the first newly admitted mention in an existing channel thread, the adapter
+can prepend attributed prior text to the **same strict text submission**. It uses
+only that approved channel's distinct trusted principal. A top-level mention,
+DM, already subscribed thread or legacy queued receipt triggers no history read.
+Reading another channel participant's visible thread text does not enroll them
+or authorize their future requests. Shared context remains channel-wide, not private
+to the thread.
+
+After durable admission/ACK and the burst window, one bot-token
+`conversations.replies` request uses exactly the invoked channel/thread, `latest`
+equal to the mentioning message timestamp, `inclusive:false` and `limit:15`.
+No cursor is followed, even when Slack reports more results. Actual observed
+`channels:history` or `groups:history` grants are required for the corresponding
+channel type. No search, profile/email lookup, user token, unrelated channel or
+DM history read is used. Missing scopes, rate limits and other lookup failures
+fall back to the unchanged current request, not a new scope/approval request.
+
+The optional lookup has a two-second total wait/abort budget and at most one
+in-flight request. A transport ignoring cancellation retains that slot; later
+jobs skip enrichment rather than accumulating stalled requests. This can delay
+the first core POST by up to two seconds, but never delays Slack ACK. Runtime
+shutdown can finish after the active bounded delivery step; no total process
+shutdown guarantee is added.
+
+Only prior plain text in that root/thread is eligible; the current message, later
+timestamps, foreign threads, bots and subtype events are excluded. Up to twelve
+records preserve Slack author IDs/timestamps and at most 1000 characters each,
+with a 6000-character serialized quote budget and 20,000-character total input
+budget. Quoted text is labeled **partial and untrusted**, never instructions or
+authorization. It cannot select the core principal, move the response destination
+or grant tools. The adapter keeps the full current request rather than truncating
+it for context; insufficient remaining space skips enrichment.
+
+`preparing` freezes the burst before lookup. A restart in that state can repeat
+the bounded read because no core POST occurred yet. Enriched text is committed
+and the context marker cleared **before** core admission. Once an admission could
+have succeeded, retries/restarts reuse the exact frozen text and mutation ID,
+without another history fetch. New input during preparation queues separately.
+The private journal therefore contains bounded quoted channel context too; it
+is still not an alternate canonical history store. Pending context is not a live
+Slack event subscription or proof that installed grants are sufficient.
+
+## Received-message bursts
+
+The runtime uses a 1.2s quiet window for already-received text, capped at five
+seconds from the first receipt. Only the same mapped sender, trusted principal,
+channel and reply destination may coalesce, with at most eight messages and
+20,000 combined characters per job. Text is joined in receipt order with blank
+lines. The polling interval and existing network/backlog can delay dispatch beyond
+the eligibility time; this is not a five-second response guarantee.
+Each event is journaled before ACK even when merged. Mention/message callbacks
+for the same Slack message are deduplicated; normal Slack retries reuse their event ID.
+Before the first core admission attempt, the batch is frozen durably: a lost
+response retries identical text and mutation ID while later messages queue separately.
+Restart preserves both the quiet window and that frozen payload.
+
+This does **not** observe unsent typing. The inspected June source at
+`4ca93fb3973f2106013f90cc50bedd4943ff00a9` starts human inputs immediately,
+checks newer input before sending and coalesces selected bot chatter; it is not a
+human typing debounce implementation to copy. Its thread status/reaction mechanisms
+do not establish availability of Socket Mode human typing events.
+
+## Native working indicator and its boundary
+
+Native status is **off by default**. Enable `COMPUTAH_SLACK_STATUS_ENABLED=true`
+only after validating installed grants and the actual threaded surface. Startup
+also requires `auth.test` response-metadata scopes to contain both `chat:write`
+and `assistant:write`; otherwise it stays off and emits
+`computah.slack.status_disabled_missing_grants` without failing chat startup.
+
+When enabled, threaded DMs and approved channel threads can call official
+`agents.sessions.setStatus` with `processing`, then request `active` on completion,
+failure, cancellation result, timeout, uncertain delivery or graceful shutdown.
+This is a separate best-effort lane: **one status request at a time**, independent
+of the message delivery client, with a 1s abort budget. Admission, core requests
+and response posting never await status requests. Busy status slots can skip
+indicators on later jobs. A transport ignoring abort retains the slot until it
+settles or the process restarts; it cannot accumulate concurrent orphan requests.
+No hard reply-latency guarantee is implied for core/message transport itself.
+
+Cleanup intent is persisted **before** a status call. Transient/ambiguous failures
+retain cleanup, with terminal clears retried at least 30s apart after restart.
+Permanent missing-scope, unsupported-feature/token and invalid/revoked-auth errors
+disable status for the process and discard its markers; re-enable after resolving
+the grant/capability and restarting. Only safe `computah.slack.status_unsupported`
+or `computah.slack.status_failed` codes are logged, never raw Slack errors.
+Shutdown has **one total 1s status-cleanup budget**, not one per receipt; remaining
+intent stays durable. Late completions cannot mutate a closed journal.
+An outage/denial can prevent clearing the visible indicator. Slack's processing
+status expires after one hour; local cleanup intent is abandoned two hours after
+receipt creation, and never extends terminal receipt retention. No native Stop
+button subscription is added until core cancellation is wired and verified.
+
+Slack's DM UI does support typing, but its legacy `type:typing` packets are RTM
+client messages. Official RTM docs explicitly exclude granular apps like Computah;
+Socket Mode is an Events/interactive envelope transport, not an RTM typing socket.
+Current `agents.sessions.setStatus` requires `thread_ts` in ordinary DMs/channels;
+`assistant.threads.setStatus` also requires it. Slack explicitly warns that setting
+processing opens that thread. Streaming likewise requires a thread except in
+whole-channel Slack Code sessions. Therefore ordinary **top-level DM native typing
+is not implemented**: we retain the requested top-level reply, do not open an
+unrequested thread, send fake typing messages or use unsupported user-token sockets.
+Native threaded status is locally exercised, not yet visually/live verified in
+the owner's actual client. Broader scopes do not remove this protocol constraint.
 
 Output is one bounded plain-text section, no mrkdwn/mentions or unfurls. Answers
 over 2800 characters include an explicit shortened-output notice; no attachment
@@ -146,13 +309,18 @@ waiting for a model. Stable SHA256(team,event_id) mutation IDs let core admissio
 retries reuse the same durable submission even after a lost response/restart.
 The SDK owns socket reconnect/envelope ACK. Inbox errors withhold ACK so Slack
 can retry; this is not an unlimited guaranteed Slack event archive. At most 100
-active receipts and 5000 total are admitted; completed/uncertain receipts expire
-after seven days during admission. Delayed duplicates outside retention can
+active receipts and 5000 total are admitted; completed/uncertain receipts older
+than seven days are pruned on the next admission, **regardless of status cleanup**.
+This is admission-triggered retention, not a background deletion deadline.
+These limits count jobs, including up to eight coalesced input receipts per job;
+alias receipts are removed with their job. Subscriptions have their separate cap above.
+Delayed duplicates outside retention can
 produce another notification, although core mutation IDs still deduplicate work.
 
 A single polling worker performs bounded 30s core requests, roughly one per second
 between steps, and waits at most five minutes from receipt before trying a truthful
-private timeout notice. This does not cancel core work. Backlog and network outage
+timeout notice at the receipt's original destination (DM or approved channel thread).
+This does not cancel core work. Backlog and network outage
 can delay that notice; no hard wall-clock delivery guarantee.
 Core failures retry with the same receipt until deadline; core errors/private
 details never appear in Slack or logs. Revoking the core token blocks new reads.
@@ -163,11 +331,11 @@ A failed DM open therefore cannot retain oldest-job priority and indefinitely
 block other users. This deliberately requires operator reconciliation even when
 the failure occurred before a message was posted. The SDK's
 automatic Web API retries are disabled. No blind re-post after ambiguous network
-failure; this trades possible lost notifications for avoiding duplicate private
+failure; this trades possible lost notifications for avoiding duplicate
 messages. 429 responses also require operator reconciliation in this first slice,
 not a claim of complete retry/backoff. `counts()` exposes only aggregate receipt
 states for operator checks. Do not manually requeue uncertain sends without
-reconciling the actual DM. No exactly-once Slack delivery is claimed.
+reconciling the actual destination conversation/thread. No exactly-once Slack delivery is claimed.
 
 ## Verification / trying it
 
@@ -175,7 +343,14 @@ Run `pnpm --filter @computah/slack typecheck` and
 `pnpm --filter @computah/slack test`. Synthetic transport tests exercise real
 SQLite restart/dedup, trusted mapping/denials, stable admission after response
 loss, private routing, DM threads, uncertain posts, deadline and bounded output.
-They also cover a failed DM open not blocking another user, explicit enterprise
+They also cover DM top-level/explicit-thread routing, channel-thread inheritance,
+distinct audience tokens, missing/unsafe channel bindings, status cleanup/restart
+and unresolved status not delaying admission/replies or the total shutdown budget,
+single status concurrency, permanent-denial disablement, bounded stale intent,
+full-capacity terminal receipt pruning and an actual eight-column legacy journal
+upgrade preserving old destinations. Executable startup checks cover status-off
+unless explicitly enabled with observed grants. They cover a legacy failed DM open
+not blocking another user, explicit enterprise
 versus workspace installation guards, and SIGTERM/SIGINT during pending Socket
 startup. They do not prove live runtime Slack acceptance or model generation.
 
@@ -186,17 +361,40 @@ the same primary history (four public messages); duplicate admission posted once
 Only the model and Slack delivery were fake. The full workspace formatter, check,
 typecheck and tests passed locally. No real Slack post or provider call was made.
 
-After credentials/config and deployment are installed: DM Computah a synthetic
+After scope approval, channel-principal provisioning and deployment: DM Computah a synthetic
 request asking its primary Worker to remember a harmless nonce, then follow up
-in that DM thread. Mention it once in the approved prototype channel: confirm
-answer arrives only in DM, never in channel. Restart only the adapter and verify
+as an ordinary DM (expect top-level), then use `Reply in thread:` and confirm the
+threaded working indicator clears. Mention it once in the approved prototype
+channel: confirm a threaded reply using only channel-shared context, not private
+DM history. Restart only the adapter and verify
 a follow-up uses the same Interaction/Worker; replay a synthetic event in local
 tests, not a private real event in logs. An unmapped test user must get no model
 response. Record only aggregate outcome, not private message/history contents.
-Until that is executed, live Slack roundtrip remains a runtime-provisioning gate,
-not an outstanding owner login/install approval.
+Until that is executed, second-round live behavior is unverified; the updated
+scope installation has a fresh admin approval gate, not a repeated login gate.
+
+The subscription/burst slice additionally checks persisted thread follow-ups,
+mention/message callback deduplication, denied audiences and senders, quiet-window
+boundaries, eight-part/five-second batching, sender/thread separation and immutable
+retry after lost admission and restart. Live follow-up testing additionally needs
+the new channel event subscriptions applied to the dedicated app. First-mention
+context additionally checks same-thread/time filtering, attribution and size
+budgets, missing/slow lookup fallback, immutable enriched retries and concurrent
+input during lookup. The synthetic executable checks ACK-before-fetch, exact
+single-page request arguments, observed-grant gating, the unchanged core request
+shape and channel-principal response destination. These are not a live Slack or
+deployed-core E2E. The next live client E2E must reuse the exact deployed durable/email
+core and its provisioned tenant, never launch a second core or model harness.
+Persona-based routing preferences, public-text streaming, signals,
+attachment download/vision/transcription and validated semantic rich output remain
+separate follow-on slices. No attachment or rich core fields are invented here.
 
 Sources: [Socket Mode](https://docs.slack.dev/apis/events-api/using-socket-mode/),
+[Agent development](https://docs.slack.dev/ai/developing-agents/),
+[session status](https://docs.slack.dev/reference/methods/agents.sessions.setStatus/),
+[legacy RTM typing and restrictions](https://docs.slack.dev/legacy/legacy-rtm-api),
+[manifest Agent settings](https://docs.slack.dev/reference/app-manifest/#features),
 [Slack Node SDK](https://tools.slack.dev/node-slack-sdk/socket-mode/),
+[thread replies](https://docs.slack.dev/reference/methods/conversations.replies/),
 [core contract](core.md), and the
 [json-render assessment](https://ampcode.com/artifacts/json-render-with-native-rune-and-slack-compatibility-assessm-70a08228-b11d-4f4c-b7de-4d12eff43202).

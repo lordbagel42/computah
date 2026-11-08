@@ -40,6 +40,20 @@ async function main() {
         (b.enterpriseId !== undefined &&
           (typeof b.enterpriseId !== "string" ||
             !/^E[A-Z0-9]+$/.test(b.enterpriseId))) ||
+        (b.channelBindings !== undefined &&
+          (!Array.isArray(b.channelBindings) ||
+            b.channelBindings.some(
+              (channel) =>
+                !channel ||
+                !/^[CG][A-Z0-9]+$/.test(channel.channelId) ||
+                [
+                  channel.tenantId,
+                  channel.userId,
+                  channel.agentId,
+                  channel.coreToken,
+                ].some((v) => typeof v !== "string" || !v) ||
+                channel.coreToken.length < 32,
+            ))) ||
         b.coreToken.length < 32,
     )
   )
@@ -98,6 +112,13 @@ async function main() {
     )
   )
     throw new Error("Installation mismatch");
+  const statusEnabled =
+    process.env.COMPUTAH_SLACK_STATUS_ENABLED === "true" &&
+    ["chat:write", "assistant:write"].every((scope) =>
+      auth.response_metadata?.scopes?.includes(scope),
+    );
+  if (process.env.COMPUTAH_SLACK_STATUS_ENABLED === "true" && !statusEnabled)
+    console.info("computah.slack.status_disabled_missing_grants");
   const request = async (binding: Binding, path: string, body?: unknown) => {
     const response = await fetch(new URL(path, base), {
       method: body === undefined ? "GET" : "POST",
@@ -112,7 +133,10 @@ async function main() {
     if (!response.ok) throw new Error("Core unavailable");
     return response.json();
   };
-  for (const binding of bindings) {
+  for (const binding of bindings.flatMap((b) => [
+    b,
+    ...(b.channelBindings ?? []).map((channel) => ({ ...b, ...channel })),
+  ])) {
     const result = (await request(binding, "/v1/viewer")) as {
       viewer?: Partial<Binding> & { capabilities?: string[] };
     };
@@ -128,32 +152,120 @@ async function main() {
     )
       throw new Error("Core binding mismatch");
   }
-  const adapter = new SlackAdapter(statePath, bindings, auth.user_id, {
-    request,
-    async openDm(user) {
-      const result = await web.conversations.open({ users: user });
-      if (!result.channel?.id?.startsWith("D"))
-        throw new Error("No private DM");
-      return result.channel.id;
+  const adapter = new SlackAdapter(
+    statePath,
+    bindings,
+    auth.user_id,
+    {
+      request,
+      async openDm(user) {
+        const result = await web.conversations.open({ users: user });
+        if (!result.channel?.id?.startsWith("D"))
+          throw new Error("No private DM");
+        return result.channel.id;
+      },
+      async post(channel, text, thread) {
+        await web.chat.postMessage({
+          channel,
+          text: text
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;"),
+          mrkdwn: false,
+          parse: "none",
+          unfurl_links: false,
+          unfurl_media: false,
+          blocks: [
+            {
+              type: "section",
+              text: { type: "plain_text", text, emoji: false },
+            },
+          ],
+          ...(thread ? { thread_ts: thread } : {}),
+        });
+      },
+      async threadContext(channel, thread, before, signal) {
+        const scope = channel.startsWith("G")
+          ? "groups:history"
+          : "channels:history";
+        if (!auth.response_metadata?.scopes?.includes(scope))
+          throw new Error("Thread context unavailable");
+        // One bounded page from the invoked thread, no search, profiles, DMs or pagination.
+        const url = new URL("https://slack.com/api/conversations.replies");
+        url.search = new URLSearchParams({
+          channel,
+          ts: thread,
+          latest: before,
+          inclusive: "false",
+          limit: "15",
+        }).toString();
+        const response = await fetch(url, {
+          headers: { authorization: `Bearer ${required("SLACK_BOT_TOKEN")}` },
+          signal,
+          redirect: "error",
+        });
+        const result = (await response.json()) as {
+          ok?: boolean;
+          messages?: unknown;
+        };
+        if (!response.ok || result.ok !== true)
+          throw new Error("Thread context unavailable");
+        return { messages: result.messages };
+      },
+      async status(channel, thread, status, signal) {
+        try {
+          // Separate, cancellable HTTP request: optional status never consumes the
+          // delivery client's queue or its 15s request budget. No automatic retries.
+          const response = await fetch(
+            "https://slack.com/api/agents.sessions.setStatus",
+            {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${required("SLACK_BOT_TOKEN")}`,
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({
+                channel_id: channel,
+                thread_ts: thread,
+                status,
+              }),
+              signal,
+              redirect: "error",
+            },
+          );
+          const result = (await response.json()) as {
+            ok?: boolean;
+            error?: string;
+          };
+          if (
+            [
+              "missing_scope",
+              "feature_disabled",
+              "unknown_method",
+              "not_allowed_token_type",
+              "enterprise_is_restricted",
+              "invalid_auth",
+              "token_revoked",
+              "token_expired",
+              "account_inactive",
+            ].includes(result.error ?? "")
+          ) {
+            console.info("computah.slack.status_unsupported");
+            return "unsupported";
+          }
+          if (!response.ok || result.ok !== true)
+            throw new Error("Status unavailable");
+          return "ok";
+        } catch {
+          console.error("computah.slack.status_failed");
+          throw new Error("Slack status unavailable");
+        }
+      },
     },
-    async post(channel, text, thread) {
-      await web.chat.postMessage({
-        channel,
-        text: text
-          .replaceAll("&", "&amp;")
-          .replaceAll("<", "&lt;")
-          .replaceAll(">", "&gt;"),
-        mrkdwn: false,
-        parse: "none",
-        unfurl_links: false,
-        unfurl_media: false,
-        blocks: [
-          { type: "section", text: { type: "plain_text", text, emoji: false } },
-        ],
-        ...(thread ? { thread_ts: thread } : {}),
-      });
-    },
-  });
+    Date.now,
+    statusEnabled,
+    1200,
+  );
   let stopping = false;
   socket.on("slack_event", async ({ body, ack }) => {
     try {
@@ -186,6 +298,7 @@ async function main() {
     }
   } finally {
     await socket.disconnect();
+    await adapter.stop();
     adapter.close();
     clearTimeout(shutdownDeadline);
     console.info("computah.slack.stopped");
