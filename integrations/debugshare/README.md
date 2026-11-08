@@ -26,8 +26,29 @@ conversation. The links select the exact validated nonzero trace ID and a bounde
 window one day before/after report time. Widen Axiom's time range for delayed
 capture; retention may remove old spans. Click a trace ID in the results to open
 the native waterfall. Missing correlations remain explicit for legacy reports.
-This is an authenticated Axiom deep link, not an embedded trace viewer or a query
-proxy: no Axiom credentials or trace bodies are shipped to the browser/app.
+The **Traces** panel queries live spans server-side and renders their actual timing,
+parent hierarchy, errors and expandable fields. It is not an iframe: Axiom blocks
+cross-origin embedding. The small standalone renderer follows the shared-axis
+pattern used by [assistant-ui](https://www.assistant-ui.com/elements/trace-waterfall);
+Jaeger's [standalone React extraction](https://github.com/jaegertracing/grafana-plugin/blob/main/docs/adr/0001-jaeger-ui-in-grafana.md)
+is a proposal rather than a package we can drop in. No third-party viewer code or
+new UI dependency is bundled.
+
+Connect exactly one `traces` app account through Executor's private account form,
+using a read-only Axiom API token restricted to `computah-prod-traces`. The token
+is an opaque credential handle, restricted to the HTTPS Axiom API authorization
+header; it never reaches browser code, reports or query results. An empty account
+collection leaves the rest of the tracker available and shows setup guidance.
+This grants the tracker's authorized operators access to the selected traces,
+including retained span fields; app access remains the operator boundary.
+
+`getIssueTrace({id,correlation})` accepts only `capture` or `transport` for a stored
+issue. It does not accept raw trace IDs, datasets or APL from the browser. Reads
+are one-shot, manually reloadable, cancelled with the Executor invocation, and
+bounded to 15 seconds, 2 MB and 500 spans. Partial responses and missing parents
+are visible; duplicate span IDs are coalesced. Missing/expired spans and query
+failures do not remove the conversation snapshot. The full Axiom links remain.
+No public observatory projection or private-content telemetry policy is changed.
 
 ## Hosting and setup
 

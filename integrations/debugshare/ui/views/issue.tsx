@@ -52,6 +52,7 @@ import {
   statusOrder,
   tokenize,
 } from "../lib.js";
+import { TraceViewer } from "../trace-viewer.js";
 import { Loading, PageHeader, QueryError, useIndex } from "./shell.js";
 
 type Report = InspectionData["report"];
@@ -60,6 +61,7 @@ type Issue = InspectionData["issue"];
 const sections = [
   ["conversation", "Conversation"],
   ["lifecycle", "Lifecycle"],
+  ["traces", "Traces"],
   ["fields", "Fields"],
   ["update", "Update"],
   ["correlation", "Correlation"],
@@ -130,6 +132,14 @@ export function IssueView({
   const real = isRealSlack(report.source.team);
   const row = rows.find((r) => r.id === id);
   const axiomIssue = axiom.issue(issue.id, report.requestedAt);
+  const captureTrace = axiom.trace(
+    report.capture?.traceId ?? "",
+    report.requestedAt,
+  );
+  const transportTrace = axiom.trace(
+    report.transport?.traceId ?? "",
+    report.requestedAt,
+  );
   return (
     <>
       <PageHeader
@@ -243,6 +253,42 @@ export function IssueView({
         </nav>
       </div>
       <div className="grid gap-4 p-4 md:p-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+        {real && (captureTrace || transportTrace) && (
+          <div className="min-w-0 xl:col-span-2">
+            <Panel
+              id="traces"
+              title="Traces"
+              collapsible={false}
+              className="scroll-mt-20"
+            >
+              {captureTrace && (
+                <TraceViewer
+                  key={`${report.id}:capture`}
+                  id={report.id}
+                  correlation="capture"
+                  label={
+                    captureTrace === transportTrace
+                      ? "Capture & Slack transport"
+                      : "Capture"
+                  }
+                />
+              )}
+              {transportTrace && transportTrace !== captureTrace && (
+                <TraceViewer
+                  key={`${report.id}:transport`}
+                  id={report.id}
+                  correlation="transport"
+                  label="Slack transport"
+                />
+              )}
+              <p className="border-t border-border px-3 py-2 text-[12px] text-muted-foreground">
+                The DEBUGSHARE command’s recorded traces, not the earlier
+                conversation. Queried within ±1 day of this report; use the
+                Correlation links to widen the range in Axiom.
+              </p>
+            </Panel>
+          </div>
+        )}
         <div className="min-w-0 space-y-4">
           <Conversation report={report} rows={rows} message={message} />
           <Lifecycle issue={issue} report={report} events={events} />

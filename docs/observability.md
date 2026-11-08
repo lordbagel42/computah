@@ -669,3 +669,17 @@ The existing settled OTLP path is unchanged. Browser interaction tracing and
 full batch-to-source exporter causal links remain gaps. The optional edge Axiom
 export binding is still deployment-owner controlled, not implicitly enabled here.
 See [public observatory](public-observatory.md) for stream replay and bounds.
+
+### Authenticated tracker trace reads
+
+The standalone Executor tracker uses the platform's invocation-owned traced fetch
+for Axiom reads, with host cancellation, a 15-second timeout and fixed failures
+that never echo upstream bodies or credentials. Reads resolve only an existing
+issue's stored capture/transport trace, cap responses at 2 MB/500 spans, and do
+not add an exporter, public observatory fields, background polling or retries.
+Local tests cover timings, parent gaps/cycles, partial responses, denial and
+cancellation. The platform owns invocation/fetch tracing; its spans/logs are not
+currently verified through Computah's core sanitized Axiom exporter. Browser
+row-expand/reload telemetry and live query-account acceptance remain gaps, not
+claims of complete end-to-end tracing. See the
+[tracker](../integrations/debugshare/README.md) for the read-only account boundary.

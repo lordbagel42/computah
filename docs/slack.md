@@ -290,12 +290,14 @@ open/investigating/blocked/resolved state. Local restart/outbox tests are not a
 claim of deployed capture or production credential setup. Amp/Space handoff and
 automatic repair remain unimplemented.
 
-The authenticated tracker exposes recorded capture/transport trace IDs as Axiom
-links, coalescing identical traces. They open an exact-ID query in the private
-trace dataset, not a public proxy or an inferred trace of the earlier conversation.
-Axiom authenticates the viewer separately. The bounded ±1-day report-time window
-can be widened for delayed capture; legacy reports without correlation show an
-explicit missing state. See the [tracker](../integrations/debugshare/README.md).
+The authenticated tracker renders recorded capture/transport traces as an inline
+waterfall, with expandable span fields, when its read-only Axiom account is linked.
+Identical traces coalesce. Server queries resolve correlations from the stored
+issue, never browser-supplied APL or guessed earlier-conversation traces. Full
+Axiom links remain and authenticate separately. The bounded ±1-day report-time
+window can be widened in Axiom for delayed capture; legacy reports without
+correlation show an explicit missing state. See the
+[tracker](../integrations/debugshare/README.md) for limits and account setup.
 
 ### Amp issue links
 

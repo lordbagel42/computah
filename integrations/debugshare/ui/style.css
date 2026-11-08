@@ -1,5 +1,125 @@
 @import "tailwindcss";
 
+/* Authenticated, manually reloadable Axiom span waterfall. */
+.trace-viewer {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.trace-viewer p {
+  margin: 8px 0;
+  line-height: 1.6;
+}
+.trace-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.trace-toolbar h3 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.trace-summary,
+.trace-duration,
+.trace-axis {
+  font-variant-numeric: tabular-nums;
+}
+.trace-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.trace-axis,
+.trace-span summary {
+  display: grid;
+  grid-template-columns: 220px minmax(180px, 1fr) 100px;
+  align-items: center;
+  gap: 12px;
+  min-width: 560px;
+  padding: 10px 12px;
+}
+.trace-axis {
+  color: var(--muted-foreground);
+  border-bottom: 1px solid var(--border);
+}
+.trace-axis > span:last-child {
+  grid-column: span 2;
+  display: flex;
+  justify-content: space-between;
+}
+.trace-span summary {
+  min-height: 52px;
+  cursor: pointer;
+  list-style: none;
+  border-bottom: 1px solid var(--border);
+}
+.trace-span summary::-webkit-details-marker {
+  display: none;
+}
+.trace-span summary:hover,
+.trace-span[open] summary {
+  background: var(--accent);
+}
+.trace-span summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -3px;
+}
+.trace-name {
+  min-width: 0;
+}
+.trace-chevron {
+  float: left;
+  margin: 4px 6px 0 0;
+}
+.trace-span[open] .trace-chevron {
+  transform: rotate(90deg);
+}
+.trace-name strong,
+.trace-name small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.trace-name small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+.trace-lane {
+  position: relative;
+  height: 24px;
+  background: var(--secondary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.trace-bar {
+  position: absolute;
+  top: 4px;
+  height: 16px;
+  min-width: 2px;
+  border-radius: 3px;
+  background: #79aaf8;
+}
+.trace-error .trace-bar {
+  background: #ff9898;
+}
+.trace-duration {
+  text-align: right;
+}
+.trace-span-detail {
+  padding: 12px;
+  min-width: 560px;
+  border-bottom: 1px solid var(--border);
+}
+.trace-span-detail pre {
+  max-height: 360px;
+  overflow: auto;
+  line-height: 1.6;
+  margin: 12px 0 0;
+}
+
 /* Axiom-like near-black console: flat panels, hairline rules, mono data. */
 :root {
   color-scheme: dark;

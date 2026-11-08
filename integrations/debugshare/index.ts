@@ -1,5 +1,6 @@
 import {
   array,
+  bearer,
   defineApp,
   defineProvider,
   type Infer,
@@ -29,6 +30,7 @@ import {
   Summary,
   statuses,
 } from "./schema.js";
+import { readTrace, TraceResult } from "./traces.js";
 
 // This account identifies the uploader, not an upstream API credential.
 // The webhook's separate generated signing secret is the only upload authority.
@@ -41,7 +43,20 @@ const source = defineProvider({
     }),
   },
 });
-const requirements = { app: { accounts: { sources: source.many() } } };
+const axiom = defineProvider({
+  name: "Computah issue trace reader",
+  hosts: ["api.axiom.co"],
+  auth: {
+    token: secrets({
+      label: "Read-only Axiom token for computah-prod-traces",
+      fields: object({ token: string({ minLength: 1 }) }),
+      request: ({ token }) => bearer(token),
+    }),
+  },
+});
+const requirements = {
+  app: { accounts: { sources: source.many(), traces: axiom.many() } },
+};
 type Read = QueryContext<typeof requirements>;
 type Write = MutationContext<typeof requirements>;
 type IssueRow = Infer<typeof Summary> & { report: string };
@@ -495,6 +510,51 @@ export const receiveIssue = mutation(
   },
   async ({ sql }: Write, report) => receive(sql, report),
 );
+
+export const getIssueTrace = query(
+  {
+    description:
+      "Read bounded live Axiom spans for an issue’s stored capture or transport correlation. Accepts no arbitrary trace IDs or APL.",
+    input: object({ id: string(), correlation: string() }),
+    output: TraceResult,
+  },
+  async (ctx: Read, { id, correlation }) => {
+    if (
+      !isDebugshareId(id) ||
+      (correlation !== "capture" && correlation !== "transport")
+    )
+      throw new Error("Invalid issue or trace selection");
+    const row = ctx.sql
+      .exec<IssueRow>("SELECT * FROM issues WHERE id=?", id)
+      .toArray()[0];
+    if (!row) throw new Error("Issue not found");
+    const report = Report.parse(JSON.parse(row.report));
+    const traceId = report[correlation]?.traceId;
+    if (!traceId)
+      return {
+        traceId: "",
+        notice: "This report has no retained trace correlation.",
+        partial: false,
+        spans: [],
+      };
+    const accounts = ctx.app.accounts.traces;
+    if (accounts.length !== 1)
+      return {
+        traceId,
+        notice:
+          "An app manager must connect exactly one read-only Axiom account to the tracker’s traces account slot. Existing issue reports remain available.",
+        partial: false,
+        spans: [],
+      };
+    return readTrace(
+      ctx.fetch,
+      ctx.signal,
+      accounts[0].headers(),
+      traceId,
+      report.requestedAt,
+    );
+  },
+);
 export const updateIssue = mutation(
   {
     description:
@@ -650,6 +710,7 @@ export default defineApp(requirements, {
     {
       listIssues,
       getIssue,
+      getIssueTrace,
       explore,
       search,
       inspectIssue,
