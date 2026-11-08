@@ -3,6 +3,7 @@ import { Slot } from "@radix-ui/react-slot";
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import { cva, type VariantProps } from "class-variance-authority";
 import type * as React from "react";
+import { useEffect, useRef } from "react";
 import { cn } from "../lib.js";
 
 export const buttonVariants = cva(
@@ -160,5 +161,48 @@ export function Tooltip({
         </TooltipPrimitive.Content>
       </TooltipPrimitive.Portal>
     </TooltipPrimitive.Root>
+  );
+}
+
+/**
+ * Native modal dialog: the browser supplies focus containment, Escape, top
+ * layer and inert background (Executor's build cannot compile Radix Dialog).
+ */
+export function Modal({
+  open,
+  onOpenChange,
+  label,
+  className,
+  children,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  label: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const d = ref.current;
+    if (!d) return;
+    if (open && !d.open) d.showModal();
+    if (!open && d.open) d.close();
+  }, [open]);
+  return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click is a pointer shortcut; the dialog closes natively on Escape.
+    <dialog
+      ref={ref}
+      aria-label={label}
+      onClose={() => onOpenChange(false)}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onOpenChange(false);
+      }}
+      className={cn(
+        "max-h-none max-w-none bg-transparent p-0 text-foreground outline-none backdrop:bg-black/60",
+        className,
+      )}
+    >
+      {open && children}
+    </dialog>
   );
 }

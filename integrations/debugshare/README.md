@@ -109,8 +109,12 @@ scope, then commits before returning `{id}`. Retries cannot overwrite snapshots.
 
 ## Explorer UI
 
-A dark Axiom-style React SPA using shadcn/ui-pattern components (Radix, cmdk,
-lucide, Geist), built by Executor with its built-in Tailwind v4. Routes are hash
+A dark Axiom-style React SPA using shadcn/ui-pattern components (Radix Slot and
+Tooltip, lucide, Geist), built by Executor with its built-in Tailwind v4.
+Executor's browser build fails on `cmdk`, `@radix-ui/react-dialog` and
+`@fontsource` imports, so the palette and mobile drawer use the native
+`<dialog>` element and the Geist fonts (OFL) are served from `ui/public/fonts`.
+Routes are hash
 fragments so existing `#<issue id>` links keep working; `#<id>/<section>` and
 `#<id>/m/<slack ts>` deep-link to a section or a captured message. Other routes:
 `#/issues`, `#/activity`, `#/search/<text>`, `#/tables/<table>` and entity pages

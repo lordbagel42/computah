@@ -1,7 +1,4 @@
-import "@fontsource-variable/geist";
-import "@fontsource-variable/geist-mono";
 import "./style.css";
-import * as Dialog from "@radix-ui/react-dialog";
 import {
   Activity,
   ChevronsLeft,
@@ -21,7 +18,7 @@ import {
 import { type ReactNode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Palette } from "./components/palette.js";
-import { Kbd, TooltipProvider } from "./components/ui.js";
+import { Kbd, Modal, TooltipProvider } from "./components/ui.js";
 import { useExplore } from "./data.js";
 import { bytes, cn, href, parseRoute, type Route } from "./lib.js";
 import { ActivityView } from "./views/activity.js";
@@ -357,35 +354,37 @@ function App() {
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-12 items-center gap-2 border-b border-border px-3 md:hidden">
-            <Dialog.Root open={mobileNav} onOpenChange={setMobileNav}>
-              <Dialog.Trigger
-                aria-label="Open navigation"
-                className="rounded p-1.5 text-muted-foreground hover:bg-accent focus-visible:outline-2"
-              >
-                <Menu className="size-5" />
-              </Dialog.Trigger>
-              <Dialog.Portal>
-                <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60" />
-                <Dialog.Content className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-border bg-sidebar py-3 outline-none">
-                  <Dialog.Title className="px-4 pb-3">
-                    <Brand collapsed={false} />
-                  </Dialog.Title>
-                  <Dialog.Description className="sr-only">
-                    Explorer navigation
-                  </Dialog.Description>
-                  <Nav
-                    route={route}
-                    collapsed={false}
-                    onNavigate={() => setMobileNav(false)}
-                    onSearch={() => {
-                      setMobileNav(false);
-                      setPalette(true);
-                    }}
-                  />
-                  <Footer collapsed={false} />
-                </Dialog.Content>
-              </Dialog.Portal>
-            </Dialog.Root>
+            <button
+              type="button"
+              onClick={() => setMobileNav(true)}
+              aria-label="Open navigation"
+              aria-haspopup="dialog"
+              className="rounded p-1.5 text-muted-foreground hover:bg-accent focus-visible:outline-2"
+            >
+              <Menu className="size-5" />
+            </button>
+            <Modal
+              open={mobileNav}
+              onOpenChange={setMobileNav}
+              label="Explorer navigation"
+              className="inset-y-0 right-auto left-0 m-0 h-full w-72"
+            >
+              <div className="flex h-full flex-col border-r border-border bg-sidebar py-3">
+                <div className="px-4 pb-3">
+                  <Brand collapsed={false} />
+                </div>
+                <Nav
+                  route={route}
+                  collapsed={false}
+                  onNavigate={() => setMobileNav(false)}
+                  onSearch={() => {
+                    setMobileNav(false);
+                    setPalette(true);
+                  }}
+                />
+                <Footer collapsed={false} />
+              </div>
+            </Modal>
             <Brand collapsed={false} />
             <button
               type="button"
