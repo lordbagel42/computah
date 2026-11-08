@@ -123,6 +123,11 @@ function projectObservation(
         workerLabel: null,
         phase,
         text,
+        ...((phase === "generating" || phase === "delegating") &&
+        source.acknowledgement?.trim() &&
+        source.acknowledgement.length <= 3500
+          ? { acknowledgement: source.acknowledgement }
+          : {}),
       }
     : {
         version: 1,

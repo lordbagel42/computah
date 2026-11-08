@@ -56,7 +56,19 @@ categories and content-free spans; it is not a second durable workflow engine.
 ## Interaction → Task → Worker
 
 Each Interaction is keyed by tenant/user/agent. Its task tool is
-`Task({ worker, text })`. The executable also installs the read-only
+`Task({ worker, text, acknowledgement? })`. The optional acknowledgment is plain
+public prose (at most 3,500 UTF-16 units), not a final-answer envelope or Worker
+instruction. Interaction chooses a task-specific acknowledgment when helpful,
+or silence for quick utilities; no host timer invents one. The existing durable
+delegation receipt saves the choice and complete native Task-round call identities.
+Only after every Task in that round has an actual Worker admission does observation
+release its first nonempty choice in call order. Missing/denied/uncertain admission
+suppresses it, including a sibling not yet started in a sequential tool round.
+Replays reuse the original receipt; legacy receipts without this metadata stay
+silent. Current live input membership, cancellation fences, history/source access
+and nonterminal submission state still govern release. No new Task/model/runtime
+or outbound effect is created by observation. Task still waits for its Worker and
+Interaction synthesizes the final outcome normally. The executable also installs the read-only
 [operational discovery and message timing tools](tools.md#operational-data-discovery),
 with explicit `operations.read` authorization. Workers receive Pi's native `read`, `write`, and `edit`
 only with explicit `files.read` / `files.write` grants. These tools operate in the

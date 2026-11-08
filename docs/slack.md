@@ -450,51 +450,50 @@ or pruning a receipt does not erase this durable fence. Single-sender stop still
 describes run-wide effects and no external-effect rollback. This does not provide
 per-message isolated cancellation inside the native run.
 
-After a 1.5-second job-age grace **and an authoritative pending result poll**, a
-job can attempt one brief `On it.` acknowledgment at its actual original source.
-This is eligibility, not a 1.5-second delivery SLA: polling, optional observation
-and transport/backlog can delay it. Completed polls skip the acknowledgment;
-quick utility work stays silent until its answer. No queued/internal-handoff
-narration or extra model request is introduced. This follows the concise-task
-acknowledgment distinction in the inspected June `4ca93fb` source and its
-`5fba7f2` task-ownership refinement, not a human-typing indicator.
+Interaction chooses a natural task-specific acknowledgment, or silence, in Task's
+optional `acknowledgement` argument. Quick utilities should omit it and let the
+result be the response. This ports June's actual dispatch policy at `4ca93fb`
+(`src/runtime/prompt.ts`, `scope-catalog.ts`'s `executionDispatchText`, and the
+registry/session dispatch paths), not just its wording. June preserves model text
+only after all expected work is admitted; it adds no queued announcement. Computah
+likewise requires actual durable Worker admission for **every Task in the complete
+native tool round**, including sequential calls, before releasing the first chosen
+nonempty acknowledgment in call order. Partial admission/denial cannot publish a
+claim that all work started. Existing Task outcome/failure synthesis remains separate.
 
-An initial bounded actual core SSE phase snapshot is requested only when an actual
-source thread and stream transport can use it for a native card titled `On it.`.
-Top-level sources and transports without native cards skip that otherwise useless
-core read; their fixed acknowledgment depends only on the authoritative pending
-result. Missing/failed observation still permits the fixed ordinary
-`On it.` post. The snapshot has a two-second/128,000 decoded UTF-16-unit budget;
-no live model text, JSON reply envelope, Worker label, reasoning or tool payload
-is published. The existing durable status reservation permits at most one initial
-attempt across reopen, not replay on reconnect; ambiguous native starts/posts
-are never blindly reposted. A retained stop attempt suppresses a fresh initial
-acknowledgment. The final answer's host-validated route and top-level DM placement
-remain unchanged. Acknowledgments never confirm an actual answer or fulfill its
-separate five-second latency measurement.
+There is no elapsed-age trigger, canned `On it.`, missing-observation fallback,
+new phase card, or extra model request. A pending result poll may read one bounded
+SSE resync (two seconds/128,000 decoded UTF-16 units). Only the explicit admission-
+gated Interaction `acknowledgement` field can become an ordinary source reply;
+live generation text, partial JSON envelopes, reasoning, tool payloads and Worker
+output/labels are never used as acknowledgment. Missing/failed observation, empty
+selection or invalid/oversized text means silence without consuming the attempt.
+No time limit promises delivery: model dispatch, polling and network/backlog can
+delay it, and completed polls skip it. The existing input burst quiet window is
+unchanged; it is admission batching, not an acknowledgment timer.
+
+Current live inputs, cancellation fences and current source/history grants gate
+core release. A retained stop suppresses a fresh acknowledgment, including a stop
+admitted while observation is awaited. The adapter durably reserves at most one
+post attempt before sending, so reopen/reconnect and ambiguous sends cannot replay
+it. The actual original source is used, not the final answer's selected route;
+top-level DMs stay top-level. Final routing and actual-answer metrics are unchanged:
+an acknowledgment never confirms an answer or satisfies its five-second deadline.
+
+June's separate optional typing/native-status feedback and mandatory direct-ping
+hourglass lifecycle are not text acknowledgments. Computah does not copy those
+by inventing privileges: its four-scope manifest lacks reaction/assistant grants,
+and this change neither expands nor synchronizes installed configuration.
 
 Interactivity/Stop buttons remain gated by unobserved installed app configuration.
 Neither source tests nor intercepted sanitized telemetry prove live Slack
 rendering or real-model behavior.
 
-### Native phase cards
+### Legacy native phase-card cleanup
 
-With an observed `chat:write` grant, an **already-threaded actual source** can use
-native `chat.startStream` task-state cards titled `On it.` instead of the one-shot
-acknowledgment post when an actual phase is available.
-This is independent of the opt-in coarse status lane below; it does not require
-`assistant:write`, interactivity or a new scope. A channel card supplies the mapped
-recipient user/team and keeps that channel's isolated core principal. Top-level
-sources stay top-level with normal one-shot progress; desired reply placement
-does not fabricate a source thread.
-
-Only fixed Interaction/Worker phase chunks are sent, never streamed answer text,
-JSON envelopes, tool arguments or arbitrary worker labels. One start intent and
-its returned handle are durable. Subsequent actual snapshots are polled no more
-often than every five seconds; at most one observed Worker-phase append occurs,
-without oscillating back to Interaction. An unsupported start falls back to
-ordinary progress; ambiguous starts/appends are not replayed. An unknown start
-has no handle to close and may leave a display until Slack's ten-minute expiry.
+New jobs no longer start or append generic Interaction/Worker phase cards. Known
+handles from the preceding implementation retain bounded terminal cleanup only;
+unknown starts are never repeated and can leave a display until Slack's expiry.
 
 Completion, failure, confirmed cancellation, timeout and graceful shutdown retain
 terminal cleanup intent for known handles. Close attempts are limited to three,
@@ -590,17 +589,17 @@ interactions. Current docs' standard-Markdown path is not our direct Slack-diale
 contract. Earlier research is retained read-only in the
 [feature plan](https://ampcode.com/threads/T-01a1b897-03f9-765f-8332-6a0f70141030).
 
-| Nicety                                                       | Computah evidence and remaining boundary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Readable lists, paragraphs, emphasis, inline/fenced code     | Implemented instructions in both model roles and the Slack admission protocol; executable fake-Slack payload checks preserve actual newlines, code indentation/literal escapes, URL case/query and escaped control syntax. No real-model compliance or Slack-client rendering claim.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Accessible message text, no accidental notifications/unfurls | Full retained top-level accessibility text plus bounded visible mrkdwn sections, explicit `link_names:false`, `parse:none`, entity escaping and unfurls off; executable exact-payload assertions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Thread-aware replies and follow-ups                          | Existing finite destination selection, top-level DM default, inherited threads and durable channel subscriptions; adapter tests. Installed channel grants remain separate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| Multi-speaker context                                        | Bounded attributed first-mention history plus actual author/channel/thread/timestamps on every newly prepared runtime input, including subscribed follow-ups. Burst/restart/lost-response tests preserve separate speakers and authority. Display-name lookup remains absent.                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Working status and observed progress                         | One brief `On it.` after a 1.5-second job-age grace plus an authoritative pending poll; completed polls stay silent. Actual observed phase permits a native source-thread card; absent/failed observation still permits the fixed ordinary acknowledgment at actual source. Durable one-attempt reservation, no new model call, no fresh acknowledgment after a retained stop attempt. Worker append remains bounded to five-second cadence. ACK is not an actual answer. Existing opt-in coarse status remains separate. Not Mastra's full [tool-aware copy](https://github.com/mastra-ai/mastra/blob/6e8dfcb83facb0861ebefa4fee384429a113acf4/packages/core/src/channels/typing-status.ts), and no top-level DM typing. |
-| Tool cards and approval controls                             | Fixed observed Interaction/Worker task-state cards implemented, not detailed tool lifecycle or arbitrary arguments/results. Mastra's [formatting implementation](https://github.com/mastra-ai/mastra/blob/6e8dfcb83facb0861ebefa4fee384429a113acf4/packages/core/src/channels/formatting.ts) also renders Approve/Deny cards; Computah still needs a durable exact-action approval/resume contract and observed interactivity, not decorative buttons.                                                                                                                                                                                                                                                                    |
-| Stop                                                         | Implemented exact stop/current text control without model work; durable sender/source/audience target, queued withdrawal and real authenticated core cancellation. Legacy unknown-origin and current/historically shared core scopes conservatively gated. Missing handle freezes unresolved for operator reconciliation, never re-admission. Native button still needs observed interactivity and action-to-core binding.                                                                                                                                                                                                                                                                                                |
-| Progressive streaming and generated files/media              | Bounded native task-state start/append/stop implemented for actual threaded sources, not token-by-token final answers. Executable DM/channel tests verify recipient/core isolation and sanitized export; no actual Slack rendering proof. Files/media and lossless attachments remain absent. No silent change to top-level DM placement.                                                                                                                                                                                                                                                                                                                                                                                 |
-| Long-form rich output and safe labeled links                 | Implemented one-post budget of 29,000 escaped/projected retained units plus closure/omission, at most 20 sections of 2900; indivisible-token/packing limits can shorten earlier. Code-safe splits and simple validated HTTP(S) labels outside code. Executable hard-limit/Unicode/accessibility and sanitized-export checks pass. No generic Markdown converter, lossless attachment, semantic cards or client-rendering proof.                                                                                                                                                                                                                                                                                           |
+| Nicety                                                       | Computah evidence and remaining boundary                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Readable lists, paragraphs, emphasis, inline/fenced code     | Implemented instructions in both model roles and the Slack admission protocol; executable fake-Slack payload checks preserve actual newlines, code indentation/literal escapes, URL case/query and escaped control syntax. No real-model compliance or Slack-client rendering claim.                                                                                                                                                                               |
+| Accessible message text, no accidental notifications/unfurls | Full retained top-level accessibility text plus bounded visible mrkdwn sections, explicit `link_names:false`, `parse:none`, entity escaping and unfurls off; executable exact-payload assertions.                                                                                                                                                                                                                                                                  |
+| Thread-aware replies and follow-ups                          | Existing finite destination selection, top-level DM default, inherited threads and durable channel subscriptions; adapter tests. Installed channel grants remain separate.                                                                                                                                                                                                                                                                                         |
+| Multi-speaker context                                        | Bounded attributed first-mention history plus actual author/channel/thread/timestamps on every newly prepared runtime input, including subscribed follow-ups. Burst/restart/lost-response tests preserve separate speakers and authority. Display-name lookup remains absent.                                                                                                                                                                                      |
+| Working status and observed progress                         | June-style optional model-selected task acknowledgment only after complete durable Task-round admission; slow silent utilities remain silent. No timer, canned fallback, fresh phase cards or extra model call. One durable original-source attempt across reopen/uncertainty, suppressed by retained stop; ACK is not an actual answer. Existing opt-in coarse status remains separate. No invented typing/reaction grants or live model/client acceptance claim. |
+| Tool cards and approval controls                             | New generic phase cards are retired; legacy known handles retain bounded cleanup. Detailed tool lifecycle/arguments remain unexposed. Approve/Deny controls still need a durable exact-action approval/resume contract and observed interactivity, not decorative buttons.                                                                                                                                                                                         |
+| Stop                                                         | Implemented exact stop/current text control without model work; durable sender/source/audience target, queued withdrawal and real authenticated core cancellation. Legacy unknown-origin and current/historically shared core scopes conservatively gated. Missing handle freezes unresolved for operator reconciliation, never re-admission. Native button still needs observed interactivity and action-to-core binding.                                         |
+| Progressive streaming and generated files/media              | No new native task-state start/append or token-by-token final answers; only legacy bounded close. Explicit public task acknowledgments use ordinary source posts, not partial JSON or Worker output. Files/media and lossless attachments remain absent. No silent change to top-level DM placement.                                                                                                                                                               |
+| Long-form rich output and safe labeled links                 | Implemented one-post budget of 29,000 escaped/projected retained units plus closure/omission, at most 20 sections of 2900; indivisible-token/packing limits can shorten earlier. Code-safe splits and simple validated HTTP(S) labels outside code. Executable hard-limit/Unicode/accessibility and sanitized-export checks pass. No generic Markdown converter, lossless attachment, semantic cards or client-rendering proof.                                    |
 
 The screenshot's flat inline bullet run is not evidence that serialization removed
 line breaks: the existing adapter preserves supplied newlines even in plain text.

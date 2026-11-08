@@ -86,10 +86,25 @@ const provider: PiProviderConfig = {
           )
         : tools.includes("Task")
           ? fauxAssistantMessage(
-              fauxToolCall("Task", {
-                worker: "primary",
-                text: `Work: ${text}`,
-              }),
+              [
+                fauxToolCall("Task", {
+                  worker: "primary",
+                  text: `Work: ${text}`,
+                  ...(text.includes("[ack]")
+                    ? { acknowledgement: "i'll compare those options." }
+                    : {}),
+                }),
+                ...(text.includes("[batch]")
+                  ? [
+                      fauxToolCall("Task", {
+                        worker: text.includes("[deny]") ? "" : "secondary",
+                        text: `Other: ${text}`,
+                        acknowledgement:
+                          "must not replace first acknowledgement",
+                      }),
+                    ]
+                  : []),
+              ],
               { stopReason: "toolUse" },
             )
           : fauxAssistantMessage([
@@ -613,6 +628,72 @@ test("operator HTTP reads existing scoped actors, redacts evidence and rechecks 
   }
 });
 
+test("task acknowledgements preserve silence and require the complete admitted native dispatch round", async (context) => {
+  const { client } = await setupTest(context, core.registry);
+  for (const [marker, expected] of [
+    ["", []],
+    ["[ack]", ["i'll compare those options."]],
+    ["[ack][batch]", ["i'll compare those options."]],
+    ["[ack][batch][deny]", []],
+  ] as const) {
+    const scope = { ...alice, agentId: `ack-${marker}` };
+    grants.set(
+      key(scope),
+      new Set(["task.send", "history.read", "task.control"]),
+    );
+    const session = core.attach(client)(scope);
+    const admitted = await session.submit(
+      session.interactionId,
+      `[slow]${marker} compare alpha and omega`,
+      `ack-${marker}`,
+    );
+    const controller = new AbortController();
+    const texts = new Set<string>();
+    try {
+      for await (const views of session.observe(
+        admitted.submissionId,
+        controller.signal,
+      )) {
+        for (const view of views) {
+          if (view.acknowledgement) {
+            expect(view.source).toBe("interaction");
+            texts.add(view.acknowledgement);
+          }
+        }
+        if (
+          views.some(
+            (view) =>
+              view.source === "interaction" &&
+              ["done", "unanswered"].includes(view.submission?.status ?? ""),
+          )
+        )
+          break;
+      }
+      expect([...texts]).toEqual(expected);
+      const result = await session.result(
+        session.interactionId,
+        admitted.submissionId,
+        true,
+      );
+      expect(result.submission.status).toBe("done");
+      const completed = new AbortController();
+      try {
+        for await (const views of session.observe(
+          admitted.submissionId,
+          completed.signal,
+        )) {
+          expect(views.every((view) => !view.acknowledgement)).toBe(true);
+          break;
+        }
+      } finally {
+        completed.abort();
+      }
+    } finally {
+      controller.abort();
+    }
+  }
+});
+
 test("live Worker observations survive disconnect, result replay and active cancellation stops delegated work", async (context) => {
   const { client } = await setupTest(context, core.registry);
   const scope = { ...alice, agentId: "stream" };
@@ -691,10 +772,11 @@ test("live Worker observations survive disconnect, result replay and active canc
     ).json()) as { id: string };
   try {
     const text =
-      "[slow][length] observe alpha-749 and omega-951 until complete";
+      "[slow][length][ack] observe alpha-749 and omega-951 until complete";
     const first = await admit(text, "stream-first");
     const disconnected = new AbortController();
     let sawPartial = false;
+    let sawAcknowledgement = false;
     for await (const frame of events(first.id, disconnected.signal)) {
       const observations =
         frame.kind === "resync"
@@ -702,6 +784,11 @@ test("live Worker observations survive disconnect, result replay and active canc
           : frame.kind === "observation"
             ? [frame.observation]
             : [];
+      sawAcknowledgement ||= observations.some(
+        (item) =>
+          item.source === "interaction" &&
+          item.acknowledgement === "i'll compare those options.",
+      );
       if (
         observations.some(
           (item: { source: string; phase: string; text: string }) =>
@@ -718,6 +805,16 @@ test("live Worker observations survive disconnect, result replay and active canc
       if (frame.kind === "result") break;
     }
     expect(sawPartial).toBe(true);
+    expect(sawAcknowledgement).toBe(true);
+    // A saved eligible acknowledgment is not permission to replay private state.
+    grants.get(key(scope))?.delete("history.read");
+    try {
+      const denied = await request(`/v1/submissions/${first.id}/events`);
+      expect(denied.status).toBe(403);
+      expect(await denied.text()).not.toContain("compare those options");
+    } finally {
+      grants.get(key(scope))?.add("history.read");
+    }
     const replay: SubmissionObservationEvent[] = [];
     for await (const frame of events(first.id)) replay.push(frame);
     expect(replay[0]).toMatchObject({ kind: "resync", sequence: 0 });
@@ -747,7 +844,7 @@ test("live Worker observations survive disconnect, result replay and active canc
     });
 
     const second = await admit(
-      "[slow] cancel this active Worker before it completes a very long answer",
+      "[slow][ack] cancel this active Worker before it completes a very long answer",
       "stream-cancel",
     );
     for await (const frame of events(second.id)) {
@@ -759,8 +856,9 @@ test("live Worker observations survive disconnect, result replay and active canc
             : [];
       if (
         observations.some(
-          (item: { source: string; text: string }) =>
-            item.source === "worker" && item.text.length > 0,
+          (item) =>
+            item.source === "interaction" &&
+            item.acknowledgement === "i'll compare those options.",
         )
       )
         break;
@@ -776,6 +874,19 @@ test("live Worker observations survive disconnect, result replay and active canc
     expect((await session.history(session.workerId())).items).toEqual(stopped);
     const cancelledFrames: SubmissionObservationEvent[] = [];
     for await (const frame of events(second.id)) cancelledFrames.push(frame);
+    expect(
+      cancelledFrames
+        .flatMap((frame) =>
+          frame.kind === "resync"
+            ? frame.observations
+            : frame.kind === "observation"
+              ? [frame.observation]
+              : [],
+        )
+        .every(
+          (item) => item.source !== "interaction" || !item.acknowledgement,
+        ),
+    ).toBe(true);
     expect(cancelledFrames.at(-1)).toMatchObject({
       kind: "result",
       submission: { outcome: "cancelled" },

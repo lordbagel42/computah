@@ -90,6 +90,7 @@ test("per-receipt answer deadlines survive blocked core, batches, restart and un
     });
     return {
       db,
+      transport,
       get adapter() {
         return adapter;
       },
@@ -235,10 +236,12 @@ test("per-receipt answer deadlines survive blocked core, batches, restart and un
     exact.close();
 
     const working = fixture();
+    working.transport.acknowledgement = async () =>
+      "i'll compare those options.";
     working.outcome("streaming");
     working.adapter.admit(working.event("working"), 0);
     await working.adapter.step();
-    working.now(1500);
+    working.now(1);
     await working.adapter.step();
     assert.equal(working.posts, 1, "acknowledgement is visible");
     working.adapter.pumpReplyLatency();

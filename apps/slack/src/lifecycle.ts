@@ -26,13 +26,10 @@ export interface ProgressStream {
   terminal?: StreamEnd;
 }
 
-/** Fixed phase cards, never streamed answer envelopes, tool arguments or labels. */
-export function taskUpdates(phase: Exclude<Progress, null>, end?: StreamEnd) {
-  const status = !end
-    ? ("in_progress" as const)
-    : end === "completed"
-      ? ("complete" as const)
-      : ("error" as const);
+/** Terminal cleanup for already-persisted cards, never fresh progress. */
+export function taskUpdates(phase: Exclude<Progress, null>, end: StreamEnd) {
+  const status =
+    end === "completed" ? ("complete" as const) : ("error" as const);
   const title =
     end === "unknown"
       ? "Observation ended; work may still be running"
@@ -40,9 +37,7 @@ export function taskUpdates(phase: Exclude<Progress, null>, end?: StreamEnd) {
         ? "Core confirmed cancellation; external effects are not rolled back"
         : end === "failed"
           ? "Core reported failure"
-          : end === "completed"
-            ? "Core finished; answer delivery is separate"
-            : "On it.";
+          : "Core finished; answer delivery is separate";
   return [
     { type: "task_update" as const, id: "interaction", title, status },
     ...(phase === "worker"
@@ -58,12 +53,12 @@ export function taskUpdates(phase: Exclude<Progress, null>, end?: StreamEnd) {
   ];
 }
 
-/** Read only the first bounded current snapshot; text and worker labels never
- * leave this boundary. SSE sequence numbers are not replay cursors. */
-export async function readProgress(
+/** Read only explicitly public admission-gated acknowledgement, never live text,
+ * envelopes or Worker output. SSE sequence numbers are not replay cursors. */
+export async function readAcknowledgement(
   response: Response,
   submission: string,
-): Promise<Progress> {
+): Promise<string | null> {
   if (!response.ok || !response.body)
     throw new Error("Observation unavailable");
   const reader = response.body.getReader();
@@ -91,21 +86,18 @@ export async function readProgress(
       if (value.submissionId !== submission || value.kind !== "resync")
         return null;
       if (!Array.isArray(value.observations)) return null;
-      const active = value.observations.filter(
+      const active = value.observations.find(
         (item: Record<string, unknown>) =>
           item &&
           item.submissionId === submission &&
-          ["generating", "delegating"].includes(String(item.phase)),
+          item.source === "interaction" &&
+          item.workerLabel === null &&
+          ["generating", "delegating"].includes(String(item.phase)) &&
+          typeof item.acknowledgement === "string" &&
+          item.acknowledgement.trim() &&
+          item.acknowledgement.length <= 3500,
       );
-      return active.some(
-        (item: Record<string, unknown>) => item.source === "worker",
-      )
-        ? "worker"
-        : active.some(
-              (item: Record<string, unknown>) => item.source === "interaction",
-            )
-          ? "interaction"
-          : null;
+      return active?.acknowledgement ?? null;
     }
     throw new Error("Observation too large");
   } finally {

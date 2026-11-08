@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import {
   type Binding,
@@ -11,7 +12,7 @@ import {
 } from "../src/adapter.js";
 import {
   CoreDenied,
-  readProgress,
+  readAcknowledgement,
   type StreamUpdate,
 } from "../src/lifecycle.js";
 
@@ -92,8 +93,8 @@ function fixture(bindings = [owner]) {
     async status() {
       return "ok";
     },
-    async progress() {
-      return "worker";
+    async acknowledgement() {
+      return null;
     },
   };
   let adapter = new SlackAdapter(
@@ -122,6 +123,21 @@ function fixture(bindings = [owner]) {
     cancel(value: unknown) {
       cancel = value;
     },
+    legacyStream() {
+      const db = new DatabaseSync(path);
+      db.prepare(
+        "UPDATE job_lifecycle SET progress=1, stream=? WHERE kind='work'",
+      ).run(
+        JSON.stringify({
+          state: "open",
+          phase: "worker",
+          ts: "15.001",
+          next: 0,
+          attempts: 0,
+        }),
+      );
+      db.close();
+    },
     failPost() {
       failPost = true;
     },
@@ -148,11 +164,9 @@ function fixture(bindings = [owner]) {
   };
 }
 
-test("native phase cards survive reopen, append only observed Worker phase and close independently of the final answer", async () => {
+test("legacy native cards survive reopen without new appends and close independently of the final answer", async () => {
   const f = fixture();
   const updates: StreamUpdate[] = [];
-  let phase: "interaction" | "worker" = "interaction";
-  f.transport.progress = async () => phase;
   f.transport.stream = async (_binding, update) => {
     updates.push(update);
     return { status: "ok", ts: "15.001" };
@@ -161,50 +175,42 @@ test("native phase cards survive reopen, append only observed Worker phase and c
     f.adapter.admit(input("1", "work", { thread_ts: "1.000" }));
     f.advance();
     await f.adapter.step();
+    f.legacyStream();
     await f.adapter.step();
-    assert.deepEqual(updates, [
-      { channel: "DOWNER", thread: "1.000", phase: "interaction" },
-    ]);
-    f.reopen();
-    f.advance();
-    phase = "worker";
-    await f.adapter.step();
-    assert.deepEqual(updates[1], {
-      channel: "DOWNER",
-      thread: "1.000",
-      phase: "worker",
-      ts: "15.001",
-    });
+    assert.equal(updates.length, 0);
     f.reopen();
     f.advance();
     await f.adapter.step();
-    assert.equal(updates.length, 2, "same snapshot must not replay an append");
+    f.reopen();
+    f.advance();
+    await f.adapter.step();
+    assert.equal(updates.length, 0, "legacy cards never append new activity");
     f.outcome("completed");
     await f.adapter.step();
     assert.equal(f.posts.length, 1);
     assert.equal(f.posts[0][1], "final answer");
     f.reopen();
     await f.adapter.step();
-    assert.equal(updates[2].terminal, "completed");
-    assert.equal(updates[2].ts, "15.001");
+    assert.equal(updates[0].terminal, "completed");
+    assert.equal(updates[0].ts, "15.001");
     f.reopen();
     await f.adapter.step();
-    assert.equal(updates.length, 3);
+    assert.equal(updates.length, 1);
     assert.equal(f.posts.length, 1);
   } finally {
     f.close();
   }
 });
 
-test("ambiguous native starts never replay or fall back; explicit unsupported starts fall back once", async () => {
-  for (const unsupported of [false, true]) {
+test("new work never starts phase cards or canned fallbacks, including in a source thread", async () => {
+  for (const acknowledgement of [null, "i'll compare those options."]) {
     const f = fixture();
     let starts = 0;
     f.transport.stream = async () => {
       starts++;
-      if (!unsupported) throw new Error("lost stream handle");
-      return { status: "unsupported" };
+      throw new Error("must not start a new native stream");
     };
+    f.transport.acknowledgement = async () => acknowledgement;
     try {
       f.adapter.admit(input("1", "work", { thread_ts: "1.000" }));
       f.advance();
@@ -213,20 +219,23 @@ test("ambiguous native starts never replay or fall back; explicit unsupported st
       f.reopen();
       f.advance();
       await f.adapter.step();
-      assert.equal(starts, 1);
-      assert.equal(f.posts.length, unsupported ? 1 : 0);
+      assert.equal(starts, 0);
+      assert.deepEqual(
+        f.posts.map((post) => post[1]),
+        acknowledgement ? [acknowledgement] : [],
+      );
       f.outcome("completed");
       await f.adapter.step();
       await f.adapter.step();
       assert.equal(f.posts.at(-1)?.[1], "final answer");
-      assert.equal(starts, 1);
+      assert.equal(starts, 0);
     } finally {
       f.close();
     }
   }
 });
 
-test("card cleanup is bounded, restart-safe and does not block failed or cancelled final delivery", async () => {
+test("legacy card cleanup is bounded, restart-safe and does not block failed or cancelled final delivery", async () => {
   for (const terminal of ["failed", "cancelled"]) {
     const f = fixture();
     let closes = 0;
@@ -243,6 +252,7 @@ test("card cleanup is bounded, restart-safe and does not block failed or cancell
       f.adapter.admit(input("1", "work", { thread_ts: "1.000" }));
       f.advance();
       await f.adapter.step();
+      f.legacyStream();
       await f.adapter.step();
       if (terminal === "cancelled") {
         f.adapter.admit(input("2", "stop", { thread_ts: "1.000" }));
@@ -273,11 +283,7 @@ test("card cleanup is bounded, restart-safe and does not block failed or cancell
 
 test("top-level source never becomes a native stream even when reply preference is threaded", async () => {
   const f = fixture();
-  let observations = 0;
-  f.transport.progress = async () => {
-    observations++;
-    return "worker";
-  };
+  f.transport.acknowledgement = async () => "i'll check that.";
   f.transport.stream = async () => {
     throw new Error("must not stream top-level origin");
   };
@@ -288,11 +294,6 @@ test("top-level source never becomes a native stream even when reply preference 
     await f.adapter.step();
     assert.equal(f.posts.length, 1);
     assert.equal(f.posts[0][2], null);
-    assert.equal(
-      observations,
-      0,
-      "an unusable phase lookup must not delay the acknowledgment",
-    );
   } finally {
     f.close();
   }
@@ -309,6 +310,7 @@ test("ambiguous final delivery remains unreplayed while its known card is cleane
     f.adapter.admit(input("1", "work", { thread_ts: "1.000" }));
     f.advance();
     await f.adapter.step();
+    f.legacyStream();
     await f.adapter.step();
     f.failPost();
     f.outcome("completed");
@@ -318,9 +320,9 @@ test("ambiguous final delivery remains unreplayed while its known card is cleane
     f.reopen();
     await f.adapter.step();
     assert.equal(f.posts.length, 1);
-    assert.equal(updates.length, 2);
-    assert.equal(updates[1].terminal, "completed");
-    assert.equal(updates[1].ts, "15.001");
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].terminal, "completed");
+    assert.equal(updates[0].ts, "15.001");
   } finally {
     f.close();
   }
@@ -337,6 +339,7 @@ test("requested cancellation remains nonterminal and card shutdown does not canc
     f.adapter.admit(input("1", "work", { thread_ts: "1.000" }));
     f.advance();
     await f.adapter.step();
+    f.legacyStream();
     await f.adapter.step();
     f.cancel({ submissionId: "signed-handle", status: "requested" });
     f.adapter.admit(input("2", "stop", { thread_ts: "1.000" }));
@@ -365,43 +368,36 @@ test("requested cancellation remains nonterminal and card shutdown does not canc
   }
 });
 
-test("ambiguous appends are not replayed; user-stopped display is not cancellation authority", async () => {
+test("legacy user-stopped display is not cancellation authority and cleanup never restarts it", async () => {
   for (const stopped of [true, false]) {
     const f = fixture();
-    let phase: "interaction" | "worker" = "interaction";
-    let appends = 0;
     let closes = 0;
-    f.transport.progress = async () => phase;
     f.transport.stream = async (_binding, update) => {
       if (update.terminal) {
         closes++;
-        return { status: "ok" };
-      }
-      if (update.ts) {
-        appends++;
-        if (!stopped) throw new Error("lost append response");
+        if (!stopped) throw new Error("lost cleanup response");
         return { status: "closed" };
       }
-      return { status: "ok", ts: "15.001" };
+      throw new Error("no starts or appends");
     };
     try {
       f.adapter.admit(input("1", "work", { thread_ts: "1.000" }));
       f.advance();
       await f.adapter.step();
+      f.legacyStream();
       await f.adapter.step();
-      phase = "worker";
       f.advance();
       await f.adapter.step();
       f.reopen();
       f.advance();
       await f.adapter.step();
-      assert.equal(appends, 1);
+      assert.equal(closes, 0);
       assert.equal(
         f.calls.some((c) => c.path.endsWith("/cancel")),
         false,
       );
       await f.adapter.stop();
-      assert.equal(closes, stopped ? 0 : 1);
+      assert.equal(closes, 1);
       assert.equal(
         f.calls.some((c) => c.path.endsWith("/cancel")),
         false,
@@ -529,7 +525,7 @@ test("cancellation outcomes stay truthful, and ambiguous confirmation sends neve
   ] as const) {
     const f = fixture();
     try {
-      f.transport.progress = undefined;
+      f.transport.acknowledgement = undefined;
       f.adapter.admit(input("1", "work"));
       f.advance();
       await f.adapter.step();
@@ -630,6 +626,7 @@ test("working acknowledgement stays at the source even when final reply placemen
     ["reply top-level: work", "10.001", "10.001"],
   ] as const) {
     const f = fixture();
+    f.transport.acknowledgement = async () => "i'll check that.";
     try {
       f.adapter.admit(input("1", text, { thread_ts: source }));
       f.advance();
@@ -648,13 +645,16 @@ test("working acknowledgement stays at the source even when final reply placemen
 test("working acknowledgement is brief, at most one attempt across reopen/uncertain send, and preserves top-level DM", async () => {
   for (const failed of [false, true]) {
     const f = fixture();
+    f.transport.acknowledgement = async () => "i'll compare those options.";
     try {
       f.adapter.admit(input("1", "work"));
       f.advance();
       await f.adapter.step();
       if (failed) f.failPost();
       await f.adapter.step();
-      assert.deepEqual(f.posts, [["DOWNER", "On it.", null]]);
+      assert.deepEqual(f.posts, [
+        ["DOWNER", "i'll compare those options.", null],
+      ]);
       f.reopen();
       await f.adapter.step();
       assert.equal(f.posts.length, 1);
@@ -670,49 +670,74 @@ test("working acknowledgement is brief, at most one attempt across reopen/uncert
   }
 });
 
-test("instant answers skip acknowledgement; pending work gets one after the grace period even without observation", async () => {
-  for (const [instant, failedObservation] of [
-    [true, false],
-    [false, false],
-    [false, true],
+test("slow silent utilities and failed observations stay silent; a later chosen acknowledgement is not consumed", async () => {
+  for (const observed of [
+    null,
+    "",
+    " ",
+    "x".repeat(3501),
+    new Error("unavailable"),
   ]) {
     const f = fixture();
-    const thread = failedObservation ? "source.001" : null;
-    let observations = 0;
-    f.transport.progress = failedObservation
-      ? async () => {
-          observations++;
-          throw new Error("observation unavailable");
-        }
-      : undefined;
-    if (failedObservation)
-      f.transport.stream = async () => {
-        throw new Error("must not start a card without observation");
-      };
+    f.transport.acknowledgement = async () => {
+      if (observed instanceof Error) throw observed;
+      return observed;
+    };
     try {
-      f.adapter.admit(input("1", "work", { thread_ts: thread ?? undefined }));
+      f.adapter.admit(input("1", "quick utility"));
       f.advance(1200);
       await f.adapter.step();
-      f.advance(299);
-      await f.adapter.step();
-      assert.deepEqual(f.posts, [], "no chatter before 1.5 seconds");
-      if (!instant) {
-        f.advance(1);
+      for (let i = 0; i < 3; i++) {
+        f.advance(60_000);
         await f.adapter.step();
-        assert.deepEqual(f.posts, [["DOWNER", "On it.", thread]]);
-        assert.equal(observations, failedObservation ? 1 : 0);
+        assert.deepEqual(
+          f.posts,
+          [],
+          "time alone must never generate a placeholder",
+        );
         f.reopen();
-        f.advance(6000);
-        await f.adapter.step();
-        assert.equal(f.posts.length, 1);
-        assert.equal(observations, failedObservation ? 1 : 0);
       }
+      f.transport.acknowledgement = async () => "i'll compare those options.";
+      await f.adapter.step();
+      assert.deepEqual(f.posts, [
+        ["DOWNER", "i'll compare those options.", null],
+      ]);
       f.outcome("completed");
       await f.adapter.step();
       assert.deepEqual(
         f.posts.map((p) => p[1]),
-        instant ? ["final answer"] : ["On it.", "final answer"],
+        ["i'll compare those options.", "final answer"],
       );
+    } finally {
+      f.close();
+    }
+  }
+});
+
+test("chosen acknowledgement has no age gate; completed polls and stop admitted during observation suppress it", async () => {
+  for (const state of ["pending", "completed", "stop"] as const) {
+    const f = fixture();
+    let reads = 0;
+    f.transport.acknowledgement = async () => {
+      reads++;
+      if (state === "stop") f.adapter.admit(input("2", "stop"));
+      return "i'll check those sources.";
+    };
+    try {
+      f.adapter.admit(input("1", "research"));
+      f.advance(1200); // Only the existing burst admission quiet window.
+      await f.adapter.step();
+      if (state === "completed") f.outcome("completed");
+      await f.adapter.step();
+      assert.deepEqual(
+        f.posts.map((post) => post[1]),
+        state === "pending"
+          ? ["i'll check those sources."]
+          : state === "completed"
+            ? ["final answer"]
+            : [],
+      );
+      assert.equal(reads, state === "completed" ? 0 : 1);
     } finally {
       f.close();
     }
@@ -728,8 +753,10 @@ test("observation reader consumes one bounded resync, ignores text/envelopes and
       {
         submissionId: "signed",
         source: "interaction",
+        workerLabel: null,
         phase: "generating",
         text: '{"requestId":"private-partial-envelope"}',
+        acknowledgement: "i'll compare those options.",
       },
       {
         submissionId: "signed",
@@ -737,6 +764,7 @@ test("observation reader consumes one bounded resync, ignores text/envelopes and
         phase: "generating",
         text: "private-worker-output",
         workerLabel: "private-label",
+        acknowledgement: "must never use Worker text",
       },
     ],
   };
@@ -754,24 +782,49 @@ test("observation reader consumes one bounded resync, ignores text/envelopes and
       },
     }),
   );
-  assert.equal(await readProgress(response, "signed"), "worker");
+  assert.equal(
+    await readAcknowledgement(response, "signed"),
+    "i'll compare those options.",
+  );
   assert.equal(closed, true);
   assert.equal(
-    await readProgress(
+    await readAcknowledgement(
       new Response(`data: ${JSON.stringify(frame)}\n\n`),
       "foreign",
     ),
     null,
   );
   assert.equal(
-    await readProgress(
+    await readAcknowledgement(
       new Response('data: {"kind":"result","submissionId":"signed"}\n\n'),
       "signed",
     ),
     null,
   );
   await assert.rejects(
-    readProgress(new Response("x".repeat(128_001)), "signed"),
+    readAcknowledgement(new Response("x".repeat(128_001)), "signed"),
     /too large/,
   );
+  for (const override of [
+    { acknowledgement: undefined },
+    { acknowledgement: "" },
+    { acknowledgement: 3 },
+    { acknowledgement: "x".repeat(3501) },
+    { source: "worker" },
+    { workerLabel: "private" },
+    { submissionId: "foreign" },
+    { phase: "completed" },
+  ]) {
+    const observations = [
+      { ...frame.observations[0], ...override },
+      frame.observations[1],
+    ];
+    assert.equal(
+      await readAcknowledgement(
+        new Response(`data: ${JSON.stringify({ ...frame, observations })}\n\n`),
+        "signed",
+      ),
+      null,
+    );
+  }
 });

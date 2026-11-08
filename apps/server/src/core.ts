@@ -36,7 +36,7 @@ import {
   ToolTask,
   type Tx,
 } from "@earendil-works/pi-durable";
-import { obj, str } from "@earendil-works/pi-schema";
+import { obj, opt, str } from "@earendil-works/pi-schema";
 import {
   type PiOptions,
   type PiPromptResult,
@@ -105,6 +105,7 @@ export type CoreObservation = {
   workerLabel: string | null;
   view: ConversationView;
   submission: SubmissionRecord | undefined;
+  acknowledgement?: string;
 };
 export type Capability =
   | "task.send"
@@ -219,6 +220,9 @@ type Delegation = {
   submissionId?: SubmissionId;
   reviewTaskId?: TaskId;
   reviewCarrier?: Record<string, string>;
+  acknowledgement?: string;
+  batch?: string[];
+  call?: string;
 };
 type SentinelReceipt = ReturnType<typeof sentinelAudit> & {
   mode: "monitor" | "preflight";
@@ -827,8 +831,12 @@ export function createCore(options: CoreOptions) {
         defineTool({
           name: "Task",
           description:
-            "Delegate to a persistent Worker. Reuse the same worker label for follow-ups.",
-          parameters: obj({ worker: str(), text: str() }),
+            "Delegate to a persistent Worker. Reuse the same worker label for follow-ups. Optional acknowledgement is brief public prose about the task, not a final answer; omit it or use empty text for quick utilities.",
+          parameters: obj({
+            worker: str(),
+            text: str(),
+            acknowledgement: opt(str({ maxLength: 3500 })),
+          }),
           // Replaying this RPC is safe because the Worker durably deduplicates this tool task ID.
           replay: "safe",
           execute: (args, api, context) =>
@@ -867,6 +875,15 @@ export function createCore(options: CoreOptions) {
                   inputs: [...inputs],
                   grants: [...grants],
                   carrier,
+                  ...(args.acknowledgement !== undefined
+                    ? { acknowledgement: args.acknowledgement }
+                    : {}),
+                  // The complete native tool round exists before any execution.
+                  // Never infer all-admitted from whichever receipts arrived first.
+                  batch: (live.tools ?? [])
+                    .filter((tool) => tool.name === "Task")
+                    .map((tool) => `${live.run?.taskId}:${tool.callId}`),
+                  call: `${live.run?.taskId}:${api.callId}`,
                 };
                 if (!selected || !sentinel || !live.run) return null;
                 state.calls[requestId].reviewCarrier ??= carrier.traceparent
@@ -1389,6 +1406,44 @@ export function createCore(options: CoreOptions) {
           (await c.pi.snapshot(Delegations, root.id, BACKGROUND_CONTEXT))
             ?.calls ?? {},
         ).filter((link) => link.inputs.includes(submissionId));
+      },
+      taskAcknowledgement: async (
+        c: { pi: Harness },
+        submissionId: SubmissionId,
+      ) => {
+        const root = await c.pi.root(BACKGROUND_CONTEXT);
+        const live = await c.pi.snapshot(LiveDoc, root.id, BACKGROUND_CONTEXT);
+        const state = await c.pi.snapshot(
+          Delegations,
+          root.id,
+          BACKGROUND_CONTEXT,
+        );
+        if (!state || !live?.run?.inputs.includes(submissionId)) return null;
+        const calls = new Map(
+          Object.values(state.calls).map((link) => [link.call, link]),
+        );
+        for (const link of Object.values(state.calls)) {
+          const batch = link.batch?.map((id) => calls.get(id));
+          if (
+            !link.inputs.includes(submissionId) ||
+            !batch?.length ||
+            !batch.every(
+              (call) =>
+                call?.submissionId &&
+                call.inputs.every(
+                  (id) =>
+                    live.run?.inputs.includes(id) &&
+                    !state.cancelled[String(id)],
+                ),
+            )
+          )
+            continue;
+          const text = batch.find((call) =>
+            call?.acknowledgement?.trim(),
+          )?.acknowledgement;
+          if (text?.trim() && text.length <= 3500) return text;
+        }
+        return null;
       },
       sentinelAudits: async (
         c: { pi: Harness },
@@ -2050,6 +2105,19 @@ export function createCore(options: CoreOptions) {
               await Promise.all(
                 [...updaters.values()].map((update) => update()),
               );
+              const acknowledgement =
+                await actor.taskAcknowledgement(submissionId);
+              const interactionView = views.get(interactionId(scope));
+              if (interactionView) {
+                delete interactionView.acknowledgement;
+                if (
+                  acknowledgement &&
+                  ["queued", "placed"].includes(
+                    interactionView.submission?.status ?? "",
+                  )
+                )
+                  interactionView.acknowledgement = acknowledgement;
+              }
               await permit(scope, "history.read");
               await actor.sourceAccess();
               for (const id of updaters.keys())

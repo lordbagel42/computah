@@ -57,6 +57,17 @@ label derived from actual durable delegation. Text excludes reasoning and tool
 arguments/results. A final `result` carries authoritative messages/submission and
 only completed/failed/cancelled; unknown is not terminal confirmation.
 
+The Interaction variant optionally includes `acknowledgement` (at most 3,500
+characters): explicit model-selected public task text released only after complete
+durable Task-round admission and current source/history checks. This is not derived
+from partial `text`, tool arguments/results or Worker content; Worker variants cannot
+carry it. Missing/empty means silence, never a client-generated fallback. It is
+available only for current nonterminal inputs, not final-answer confirmation or a
+replayable send instruction. Adapters must reserve effects durably and never replay
+acknowledgment sends on resync. Current Slack uses one ordinary original-source
+attempt and never counts that as an actual answer. Older servers/receipts without
+this additive field remain silent.
+
 ## Read-only operator projection
 
 `OperatorSnapshot` and `OperatorHistoryPage` are the canonical dashboard shapes.

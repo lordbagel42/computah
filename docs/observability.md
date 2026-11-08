@@ -204,10 +204,18 @@ a fixed latency SLO or separate human presentation acceptance.
   submit spans rather than introducing per-field spans; live model use of the
   metadata and production adoption remain separate acceptance gaps.
   Rich presentation and stop/progress reuse these same bounded lanes: long-answer
-  executable checks preserve delivery→API parentage, while actual SSE phase and
+  executable checks preserve delivery→API parentage, while actual SSE acknowledgment and
   core cancellation checks cover `slack.status`/`slack.wait`→`slack.core` with
   typed confirmed, denied and unknown outcomes and linked structured logs.
-  Model text, envelopes and worker labels stay out of these sanitized exports.
+  June-style model-selected acknowledgments now replace the fixed timed `On it.`
+  fallback and fresh native phase cards. Their admission and observation reuse
+  native Task/observe lifetimes; send attempts reuse the existing `slack.status`
+  and API spans, including failed observation, cancellation and ambiguous sends.
+  Acknowledgment text, envelopes and worker labels stay out of sanitized exports.
+  Ordinary acknowledgment delivery remains distinct from actual-answer confirmation:
+  the existing 5000/5001ms receipt fixture stays overdue until the canonical final
+  post succeeds. Missing/failed observation produces silence, not a fabricated
+  status. Legacy known stream handles retain bounded terminal cleanup only.
   Retry/reopen and ambiguous sends retain their existing reconciliation rules.
   These are intercepted local exports, not proof of live revision-specific
   Axiom ingestion, real Slack rendering or one unified Slack→native Task tree.

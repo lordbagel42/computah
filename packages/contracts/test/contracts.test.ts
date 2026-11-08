@@ -369,7 +369,9 @@ test("observation fixtures preserve source identity and reject nonterminal resul
       "utf8",
     ),
   );
-  const decode = Schema.decodeUnknownSync(SubmissionObservationEvent);
+  const decode = Schema.decodeUnknownSync(SubmissionObservationEvent, {
+    onExcessProperty: "error",
+  });
   const events = fixture.events.map((event: unknown) => decode(event));
   assert.deepEqual(
     events.map((event: SubmissionObservationEvent) => event.kind),
@@ -387,8 +389,28 @@ test("observation fixtures preserve source identity and reject nonterminal resul
   for (const observation of [
     { ...worker.observation, workerLabel: null },
     { ...worker.observation, source: "interaction" },
+    {
+      ...worker.observation,
+      acknowledgement: "Worker output is not a public acknowledgement",
+    },
   ])
     assert.throws(() => decode({ ...worker, observation }));
+  const interaction = {
+    ...worker.observation,
+    source: "interaction",
+    workerLabel: null,
+    acknowledgement: "i'll compare those options.",
+  };
+  assert.equal(
+    decode({ ...worker, observation: interaction }).kind,
+    "observation",
+  );
+  assert.throws(() =>
+    decode({
+      ...worker,
+      observation: { ...interaction, acknowledgement: "x".repeat(3501) },
+    }),
+  );
   const result = fixture.events[2];
   for (const outcome of ["accepted", "streaming", "unknown"]) {
     assert.throws(() =>

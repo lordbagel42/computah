@@ -22,24 +22,19 @@ const modules={
    auth={test:async()=>({user_id:'UBOT',team_id:'TTEST',response_metadata:{scopes:['chat:write','im:write','im:history','app_mentions:read']}})};
    chat={postMessage:async(p)=>{
      if(p.channel!=='DOWNER'||p.thread_ts!==(process.env.TEST_CARDS?'1.000':undefined))throw new Error('DM was threaded or rerouted');
-     if(p.text==='On it.'){
+     if(p.text==="i'll compare those options."){
+       if(process.env.TEST_CARDS==='legacy'){
+         const {DatabaseSync}=await import('node:sqlite');const db=new DatabaseSync(process.env.COMPUTAH_SLACK_DB);
+         db.prepare("UPDATE job_lifecycle SET stream=? WHERE kind='work'").run(JSON.stringify({state:'open',phase:'worker',ts:'15.001',next:0,attempts:0}));db.close();
+       }
        console.log('synthetic.progress.correct');globalThis.syntheticEmit('2','stop');
      } else if(p.text.includes(process.env.TEST_CANCEL==='denied'?'Core denied cancellation':process.env.TEST_CANCEL==='unknown'?'Cancellation is not confirmed':'Core confirmed cancellation')){
        console.log('synthetic.cancel.correct');process.kill(process.pid,'SIGTERM');
      } else throw new Error('Unexpected or leaked text');
      return {ok:true};
-   },startStream:async(p)=>{
-     if(p.channel!=='DOWNER'||p.thread_ts!=='1.000'||p.recipient_user_id||p.task_display_mode!=='plan'||p.chunks.length!==1||p.chunks[0].id!=='interaction'||p.chunks[0].title!=='On it.'||p.chunks[0].status!=='in_progress'||p.markdown_text||p.blocks)throw new Error('Invalid native start');
-     console.log('synthetic.stream.start.correct');
-     if(process.env.TEST_CARDS==='denied')throw {data:{error:'missing_scope'}};
-     if(process.env.TEST_CARDS==='error'){console.log('synthetic.progress.correct');globalThis.syntheticEmit('2','stop');throw new Error('ambiguous start');}
-     return {ok:true,ts:'15.001'};
-   },appendStream:async(p)=>{
-     if(p.channel!=='DOWNER'||p.ts!=='15.001'||p.chunks.length!==2||p.chunks[1].id!=='worker'||p.chunks[1].status!=='in_progress'||p.markdown_text)throw new Error('Invalid native append');
-     console.log('synthetic.stream.append.correct');console.log('synthetic.progress.correct');globalThis.syntheticEmit('2','stop');return {ok:true};
-   },stopStream:async(p)=>{
-     if(p.channel!=='DOWNER'||p.ts!=='15.001'||p.chunks.length!==2||p.chunks.some(c=>c.status!=='error')||!p.chunks[0].title.includes('confirmed cancellation'))throw new Error('Invalid native stop');
-     console.log('synthetic.stream.stop.correct');return {ok:true};
+   },startStream:async()=>{throw new Error('Must not create phase cards');},appendStream:async()=>{throw new Error('Must not append progress');},stopStream:async(p)=>{
+     if(process.env.TEST_CARDS!=='legacy'||p.channel!=='DOWNER'||p.ts!=='15.001'||p.chunks.length!==2||p.chunks.some(c=>c.status!=='error')||!p.chunks[0].title.includes('confirmed cancellation'))throw new Error('Invalid legacy cleanup');
+     console.log('synthetic.legacy.stop.correct');return {ok:true};
    }};
  }\`
 };
@@ -53,7 +48,7 @@ let waiting=false;
 globalThis.fetch=async(u,o)=>{
  const url=new URL(u);
  if(url.hostname==='api.axiom.co'){
-   if(/private-work-canary|private-envelope-canary|private-worker-label|synthetic-core-secret/.test(o.body))throw new Error('Telemetry leaked private content');
+   if(/private-work-canary|private-envelope-canary|private-worker-label|synthetic-core-secret|compare those options/.test(o.body))throw new Error('Telemetry leaked private content');
    if(url.pathname==='/v1/traces')spans.push(...JSON.parse(o.body).resourceSpans.flatMap(r=>r.scopeSpans.flatMap(s=>s.spans)));
    else {
      logs.push(o.body);
@@ -70,17 +65,17 @@ globalThis.fetch=async(u,o)=>{
    return Response.json({id:'signed-handle'});
  }
  if(url.pathname.endsWith('/events')){
-   if(!process.env.TEST_CARDS){console.log('synthetic.unusable.observation');throw new Error('Top-level acknowledgment fetched an unusable phase');}
    if(o.method||o.headers['last-event-id']||o.headers.accept!=='text/event-stream')throw new Error('Invalid observation reconnect');
    console.log('synthetic.observation.correct');
-   return new Response('data: '+JSON.stringify({version:1,kind:'resync',sequence:0,submissionId:'signed-handle',observations:[{submissionId:'signed-handle',source:process.env.TEST_CARDS&&observations++===0?'interaction':'worker',phase:'generating',workerLabel:'private-worker-label',text:'{"text":"private-envelope-canary"'}]})+'\\n\\n');
+   if(process.env.TEST_CARDS==='observation-error'&&observations++===0)return new Response('{}',{status:503});
+   return new Response('data: '+JSON.stringify({version:1,kind:'resync',sequence:0,submissionId:'signed-handle',observations:[{submissionId:'signed-handle',source:'interaction',phase:'delegating',workerLabel:null,acknowledgement:"i'll compare those options.",text:'{"text":"private-envelope-canary"'},{submissionId:'signed-handle',source:'worker',phase:'generating',workerLabel:'private-worker-label',text:'private-work-canary'}]})+'\\n\\n');
  }
  if(url.pathname.endsWith('/cancel')){
    if(o.method!=='POST'||o.body!=='{}')throw new Error('Invalid cancel request');
    console.log('synthetic.cancel.transport.correct');
    return process.env.TEST_CANCEL==='denied'?new Response('{}',{status:403}):Response.json({submissionId:'signed-handle',status:process.env.TEST_CANCEL==='unknown'?'unknown':'cancelled'});
  }
- // Wait long enough for the actual adapter's five-second progress threshold.
+ // A blocked result request must not stop the separate actual-answer detector.
  waiting=true;
  await new Promise(resolve=>setTimeout(resolve,process.env.TEST_CANCEL==='cancelled'&&!process.env.TEST_CARDS?6100:3100));
  waiting=false;
@@ -88,9 +83,9 @@ globalThis.fetch=async(u,o)=>{
 };
 process.on('exit',()=>{
  const attr=(s,key)=>s.attributes?.find(a=>a.key===key)?.value?.stringValue;
- const status=spans.find(s=>s.name==='computah.slack.status');
+ const status=spans.find(s=>s.name==='computah.slack.status'&&attr(s,'outcome')==='success');
  const child=(name,parent)=>spans.some(s=>s.name===name&&s.traceId===parent?.traceId&&s.parentSpanId===parent?.spanId);
- if(status&&child('computah.slack.api',status)&&(!process.env.TEST_CARDS||child('computah.slack.core',status)))console.log('synthetic.progress.trace.correct');
+ if(status&&child('computah.slack.api',status)&&child('computah.slack.core',status))console.log('synthetic.progress.trace.correct');
  const wait=spans.find(s=>s.name==='computah.slack.wait'&&attr(s,'outcome')===(process.env.TEST_CANCEL==='denied'?'denied':process.env.TEST_CANCEL==='unknown'?'error':'cancelled'));
  const root=spans.find(s=>s.name==='computah.slack.job'&&s.traceId===wait?.traceId&&s.spanId===wait?.parentSpanId);
  if(root&&spans.some(s=>s.name==='computah.slack.receive'&&s.traceId===root.traceId&&s.spanId===root.parentSpanId))console.log('synthetic.ingress.trace.correct');
@@ -102,26 +97,25 @@ process.on('exit',()=>{
  }))console.log('synthetic.wire.trace.correct');
  if(wait&&root&&child('computah.slack.core',wait))console.log('synthetic.cancel.trace.correct');
  if(logs.join('').includes(process.env.TEST_CANCEL==='denied'?'denied':process.env.TEST_CANCEL==='unknown'?'error':'cancelled'))console.log('synthetic.outcome.log.correct');
- if(process.env.TEST_CARDS==='denied'||process.env.TEST_CARDS==='error'){
-   const expected=process.env.TEST_CARDS==='denied'?'denied':'error';
-   const failed=spans.find(s=>s.name==='computah.slack.status'&&attr(s,'outcome')===expected);
-   if(failed&&spans.some(s=>s.name==='computah.slack.api'&&s.parentSpanId===failed.spanId&&s.traceId===failed.traceId&&attr(s,'outcome')===expected))console.log('synthetic.stream.failure.trace.correct');
+ if(process.env.TEST_CARDS==='observation-error'){
+   const failed=spans.find(s=>s.name==='computah.slack.status'&&attr(s,'outcome')==='error');
+   if(failed&&child('computah.slack.core',failed))console.log('synthetic.observation.failure.trace.correct');
  }
- if(process.env.TEST_CARDS==='success'){
+ if(process.env.TEST_CARDS==='legacy'){
    const end=spans.find(s=>s.name==='computah.slack.status'&&attr(s,'outcome')==='cancelled');
-   if(end&&child('computah.slack.api',end))console.log('synthetic.stream.end.trace.correct');
+   if(end&&child('computah.slack.api',end))console.log('synthetic.legacy.trace.correct');
  }
 });
 `;
 
-test("executable uses actual observation phases and scoped stop transport with sanitized parent-linked outcomes", async () => {
+test("executable sends only explicit task acknowledgement and scoped stop transport with sanitized parent-linked outcomes", async () => {
   for (const [outcome, cards] of [
     ["cancelled", ""],
     ["denied", ""],
     ["unknown", ""],
-    ["cancelled", "success"],
-    ["cancelled", "denied"],
-    ["cancelled", "error"],
+    ["cancelled", "thread"],
+    ["cancelled", "observation-error"],
+    ["cancelled", "legacy"],
   ]) {
     const dir = await mkdtemp(join(tmpdir(), "slack-lifecycle-executable-"));
     try {
@@ -201,16 +195,11 @@ test("executable uses actual observation phases and scoped stop transport with s
           ...(outcome === "cancelled" && !cards
             ? ["deadline.during.wait.correct"]
             : []),
-          ...(cards ? ["stream.start.correct"] : []),
-          ...(cards === "success"
-            ? [
-                "stream.append.correct",
-                "stream.stop.correct",
-                "stream.end.trace.correct",
-              ]
+          ...(cards === "observation-error"
+            ? ["observation.failure.trace.correct"]
             : []),
-          ...(cards === "error" || cards === "denied"
-            ? ["stream.failure.trace.correct"]
+          ...(cards === "legacy"
+            ? ["legacy.stop.correct", "legacy.trace.correct"]
             : []),
         ])
           assert.ok(

@@ -32,6 +32,17 @@
         },
         "workerLabel": {
           "type": "null"
+        },
+        "acknowledgement": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 3500
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [

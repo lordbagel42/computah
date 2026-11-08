@@ -24,7 +24,6 @@ import {
 import {
   CoreDenied,
   isStop,
-  type Progress,
   type ProgressStream,
   type StreamEnd,
   type StreamUpdate,
@@ -130,7 +129,10 @@ const bindingsSecrets = (bindings: Binding[]) =>
 
 export interface Transport {
   request(binding: Binding, path: string, body?: unknown): Promise<unknown>;
-  progress?(binding: Binding, submission: string): Promise<Progress>;
+  acknowledgement?(
+    binding: Binding,
+    submission: string,
+  ): Promise<string | null>;
   stream?(
     binding: Binding,
     update: StreamUpdate,
@@ -1458,7 +1460,7 @@ export class SlackAdapter {
   }
 
   private async progressJob(job: Job, binding: Binding) {
-    if (!job.submission || this.now() - job.created < 1500) return;
+    if (!job.submission || !this.transport.acknowledgement) return;
     const lifecycle = this.db
       .prepare(
         "SELECT progress,origin,origin_known FROM job_lifecycle WHERE job=?",
@@ -1466,49 +1468,8 @@ export class SlackAdapter {
       .get(job.id) as
       | { progress: number; origin: string | null; origin_known: number }
       | undefined;
-    if (!lifecycle?.origin_known) return;
-    const stream = this.readStream(job.id);
-    if (stream?.state === "open") {
-      if (stream.next > this.now()) return;
-      stream.next = this.now() + 5000;
-      this.saveStream(job.id, stream);
-      let outcome: PhaseOutcome = "success";
-      try {
-        await this.phase(
-          job.id,
-          "status",
-          async () => {
-            const phase = await this.transport.progress?.(
-              binding,
-              job.submission ?? "",
-            );
-            // Worker phase is monotonic for this aggregate card. Do not replay
-            // snapshots or oscillate back to Interaction between Worker runs.
-            if (phase !== "worker" || stream.phase === "worker") return;
-            stream.phase = phase;
-            stream.state = "uncertain";
-            this.saveStream(job.id, stream);
-            const result = await this.transport.stream?.(binding, {
-              channel: job.channel,
-              thread: lifecycle.origin ?? "",
-              ts: stream.ts,
-              phase,
-            });
-            if (result?.status !== "ok")
-              outcome = result?.status === "unsupported" ? "denied" : "error";
-            stream.state = result?.status === "ok" ? "open" : "closed";
-            this.saveStream(job.id, stream);
-          },
-          undefined,
-          () => outcome,
-        );
-      } catch {
-        // A known handle can still be closed, but an uncertain append is not replayed.
-      }
-      return;
-    }
-    if (lifecycle.progress) return;
-    // A stop attempt may be unconfirmed; don't follow it with a fresh "On it."
+    if (!lifecycle?.origin_known || lifecycle.progress) return;
+    // Retained stop attempts suppress fresh acknowledgements even if uncertain.
     if (
       this.db
         .prepare(
@@ -1517,62 +1478,26 @@ export class SlackAdapter {
         .get(job.id)
     )
       return;
-    // Reserve the only attempt before any external effect. Reconnect/reopen can
-    // omit a marker, never duplicate it or replay final delivery.
-    this.db
-      .prepare("UPDATE job_lifecycle SET progress=1 WHERE job=?")
-      .run(job.id);
-    let outcome: PhaseOutcome = "success";
     try {
-      await this.phase(
-        job.id,
-        "status",
-        async () => {
-          let phase: Progress = null;
-          try {
-            // A phase snapshot only affects native source-thread cards. The
-            // fixed acknowledgment needs the pending result, not another core
-            // read (and its source-authorization round trips) for top-level DMs.
-            if (lifecycle.origin && this.transport.stream)
-              phase =
-                (await this.transport.progress?.(
-                  binding,
-                  job.submission ?? "",
-                )) ?? null;
-          } catch {
-            // The authoritative result already says pending. An optional phase
-            // snapshot is not required to acknowledge that actual admitted work.
-            outcome = "error";
-          }
-          if (phase && lifecycle.origin && this.transport.stream) {
-            const stream: ProgressStream = {
-              state: "starting",
-              phase,
-              next: this.now() + 5000,
-              attempts: 0,
-            };
-            this.saveStream(job.id, stream);
-            const result = await this.transport.stream(binding, {
-              channel: job.channel,
-              thread: lifecycle.origin,
-              phase,
-            });
-            if (result.status === "ok" && result.ts) {
-              stream.ts = result.ts;
-              stream.state = "open";
-              this.saveStream(job.id, stream);
-              return;
-            }
-            stream.state = "closed";
-            this.saveStream(job.id, stream);
-            outcome = result.status === "unsupported" ? "denied" : "error";
-            if (result.status !== "unsupported") return;
-          }
-          await this.transport.post(job.channel, "On it.", lifecycle.origin);
-        },
-        undefined,
-        () => outcome,
-      );
+      await this.phase(job.id, "status", async () => {
+        const text = await this.transport.acknowledgement?.(
+          binding,
+          job.submission ?? "",
+        );
+        // No model-selected text means silence, not a canned fallback. Missing
+        // or failed observations must not consume the durable attempt.
+        if (typeof text !== "string" || !text.trim() || text.length > 3500)
+          return;
+        const reserved = this.db
+          .prepare(
+            `UPDATE job_lifecycle SET progress=1 WHERE job=? AND progress=0
+             AND NOT EXISTS (SELECT 1 FROM job_lifecycle WHERE kind='stop' AND target=?)`,
+          )
+          .run(job.id, job.id);
+        if (!reserved.changes) return;
+        // Commit before the external effect: uncertain sends never replay.
+        await this.transport.post(job.channel, text, lifecycle.origin);
+      });
     } catch {
       // Optional/ambiguous progress never changes final delivery or retries a send.
     }

@@ -18,7 +18,7 @@ import {
   type Transport,
 } from "./adapter.js";
 import type { DebugReport } from "./debugshare.js";
-import { CoreDenied, readProgress, taskUpdates } from "./lifecycle.js";
+import { CoreDenied, readAcknowledgement, taskUpdates } from "./lifecycle.js";
 import { presentSlack } from "./presentation.js";
 import { startTimingBroker } from "./timing-broker.js";
 
@@ -297,38 +297,18 @@ async function run() {
       request,
       ...(streamWeb
         ? ({
-            async stream(binding, update) {
+            async stream(_binding, update) {
               return traceOperation("slack.api", async (span) => {
+                if (!update.ts || !update.terminal)
+                  return { status: "closed" as const };
                 const chunks = taskUpdates(update.phase, update.terminal);
                 try {
-                  if (!update.ts) {
-                    const result = await streamWeb.chat.startStream({
-                      channel: update.channel,
-                      thread_ts: update.thread,
-                      chunks,
-                      task_display_mode: "plan",
-                      ...(!update.channel.startsWith("D")
-                        ? {
-                            recipient_user_id: binding.slackUserId,
-                            recipient_team_id: binding.teamId,
-                          }
-                        : {}),
-                    });
-                    if (
-                      !result.ok ||
-                      typeof result.ts !== "string" ||
-                      !/^\d{1,12}\.\d{1,6}$/.test(result.ts)
-                    )
-                      throw new Error("Invalid stream response");
-                    return { status: "ok" as const, ts: result.ts };
-                  }
                   const args = {
                     channel: update.channel,
                     ts: update.ts,
                     chunks,
                   };
-                  if (update.terminal) await streamWeb.chat.stopStream(args);
-                  else await streamWeb.chat.appendStream(args);
+                  await streamWeb.chat.stopStream(args);
                   return { status: "ok" as const };
                 } catch (error) {
                   const code = (error as { data?: { error?: string } }).data
@@ -361,7 +341,7 @@ async function run() {
             },
           } satisfies Pick<Transport, "stream">)
         : {}),
-      async progress(binding, submission) {
+      async acknowledgement(binding, submission) {
         return traceOperation("slack.core", async () => {
           const response = await fetch(
             new URL(
@@ -378,7 +358,7 @@ async function run() {
               redirect: "error",
             },
           );
-          return readProgress(response, submission);
+          return readAcknowledgement(response, submission);
         });
       },
       ...(publishDebugshare ? { publishDebugshare } : {}),

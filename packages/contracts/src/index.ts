@@ -247,6 +247,9 @@ export const SubmissionObservation = Schema.Union([
     ...observationFields,
     source: Schema.Literal("interaction"),
     workerLabel: Schema.Null,
+    acknowledgement: Schema.optional(
+      Schema.String.check(Schema.isMaxLength(3500)),
+    ),
   }),
   Schema.Struct({
     ...observationFields,
