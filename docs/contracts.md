@@ -57,6 +57,34 @@ label derived from actual durable delegation. Text excludes reasoning and tool
 arguments/results. A final `result` carries authoritative messages/submission and
 only completed/failed/cancelled; unknown is not terminal confirmation.
 
+## Read-only operator projection
+
+`OperatorSnapshot` and `OperatorHistoryPage` are the canonical dashboard shapes.
+The local projection module and [dashboard source](../apps/dashboard/README.md)
+are implemented and checked with synthetic fixtures, but existing-actor-only
+runtime lookup, current operator grants and HTTP wiring remain pending.
+
+Actor availability is present/missing; present with no projected text is distinct
+from missing. Tasks describe only recorded/result-recorded transcript evidence,
+not current running/sleeping/completed state. Workers are discovered from valid
+Task labels on the current Interaction page, never by enumerating a registry or
+creating an unobserved primary Worker. Snapshots are not atomic across actors.
+
+The host must bind read/auth/signing callbacks to the authenticated principal,
+check current history.read and operator.read before access and release (including
+missing actors), and use a dedicated scope-bound operator-history cursor purpose.
+Existing `history()` uses getOrCreate and is not an acceptable fallback. Even an
+existing-only read can wake/resume work; this is not zero-write observation.
+
+The projection removes tool payloads/reasoning, redacts explicitly host-supplied
+configured credentials and known privileged URL bases, and allowlists viewer
+fields rather than serializing a principal. This is not detection of arbitrary
+unknown secrets in user/model text. The browser renders untrusted plain text.
+Limits are 100 native entries per page, eight discovered Workers, 64 Task rows,
+8 KiB per message, 32 KiB total text and 64 KiB serialized JSON. Returned
+truncatedMessageIds/limitations disclose truncation and omissions. Signed
+continuations advance native pages; they do not recover truncated/omitted text.
+
 ## Fixtures and mock
 
 `createMockSession(viewer)` from `@computah/contracts/mock` binds a cloned synthetic
@@ -73,7 +101,9 @@ are implemented. Tests cover mutation dedup/conflicts, two-user access denial,
 replay/resync, cancellation/unknown, terminal output and JSON validation.
 
 `fixtures/v1/observation.json` demonstrates current replacements and reconnect
-resync, not a live or replayed token stream.
+resync, not a live or replayed token stream. `fixtures/v1/operator.json` describes
+synthetic present/missing actors, Task evidence, truncation and pagination; its
+synthetic cursors are not usable credentials or live actor evidence.
 
 Regenerate JSON Schema with `pnpm --filter @computah/contracts schema` after
 editing the source. Commit the generated files with the source change. Breaking

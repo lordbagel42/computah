@@ -74,6 +74,10 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
   or Mac/platform runtime acceptance. This is separate from the local-Pi experiment.
 - **Unimplemented seam:** full streaming core-to-wire AgentAdapter;
   raw Pi histories are not the renderer-neutral protocol.
+- **Dashboard source implemented locally:** [read-only operator UI/BFF](../apps/dashboard/README.md)
+  and bounded canonical projection module pass synthetic checks. Existing-only
+  actor lookup, current operator grants, HTTP wiring and real-stack browser
+  evidence remain pending; no dashboard service is deployed.
 - **Live-verified on nest-bagel:** protected real-mode legacy Codex HTTP requests
   and follow-up; private actor-history inspection confirmed three actual Task
   calls and three primary Worker request/reply pairs without publishing entries.
