@@ -5,6 +5,8 @@ export const monitors: Record<string, string> = {
   CJ6ppm7eC5hOlEr3wD: "operational error-log burst",
   rCr71IpThGhDAqOm7G: "Slack delivery failed or uncertain",
   "5reldgERe5mzOW5IIy": "repeated slow completed Slack submissions",
+  "5AjHOrrrw1RHTFR2ns":
+    "any Slack answer deadline >5s (closed may mean fact expiry, not answered/recovered)",
 };
 
 type Observation = {
@@ -157,6 +159,7 @@ export async function createReceiver(path: string) {
   return {
     status: () => ({
       ...state,
+      monitors: { ...monitors },
       receipts: state.receipts.length,
       receiptTimes: state.receipts.map((receipt) => ({
         processedAt: new Date(receipt.at).toISOString(),
@@ -247,7 +250,7 @@ export async function createReceiver(path: string) {
             state.observations = [...state.observations, ...observations].slice(
               -128,
             );
-            // At most 3 monitors × one day of history; bound message size during catch-up.
+            // At most 4 monitors × one day of history; bound message size during catch-up.
             // Keep latest delivery per monitor in the message; retain bounded observations locally.
             const latest = Object.values(
               Object.fromEntries(observations.map((row) => [row.monitor, row])),

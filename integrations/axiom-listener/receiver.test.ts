@@ -83,7 +83,13 @@ async function fixture() {
 
 test("only authenticated history reaches summaries; duplicate delivery survives reopen", async () => {
   const f = await fixture();
-  const id = f.ids[0] as string;
+  const id = "5AjHOrrrw1RHTFR2ns";
+  expect(Object.keys(f.receiver.status().monitors).sort()).toEqual([
+    "5AjHOrrrw1RHTFR2ns",
+    "5reldgERe5mzOW5IIy",
+    "CJ6ppm7eC5hOlEr3wD",
+    "rCr71IpThGhDAqOm7G",
+  ]);
   const timestamp = new Date(Date.now() - 10000).toISOString();
   f.history[id] = [{ state: "open", timestamp }];
   await f.receiver.handle(f.event(), f.ctx);
@@ -93,6 +99,9 @@ test("only authenticated history reaches summaries; duplicate delivery survives 
   );
   expect(f.messages[0]?.content).toContain(
     "do NOT establish current monitor state or recovery",
+  );
+  expect(f.messages[0]?.content).toContain(
+    "closed may mean fact expiry, not answered/recovered",
   );
   expect(JSON.stringify(f.messages)).not.toContain("CANARY");
   expect(await readFile(f.path, "utf8")).not.toContain("CANARY");

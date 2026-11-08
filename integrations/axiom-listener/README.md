@@ -30,7 +30,7 @@ accepts/queues requests, so invalid bodies can still consume ingress capacity.
 contract or instructions. The handler accepts only this exact JSON shape,
 strict UTF-8, at most 16 KiB, and server receipt times no older than 24 hours or
 over 5 minutes in the future. It never stores or forwards the text. Only fixed
-read-only `axiom.getMonitorHistory` calls for the three source-allowlisted
+read-only `axiom.getMonitorHistory` calls for the four source-allowlisted
 Computah monitors are possible. No payload-provided query, ID, URL or command
 is executed. Alert receipt never authorizes production writes, deployments,
 restarts, deletion or credential escalation.
@@ -46,24 +46,43 @@ health, distinct incident counts or grouped recovery. An `open`/`closed` label
 means only that the recorded notification reported triggering/resolving.
 Do not turn the latest delivery into a current-state assertion.
 
+The fourth monitor, `5AjHOrrrw1RHTFR2ns` (created 2026-11-08 10:54:37.256 UTC),
+counts distinct opaque receipts with actual confirmed reply latency > 5000 ms
+or an independently observed overdue fact > 5000 ms in a 10-minute window.
+It evaluates every minute, 1-of-1, count ≥ 1, with state-change notifications;
+email and the existing Amp notifier were attached at creation. Facts occur once
+per phase, not as periodic pending/backlog updates. An unanswered receipt can
+age out, so `closed`/resolved can mean fact expiry, **not answered or recovered**.
+The receiver's fixed label preserves that warning in every related summary.
+No-data is not health, and the five-second measurement is not a five-second
+notification guarantee. The initial authenticated history read had no entries;
+no additional Send test or synthetic production message was requested or sent.
+The first native history later reported `open` deliveries recorded at
+10:55:49.695Z and 10:55:49.740Z. Amp received the associated wake at
+10:55:49.710Z and processed it at 10:55:50.041Z. The subsequently reloaded
+four-ID inventory is verified; that prior wake did not persist a watermark for
+the new ID, so its history was verified separately by authenticated read rather
+than claimed as a completed new-ID receiver reconciliation. Future native
+wakes reconcile the fixed 24-hour window, without another forced test.
+
 On each wake, the receiver reads a fixed 24-hour window, validates the bounded
 history CSV projection, and compares delivery-time watermarks. Older/equal
 records are conservatively ignored. It retains the latest 128 observations and
-128 event-ID/body-hash receipts (pruned also by 24-hour receipt age), three
-non-expiring delivery cursors, fixed counters and at most three pending summary
+128 event-ID/body-hash receipts (pruned also by 24-hour receipt age), four
+non-expiring delivery cursors, fixed counters and at most four pending summary
 rows. Only exact Amp event IDs deduplicate wakes; body hashes do not establish
 equivalent work. Replays with fresh IDs can prompt read-only reconciliation but
 cannot manufacture observations or regress delivery cursors. Deleting/rolling
 back this private state resets deduplication guarantees.
 
 Whole-state file writes use owner-only temporary files, file fsync, atomic
-rename and directory fsync. One serial owner admits work; all three independent
+rename and directory fsync. One serial owner admits work; all four independent
 history reads run concurrently. Each remote wait is bounded to 10 seconds and
 observes cancellation. Late read results cannot commit. Uncertain late appends
 remain pending. Work inside the 5-second reconciliation guard throws for Amp
 retry rather than silently consuming an uncovered wake. Amp itself admits a
 burst of 10 events and refills 10/minute. Malformed and oversized hints are
-permanent no-ops; transport/schema failures and cancellation retry. Three
+permanent no-ops; transport/schema failures and cancellation retry. Four
 64 KiB history projections bound parsing work; no raw history is persisted.
 
 The durable pending summary is committed together with receipt/cursor updates
@@ -79,7 +98,7 @@ unlimited retention, tested power-loss durability or causal recovery.
 
 ## Operational evidence and remaining gaps
 
-- Axiom notifier `3rvQKl7kBw0cLYmTXV` is attached to the three allowlisted
+- Axiom notifier `3rvQKl7kBw0cLYmTXV` is attached to the four allowlisted
   monitors. Existing email `95zrDnix75ZeUogWpj` remains; no Slack notifier
   existed at setup. Configuration owner verified all other fields unchanged.
 - Native Axiom **Send test**, 2026-11-08: Triggered at 09:35:04.968Z and Resolved
