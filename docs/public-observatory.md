@@ -70,11 +70,23 @@ traffic displacing application activity.
 
 ## Evidence and remaining gaps
 
-- Public shell deployed through Alchemy on 2026-11-08; runtime query credential
-  absent, so actual public production ingestion/render acceptance remains blocked.
+- Public feed activated through Alchemy on 2026-11-08 after private query-token
+  provisioning. The actual Worker returned `live`, 1,000 projected production
+  spans and `truncated: true`; desktop and narrow Chromium rendered live data.
+  One verified snapshot contained backend, Slack, bus and dashboard services,
+  253 present parent relationships and five explicitly missing parents. These
+  counts describe that snapshot only, not completeness or a stable runtime metric.
+- A separate private REST query correlated all 1,000 returned public spans to
+  actual Axiom rows through the keyed span/trace mapping and exact start/duration;
+  zero raw trace/span IDs or credential values appeared in the public response.
+- Activation exposed native Workers `fetch` rejecting the collector as its
+  receiver. Calling the transport as a standalone function changed the deployed
+  path from disconnected to live. The same receiver fix covers the optional
+  exporter, but that disabled export path has no live ingestion claim.
 - Fixed query compiled against real production rows through authorized Axiom MCP:
   https://app.axiom.co/bagel-w3ue/query?qid=fR3cEBDmw9T-to6be1
-  This proves schema/query compatibility, not Worker runtime query authorization.
+  This earlier MCP receipt proves schema compatibility; the activated public
+  Worker query and rendered live response now independently prove its runtime path.
 - Local tests cover positive disclosure canaries, opaque topology, malformed and
   missing ancestry, partial/truncated parsing, single-flight/backoff/stale retention,
   byte/deadline limits and bounded exporter parent/outcome/failure behavior.

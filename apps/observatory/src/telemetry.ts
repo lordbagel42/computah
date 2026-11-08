@@ -73,35 +73,31 @@ export class Telemetry {
         this.exported++;
         this.inFlight++;
         try {
-          const response = await this.transport(
-            "https://api.axiom.co/v1/traces",
-            {
-              method: "POST",
-              signal: AbortSignal.timeout(2000),
-              headers: {
-                Authorization: `Bearer ${this.token}`,
-                "Content-Type": "application/json",
-                "X-Axiom-Dataset": "computah-prod-traces",
-              },
-              body: JSON.stringify({
-                resourceSpans: [
-                  {
-                    resource: {
-                      attributes: [
-                        {
-                          key: "service.name",
-                          value: { stringValue: "computah-observatory" },
-                        },
-                      ],
-                    },
-                    scopeSpans: [
-                      { scope: { name: "computah" }, spans: [span] },
+          const transport = this.transport;
+          const response = await transport("https://api.axiom.co/v1/traces", {
+            method: "POST",
+            signal: AbortSignal.timeout(2000),
+            headers: {
+              Authorization: `Bearer ${this.token}`,
+              "Content-Type": "application/json",
+              "X-Axiom-Dataset": "computah-prod-traces",
+            },
+            body: JSON.stringify({
+              resourceSpans: [
+                {
+                  resource: {
+                    attributes: [
+                      {
+                        key: "service.name",
+                        value: { stringValue: "computah-observatory" },
+                      },
                     ],
                   },
-                ],
-              }),
-            },
-          );
+                  scopeSpans: [{ scope: { name: "computah" }, spans: [span] }],
+                },
+              ],
+            }),
+          });
           await response.body?.cancel();
         } catch {
           // Fail open; export failure never recursively emits another trace or leaks destination text.

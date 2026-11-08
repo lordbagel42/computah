@@ -88,7 +88,9 @@ export class Collector {
     const timer = setTimeout(() => controller.abort(), 8000);
     const end = this.now();
     try {
-      const response = await this.transport(ENDPOINT, {
+      // Native Workers fetch rejects a Collector instance as its receiver.
+      const transport = this.transport;
+      const response = await transport(ENDPOINT, {
         method: "POST",
         signal: controller.signal,
         headers: {
