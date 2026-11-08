@@ -31,11 +31,14 @@ registerHooks({resolve(specifier,context,next){
 }});
 globalThis.fetch=async(_url,options)=>{
   const url=new URL(_url);
+  if(url.hostname==='api.axiom.co')return new Response('{}');
   if(url.hostname==='slack.com'){
+    if(options.headers.traceparent)throw new Error('External trace propagation');
     if(process.env.TEST_CONTEXT!=='granted'||url.pathname!=='/api/conversations.replies'||url.searchParams.get('channel')!=='CALLOWED'||url.searchParams.get('ts')!=='100.001'||url.searchParams.get('latest')!=='105.001'||url.searchParams.get('limit')!=='15'||url.searchParams.get('inclusive')!=='false'||url.searchParams.has('cursor'))throw new Error('Unexpected context access');
     console.log('synthetic.context.lookup');
     return new Response(JSON.stringify({ok:true,messages:[{user:'UPEER',ts:'100.001',text:'synthetic thread root'}],has_more:true,response_metadata:{next_cursor:'must-not-follow'}}));
   }
+  if(process.env.TEST_CONTEXT&&!/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/.test(options.headers.traceparent??''))throw new Error('Missing core trace propagation');
   if(url.pathname==='/v1/submissions'){
     const body=JSON.parse(options.body);
     const correct=options.headers.authorization.endsWith('shared')&&Object.keys(body).sort().join(',')==='clientMutationId,text'&&body.clientMutationId.startsWith('slack:')&&
@@ -104,6 +107,7 @@ async function run(
           COMPUTAH_SLACK_DB: join(dir, "inbox.sqlite"),
           COMPUTAH_SLACK_STATUS_ENABLED: statusRequested ? "true" : "false",
           COMPUTAH_SLACK_BINDINGS_FILE: join(dir, "bindings.json"),
+          COMPUTAH_AXIOM_INGEST_TOKEN: contextScenario ? "synthetic-only" : "",
         },
         stdio: ["ignore", "pipe", "pipe"],
       },

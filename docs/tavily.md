@@ -100,8 +100,13 @@ transcript database, generic fetch tool or parallel harness is introduced.
 
 Public queries/results are ordinary private, scope-owned Pi tool history and may
 be sent to the selected cognition provider, including compaction. No query/result
-logging or telemetry exporter is added, and public ingress must continue omitting
-raw tool records. Tavily necessarily receives explicit queries/URLs; its retention
+logging is added, and public ingress must continue omitting raw tool records.
+The shared sanitized Axiom exporter records `computah.web.search` and
+`computah.web.extract` lifetimes through awaited cleanup, fixed outcome categories
+and conservative request state; unavailable results mark the span failed even
+though the Effect returns a typed value. It does not record queries, URLs, tool
+results or credentials, or inject trace headers into external Tavily requests.
+Tavily necessarily receives explicit queries/URLs; its retention
 policy is external to Computah. This tool cannot infer that arbitrary model text
 contains private information; instructions and host grants do not constitute a
 general DLP guarantee. Never pass secrets/private context to search.

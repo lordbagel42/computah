@@ -17,6 +17,15 @@ DEBUGSHARE collection, diagnostics bundles or diagnostic-agent spawning is added
   model-tracing wrapper when `models` is supplied.
 - Slack records admitted event/ACK lifetime, delivery-loop steps, core requests,
   Web API operations and lifecycle/report categories. Bodies never enter spans.
+- Slack core requests propagate only W3C traceparent IDs to the configured core;
+  backend/bus HTTP ingress accepts strict valid v00 carriers, never baggage or
+  tracestate. Invalid/zero/duplicate carriers start new roots. Correlation never
+  grants identity or authorization, and upstream sampling flags cannot suppress
+  the always-on exporter.
+- Tavily search/extract spans cover authorization, validation, transport, body
+  consumption and awaited cleanup, with fixed ready/failure/timeout/cancel outcome
+  categories and conservative request-state labels. No query, URL, credential or
+  result content enters spans, and no trace headers go to external providers.
 - The separate bus entry point records HTTP, native actor spans and lifecycle.
   It remains dispatch-disabled and does not mount backend/provider credentials.
   Provision only its Axiom credential, not the backend's provider env file.
@@ -57,6 +66,32 @@ SDK defaults/zeros are not proof of actual provider usage. Missing counters rema
 missing, not fabricated zeros. Provider-returned tiers are distinct from requested
 priority. Cost attributes are excluded: SDK pricing-derived cost is not an invoice
 or proof that priority was served.
+
+## Runtime coverage ledger
+
+The AGENTS.md rule requires instrumented runtime changes; this ledger records
+known debt, not permission to silently extend it. Static schemas, assets, fixtures
+and pure transformations do not need meaningless per-byte spans. The unit of
+coverage is an executable operation and its observable outcome/linkage.
+
+| Runtime surface                          | Actual coverage                                                                                          | Remaining proof/work                                                                                                                                                      |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backend HTTP → gateway → Rivet RPC       | Request lifetime/status and Effect operations; active RPC context propagates                             | Abort/disconnect/reconnect and every route's failures are not exhaustively traced/tested                                                                                  |
+| Interaction → Task → Worker              | Native Pi phases and Rivet actions export, including native error/replay events                          | Custom `admit` uses `BACKGROUND_CONTEXT`; Pi creates a new root with no caller link at each admission. Presence is not continuity; sleep/restart linkage remains unproved |
+| Slack → backend                          | Core operation → HTTP → async child correlation locally tested; only configured-core requests inject IDs | Socket receive → persisted inbox → later delivery has no stored carrier; individual adapter state/retry/status outcomes are not fully covered                             |
+| Tavily                                   | Full service operation with typed denial/provider/timeout/cancel outcomes and cleanup lifetime           | Actual production web-tool ingestion is not verified; no automatic retries exist                                                                                          |
+| Standalone bus                           | HTTP and native actor spans                                                                              | Pump/outbox/stream network attempts and replay offsets lack dedicated spans/links; dispatch is disabled, so no bus → backend run linkage is claimed                       |
+| Dashboard                                | No observability bootstrap or export in its Node BFF                                                     | HTTP/auth/upstream/replay and browser interaction instrumentation; dashboard is not deployed                                                                              |
+| Native product                           | No trace exporter in Rust shell or Node host/backend/owner scripts                                       | Input → host IPC → HTTP, polling/cancel, local tools, render/recovery and process lifecycle instrumentation                                                               |
+| Rune/Pi experiment                       | No shared trace exporter in Rust or subprocess bridge                                                    | Input → local Pi IPC, subprocess/tool/relaunch and recovery instrumentation; separate from durable backend                                                                |
+| Dormant Gmail/Sentinel/analytics modules | Not mounted in serving entry points                                                                      | Instrument before activation; not evidence of enabled email/security/analytics collection                                                                                 |
+| Deployment/setup/quality scripts         | Checks/logs, not application trace export                                                                | Separate operational tracing policy; no host/process/SQL/socket/metrics/log pipeline coverage claim                                                                       |
+
+The pinned Pi package's caller-span bridge is internal, not exported publicly.
+Do not import private vendor files or weaken atomic admission/deduplication merely
+to manufacture a link. A supported bridge/upstream export and restart proof are
+needed. A complete repository-wide claim is **not established**. Export remains
+bounded best-effort: no sampling does not mean no loss or all paths instrumented.
 
 ## Provisioning and secrets
 

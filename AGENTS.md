@@ -9,6 +9,16 @@
   Other packets request shared changes rather than duplicating schemas.
 - Run `pnpm format`, `pnpm check`, `pnpm typecheck` and `pnpm test` before commits.
   Commits should be small and explain what changed and why.
+- Runtime tracing is mandatory for all new or changed executable behavior: cover
+  operation lifetimes, failures, cancellation, retries and background/recovery
+  work, not meaningless spans for static bytes. Carry linked trace context across
+  HTTP, actor, queue and durable-task boundaries; do not silently introduce an
+  untraced path. Verify emitted spans, outcomes and parent/link continuity with
+  tests, including failure/cancel cases, through the sanitized Axiom export path.
+  Keep tracing fail-open, bounded and backpressured; never export credentials or
+  hidden reasoning. Document remaining gaps in `docs/observability.md` and
+  distinguish local proof, enabled collection and live Axiom ingestion. Never
+  claim complete coverage merely because emitted spans export without sampling.
 - Build permission alone does not authorize pushing or deployment from Amp.
   Follow explicit task authorization; current Computah main publication and
   nest-bagel deployment are authorized, not unrelated host actions or purchases.

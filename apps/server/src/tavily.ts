@@ -1,3 +1,4 @@
+import { traceOperation } from "@computah/observability";
 import type { Context } from "@earendil-works/chord/context";
 import {
   defineExtension,
@@ -324,7 +325,21 @@ export function createTavily(options: {
       return Effect.suspend(() => {
         let settlement: Promise<TavilyResult> | undefined;
         return Effect.promise((signal) => {
-          settlement = execute(signal);
+          settlement = traceOperation(
+            "query" in input ? "web.search" : "web.extract",
+            async (span) => {
+              const result = await execute(signal);
+              span.setAttribute(
+                "outcome",
+                result.status === "ready" ? "ready" : result.code,
+              );
+              if (result.status === "unavailable") {
+                span.setAttribute("request.state", result.requestState);
+                span.setStatus({ code: 2 });
+              }
+              return result;
+            },
+          );
           return settlement;
         }).pipe(
           Effect.onInterrupt(() =>

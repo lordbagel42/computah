@@ -2,6 +2,7 @@ import { mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+  currentTraceHeaders,
   startObservability,
   traceEvent,
   traceOperation,
@@ -136,6 +137,7 @@ async function main() {
         headers: {
           authorization: `Bearer ${binding.coreToken}`,
           "content-type": "application/json",
+          ...currentTraceHeaders(),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(30_000),

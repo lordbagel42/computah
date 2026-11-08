@@ -1,5 +1,12 @@
 import { createServer, type Server } from "node:http";
-import { context, SpanStatusCode, trace } from "@opentelemetry/api";
+import {
+  context,
+  isSpanContextValid,
+  ROOT_CONTEXT,
+  type Span,
+  SpanStatusCode,
+  trace,
+} from "@opentelemetry/api";
 
 type Json = {
   [key: string]: unknown;
@@ -22,6 +29,7 @@ const services = new Set(["backend", "slack", "bus"]);
 const operations = new Set([
   "submit",
   "result",
+  "wait",
   "history",
   "cancel",
   "compact",
@@ -37,6 +45,8 @@ const operations = new Set([
   "slack.step",
   "slack.api",
   "slack.core",
+  "web.search",
+  "web.extract",
   "start.failed",
 ]);
 const categories = new Set([
@@ -59,6 +69,24 @@ const categories = new Set([
   "length",
   "toolUse",
   "Task",
+  "web_search",
+  "web_extract",
+  "ready",
+  "denied",
+  "not_configured",
+  "invalid_input",
+  "authorization_required",
+  "rate_limited",
+  "quota_exceeded",
+  "capacity",
+  "cancelled",
+  "timeout",
+  "transport",
+  "http",
+  "invalid_response",
+  "response_too_large",
+  "not_sent",
+  "possibly_sent",
   "interaction",
   "worker",
   "primary",
@@ -147,6 +175,7 @@ const stringKeys = new Set([
   "tier",
   "stage",
   "computah.usage.source",
+  "request.state",
 ]);
 const numberKeys = new Set([
   "attempt",
@@ -445,6 +474,7 @@ export function traceModelStream<
             }
             if (message.stopReason === "error")
               span.setStatus({ code: SpanStatusCode.ERROR });
+            span.setAttribute("outcome", message.stopReason);
             span.end();
           },
           () => {
@@ -462,13 +492,13 @@ export function traceModelStream<
 }
 export function traceOperation<T>(
   operation: string,
-  body: () => Promise<T>,
+  body: (span: Span) => Promise<T>,
 ): Promise<T> {
   return trace
     .getTracer("computah")
     .startActiveSpan(`computah.${operation}`, async (span) => {
       try {
-        return await body();
+        return await body(span);
       } catch (error) {
         span.setStatus({ code: SpanStatusCode.ERROR });
         throw error;
@@ -485,14 +515,47 @@ export function traceEvent(
   span.setAttributes(values);
   span.end();
 }
+
+/** IDs only, for trusted internal transports. Never forward baggage or credentials. */
+export function currentTraceHeaders(): Record<string, string> {
+  const span = trace.getSpanContext(context.active());
+  if (!span || !isSpanContextValid(span)) return {};
+  return {
+    traceparent: `00-${span.traceId}-${span.spanId}-${span.traceFlags.toString(16).padStart(2, "0")}`,
+  };
+}
+
 /** Attach before requests arrive; no URL, headers, body or principal enters telemetry. */
 export function traceHttp(server: Server) {
   const listeners = server.listeners("request");
   server.removeAllListeners("request");
   server.on("request", (request, response) => {
-    const span = trace.getTracer("computah").startSpan("computah.http", {
-      attributes: { "http.request.method": request.method ?? "unknown" },
-    });
+    // A carrier is correlation only, never identity/authority. Reject duplicates,
+    // malformed IDs and all baggage/tracestate; do not inherit an unrelated local span.
+    const carrier = request.headers.traceparent;
+    const match =
+      typeof carrier === "string"
+        ? /^00-([a-f0-9]{32})-([a-f0-9]{16})-([a-f0-9]{2})$/.exec(carrier)
+        : null;
+    const remote = match
+      ? {
+          traceId: match[1],
+          spanId: match[2],
+          traceFlags: Number.parseInt(match[3], 16),
+          isRemote: true,
+        }
+      : undefined;
+    const parent =
+      remote && isSpanContextValid(remote)
+        ? trace.setSpanContext(ROOT_CONTEXT, remote)
+        : ROOT_CONTEXT;
+    const span = trace.getTracer("computah").startSpan(
+      "computah.http",
+      {
+        attributes: { "http.request.method": request.method ?? "unknown" },
+      },
+      parent,
+    );
     let ended = false;
     const finish = () => {
       if (ended) return;
@@ -504,7 +567,7 @@ export function traceHttp(server: Server) {
     };
     response.once("finish", finish);
     response.once("close", finish);
-    context.with(trace.setSpan(context.active(), span), () => {
+    context.with(trace.setSpan(parent, span), () => {
       for (const listener of listeners)
         listener.call(server, request, response);
     });

@@ -4,6 +4,7 @@ import test from "node:test";
 import { Effect } from "effect";
 import { effectTracing } from "../src/effect.js";
 import {
+  currentTraceHeaders,
   sanitizeTraces,
   startObservability,
   traceEvent,
@@ -112,6 +113,7 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
   });
   traceHttp(http);
   await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+  let caller: Record<string, string> = {};
   try {
     const address = http.address();
     assert.ok(address && typeof address !== "string");
@@ -122,6 +124,34 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
         )
       ).status,
       204,
+    );
+    assert.deepEqual(currentTraceHeaders(), {});
+    await traceOperation("slack.core", async () => {
+      caller = currentTraceHeaders();
+      assert.deepEqual(Object.keys(caller), ["traceparent"]);
+      await originalFetch(`http://127.0.0.1:${address.port}/`, {
+        headers: { ...caller, baggage: "private-content" },
+      });
+    });
+    // Upstream sampling cannot disable our always-on collection.
+    await originalFetch(`http://127.0.0.1:${address.port}/`, {
+      headers: { traceparent: `00-${"a".repeat(32)}-${"b".repeat(16)}-00` },
+    });
+    for (const traceparent of [
+      `00-${"0".repeat(32)}-${"b".repeat(16)}-01`,
+      `00-${"a".repeat(32)}-${"0".repeat(16)}-01`,
+      "private-content",
+      `${caller.traceparent}, ${caller.traceparent}`,
+    ])
+      await originalFetch(`http://127.0.0.1:${address.port}/`, {
+        headers: { traceparent },
+      });
+    const failure = new Error("private-content");
+    await assert.rejects(
+      traceOperation("wait", async () => {
+        throw failure;
+      }),
+      (error) => error === failure,
     );
     await Effect.runPromise(
       Effect.succeed(42).pipe(
@@ -188,6 +218,7 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
             traceId: string;
             spanId: string;
             parentSpanId?: string;
+            status: { code: number };
           }[];
         }[];
       }) => r.scopeSpans.flatMap((s) => s.spans),
@@ -207,6 +238,20 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
   const httpSpan = spans.find((span) => span.name === "computah.http");
   const submitSpan = spans.find((span) => span.name === "computah.submit");
   assert.equal(submitSpan?.parentSpanId, httpSpan?.spanId);
+  const httpSpans = spans.filter((span) => span.name === "computah.http");
+  assert.equal(httpSpans.length, 7);
+  assert.equal(httpSpans[1]?.traceId, caller.traceparent?.split("-")[1]);
+  assert.equal(httpSpans[1]?.parentSpanId, caller.traceparent?.split("-")[2]);
+  assert.equal(httpSpans[2]?.traceId, "a".repeat(32));
+  assert.equal(httpSpans[2]?.parentSpanId, "b".repeat(16));
+  for (const rejected of httpSpans.slice(3)) {
+    assert.equal(rejected.parentSpanId, undefined);
+    assert.notEqual(rejected.traceId, "a".repeat(32));
+  }
+  assert.equal(
+    spans.find((span) => span.name === "computah.wait")?.status.code,
+    2,
+  );
   assert.ok(!exported.join().includes("private-content"));
   assert.ok(!exported.join().includes("synthetic-private-credential"));
 });
