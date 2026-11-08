@@ -52,6 +52,15 @@ function validateReport(value: ReportData) {
     throw new Error("Invalid bounded diagnostic report");
   if (value.messages.some((m) => m.text.length > 20_000))
     throw new Error("Diagnostic message too large");
+  for (const span of [value.transport, value.capture])
+    if (
+      span &&
+      (!/^[a-f0-9]{32}$/.test(span.traceId) ||
+        /^0+$/.test(span.traceId) ||
+        !/^[a-f0-9]{16}$/.test(span.spanId) ||
+        /^0+$/.test(span.spanId))
+    )
+      throw new Error("Invalid diagnostic trace correlation");
 }
 
 function receive(sql: Write["sql"], report: ReportData) {

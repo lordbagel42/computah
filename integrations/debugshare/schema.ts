@@ -11,6 +11,12 @@ export const Report = object({
     thread: json(),
   }),
   scope: object({ tenantId: string(), userId: string(), agentId: string() }),
+  transport: object({
+    requestId: string(),
+    traceId: string(),
+    spanId: string(),
+  }).optional(),
+  capture: object({ traceId: string(), spanId: string() }).optional(),
   messages: array(object({ author: string(), ts: string(), text: string() })),
   participants: array(string()),
   submissions: array(string()),

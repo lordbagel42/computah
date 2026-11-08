@@ -244,6 +244,28 @@ function IssueView({ id }: { id: string }) {
             <li key={entry}>{entry}</li>
           ))}
         </ul>
+        <dl>
+          <div>
+            <dt>Capture trace / span</dt>
+            <dd>
+              {report.capture
+                ? `${report.capture.traceId} / ${report.capture.spanId}`
+                : "No capture span was retained in this report."}
+            </dd>
+          </div>
+          <div>
+            <dt>Transport receipt (not a core submission)</dt>
+            <dd>{report.transport?.requestId ?? "Not retained"}</dd>
+          </div>
+          {report.transport && (
+            <div>
+              <dt>Receive trace / span</dt>
+              <dd>
+                {report.transport.traceId} / {report.transport.spanId}
+              </dd>
+            </div>
+          )}
+        </dl>
         <h3>Observed submission handles</h3>
         {report.submissions.length ? (
           <ul className="identifiers">

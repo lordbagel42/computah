@@ -10,6 +10,11 @@ Actual bounded Slack messages and participant/location/core-scope details are
 shown, with observed submission handles, activity, explicit missing evidence and
 revision-checked investigation state. No hidden model reasoning is available.
 Native actor/task/trace identifiers are not guessed from a timestamp or UUID.
+Optional `transport` records the command's actual durable receive request/trace/span
+IDs; it is not a core submission. Optional `capture` records the actual capture
+span's trace/span IDs. Older reports without these fields remain valid. Capture
+spans carry the internal queryable `computah.debugshare.id`; the public observatory
+projection excludes that attribute and remaps trace/span identities.
 
 ## Hosting and setup
 
@@ -23,6 +28,8 @@ source reference (a non-secret deployment label) to enable its `capture` manual
 webhook. The generated webhook secret is shown only in Executor's private setup
 page; transfer it directly into the protected runtime env, never chat or Git.
 Pin subscription config to the exact trusted team/tenantId/userId/agentId.
+The hosted `webhooks.configureSource` config is keyed by handler:
+`{capture:{team,tenantId,userId,agentId}}`, not the scope object alone.
 One subscription signs uploads for that scope; it grants no read/status authority.
 Separate scopes need separately pinned subscriptions and runtime routing.
 
@@ -57,3 +64,14 @@ root workspace lockfile. Typecheck `index.ts`, `schema.ts`, `ui/main.tsx` and
 formatter/linter cover this source; root tests cover Slack durable capture.
 Verify deployed tools and the actual authenticated page separately. A successful
 deploy or tool call is not browser-render evidence or live Slack capture proof.
+
+## Current deployment evidence
+
+The private app is deployed at <https://computah-issues.raygen.executor.website>.
+Authenticated synthetic import, exact UUID lookup, immutable retry/conflict,
+revision-CAS state changes and retention across app redeployment were exercised.
+Anonymous HTTP access returned 403 without reports. The UI was rendered against
+the actual browser SDK with synthetic responses; this is not signed-in hosted
+browser acceptance. Live Slack-to-hosted ingestion still needs the generated
+webhook secret provisioned privately into the runtime and a genuine new command.
+Source-local SQLite capture is independent of that upload setup.

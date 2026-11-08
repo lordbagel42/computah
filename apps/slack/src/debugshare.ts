@@ -27,6 +27,9 @@ export interface DebugReport {
     thread: string | null;
   };
   scope: { tenantId: string; userId: string; agentId: string };
+  /** The command's transport receipt, not evidence of a core submission. */
+  transport?: { requestId: string; traceId: string; spanId: string };
+  capture?: { traceId: string; spanId: string };
   messages: { author: string; ts: string; text: string }[];
   participants: string[];
   submissions: string[];
