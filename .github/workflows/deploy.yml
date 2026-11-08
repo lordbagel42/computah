@@ -17,9 +17,8 @@ concurrency:
 jobs:
   deploy:
     name: Deploy / nest-bagel
-    # Bootstrap hold: remove the literal false only after route/key/trust setup.
-    # No repository variable can accidentally enable this setup packet.
-    if: ${{ false && github.ref == 'refs/heads/main' }}
+    # Activate only after deployment-owner readiness and private-key cleanup.
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: nest-bagel
     timeout-minutes: 40

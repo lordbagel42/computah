@@ -52,11 +52,11 @@ with no reviewers or wait timer. It supplies deployment history and scoped
 configuration, not resource provisioning or serialization. Native Actions job
 checks need no custom GitHub App or Checks API credential.
 
-The setup workflow has a literal `false` in its job condition, so repository or
-environment variables cannot accidentally enable it. A skipped check is not
-deployment evidence. After route/key/host-trust setup, publish the reviewed change
-removing that literal hold while retaining the main-only condition, then observe
-actual hosted deployment health before retiring the timer.
+The workflow is main-only; its bootstrap hold is removed only after deployment
+owner readiness confirms route, host trust, private-key provisioning and transfer
+cleanup. Enablement is not deployment evidence: retain the existing timer until
+the deployment owner verifies actual hosted Actions health and its exact-revision
+receipt, then completes the timer handover.
 
 Set environment variables `COMPUTAH_DEPLOY_HOST`, `COMPUTAH_DEPLOY_PORT`,
 `COMPUTAH_DEPLOY_USER` and `COMPUTAH_DEPLOY_HOST_KEY` (bare public host key), and
