@@ -126,6 +126,9 @@ const operations = new Set([
   "files.read",
   "files.write",
   "files.edit",
+  "operations.discover",
+  "operations.query",
+  "operations.timing",
   "observatory.http",
   "observatory.poll",
 ]);
@@ -268,6 +271,13 @@ const categories = new Set([
   "read",
   "edit",
   "unconfigured",
+  "operations_discover",
+  "message_timing",
+  "correlation_unavailable",
+  "time_range_unavailable",
+  "target_not_found_or_legacy_or_scan_limit",
+  "result_too_large",
+  "transport_or_invalid_response",
 ]);
 const stringKeys = new Set([
   "submission.type",
@@ -688,6 +698,7 @@ export function traceOperation<T>(
       const started = performance.now();
       let outcome: RuntimeLogFields["outcome"] = "success";
       let reason: RuntimeLogFields["reason"];
+      let count: number | undefined;
       let effectiveStatus: SpanStatusCode = SpanStatusCode.UNSET;
       // Observe only explicit scalar outcome/status writes, never result objects.
       const observed = new Proxy(span, {
@@ -714,6 +725,7 @@ export function traceOperation<T>(
                               : "other";
                 reason = value as RuntimeLogFields["reason"];
               }
+              if (key === "count" && typeof value === "number") count = value;
               target.setAttribute(key, value as string);
               return observed;
             };
@@ -759,6 +771,7 @@ export function traceOperation<T>(
             operation: operation as RuntimeLogFields["operation"],
             outcome,
             reason,
+            count,
             duration_ms: performance.now() - started,
           },
           outcome === "error" ? "error" : "info",

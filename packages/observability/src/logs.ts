@@ -59,6 +59,13 @@ const reasons = [
   "not_configured",
   "storage_failed",
   "authorization_required",
+  "correlation_unavailable",
+  "time_range_unavailable",
+  "target_not_found_or_legacy_or_scan_limit",
+  "result_too_large",
+  "transport_or_invalid_response",
+  "invalid_response",
+  "response_too_large",
   "other",
 ] as const;
 const operations = [
@@ -81,6 +88,9 @@ const operations = [
   "files.read",
   "files.write",
   "files.edit",
+  "operations.discover",
+  "operations.query",
+  "operations.timing",
   "slack.receive",
   "slack.step",
   "slack.api",

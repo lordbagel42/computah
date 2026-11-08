@@ -1,8 +1,14 @@
 import { startObservability, traceOperation } from "@computah/observability";
+import {
+  createFauxCore,
+  fauxAssistantMessage,
+  fauxToolCall,
+} from "@earendil-works/pi-ai";
 import { Effect } from "effect";
 import { setupTest } from "rivetkit/test";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createCore } from "../src/core.js";
+import { createOperations, type OperationalTarget } from "../src/operations.js";
 import { smokeProvider } from "../src/smoke-model.js";
 import { createTavily } from "../src/tavily.js";
 
@@ -11,6 +17,7 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
   const bodies: string[] = [];
   const logBodies: string[] = [];
   const cleanupElapsed: number[] = [];
+  let queryCleanupElapsed = 0;
   globalThis.fetch = async (input, init) => {
     if (String(input) === "https://api.axiom.co/v1/traces") {
       bodies.push(String(init?.body));
@@ -31,12 +38,80 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
     agentId: "default",
   };
   let action: "allow" | "cancel" = "allow";
+  let operationsAllowed = true;
+  const smoke = smokeProvider();
+  const smokeStream = smoke.streamSimple;
+  if (!smokeStream) throw new Error("Smoke stream unavailable");
+  const faux = createFauxCore({
+    api: "computah-smoke",
+    provider: "computah-smoke",
+    models: smoke.models,
+    tokensPerSecond: 0,
+  });
   const core = createCore({
     connectionSecret: "a".repeat(64),
-    authorize: () => true,
+    authorize: (_scope, capability) =>
+      capability !== "operations.read" || operationsAllowed,
     model: "computah-smoke/deterministic",
-    providers: { "computah-smoke": smokeProvider() },
+    providers: {
+      "computah-smoke": {
+        ...smoke,
+        streamSimple(model, request, options) {
+          const last = request.messages.at(-1);
+          const command = request.messages.findLast(
+            (message) => message.role === "user",
+          );
+          if (
+            command?.role !== "user" ||
+            command.content !== "private-operations-canary"
+          )
+            return smokeStream(model, request, options);
+          faux.setResponses([
+            last?.role !== "toolResult"
+              ? fauxAssistantMessage(fauxToolCall("operations_discover", {}), {
+                  stopReason: "toolUse",
+                })
+              : last.toolName === "operations_discover"
+                ? fauxAssistantMessage(
+                    fauxToolCall("message_timing", { requestId: "previous" }),
+                    { stopReason: "toolUse" },
+                  )
+                : fauxAssistantMessage("Measured tool result received"),
+          ]);
+          return faux.streamSimple(model, request, options);
+        },
+      },
+    },
     apiKeys: { "computah-smoke": "synthetic" },
+    operations: {
+      queryToken: "private-query-token-canary",
+      fetch: async (_url, init) => {
+        const { apl } = JSON.parse(String(init?.body));
+        const root = /trace_id in \('([a-f0-9]{32})'/.exec(apl)?.[1];
+        expect(root).toMatch(/^[a-f0-9]{32}$/);
+        return Response.json({
+          status: { isPartial: true },
+          tables: [
+            {
+              fields: [
+                "_time",
+                "trace_id",
+                "span_id",
+                "name",
+                "duration_ms",
+              ].map((name) => ({ name })),
+              columns: [
+                [new Date().toISOString()],
+                [root],
+                ["f".repeat(16)],
+                ["private-returned-span-canary"],
+                [17],
+              ],
+            },
+          ],
+        });
+      },
+    },
     sentinel: {
       ownerScope: scope,
       reviews: [{ scope, mode: "preflight" }],
@@ -66,6 +141,35 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
       true,
     );
     expect(result.submission.status).toBe("done");
+    const operational = await session.submit(
+      session.interactionId,
+      "private-operations-canary",
+      "private-operations-request-canary",
+    );
+    expect(
+      (
+        await session.result(
+          session.interactionId,
+          operational.submissionId,
+          true,
+        )
+      ).submission.status,
+    ).toBe("done");
+    operationsAllowed = false;
+    const operationalDenied = await session.submit(
+      session.interactionId,
+      "private-operations-canary",
+      "private-denied-request-canary",
+    );
+    expect(
+      (
+        await session.result(
+          session.interactionId,
+          operationalDenied.submissionId,
+          true,
+        )
+      ).submission.status,
+    ).toBe("done");
     action = "cancel";
     const denied = await session.submit(
       session.interactionId,
@@ -76,6 +180,133 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
       (await session.wait(session.interactionId, denied.submissionId)).status,
     ).toBe("unanswered");
     await traceOperation("synthetic", async () => {
+      const target: OperationalTarget = {
+        requestId: "private-request-id-canary",
+        submissionId: 1,
+        actorId: "private-actor-canary",
+        conversationId: 1,
+        status: "done",
+        entryId: 1,
+        answerId: 2,
+        admittedAt: new Date().toISOString(),
+        traceId: "e".repeat(32),
+        executionTraceId: null,
+        workerLinksOmitted: 0,
+      };
+      const controller = new AbortController();
+      for (const [code, authorize, queryToken, fetch, targets, signal] of [
+        [
+          "denied",
+          false,
+          "private-query-token-canary",
+          async () => Response.json({}),
+          [target],
+          new AbortController().signal,
+        ],
+        [
+          "not_configured",
+          true,
+          undefined,
+          async () => Response.json({}),
+          [target],
+          new AbortController().signal,
+        ],
+        [
+          "correlation_unavailable",
+          true,
+          "private-query-token-canary",
+          async () => Response.json({}),
+          [{ ...target, traceId: null }],
+          new AbortController().signal,
+        ],
+        [
+          "invalid_response",
+          true,
+          "private-query-token-canary",
+          async () =>
+            Response.json({ unexpected: "private-invalid-response-canary" }),
+          [target],
+          new AbortController().signal,
+        ],
+        [
+          "authorization_required",
+          true,
+          "private-query-token-canary",
+          async () => {
+            const started = performance.now();
+            return new Response(
+              new ReadableStream({
+                async cancel() {
+                  await new Promise((resolve) => setTimeout(resolve, 20));
+                  queryCleanupElapsed = performance.now() - started;
+                },
+              }),
+              { status: 403 },
+            );
+          },
+          [target],
+          new AbortController().signal,
+        ],
+        [
+          "cancelled",
+          true,
+          "private-query-token-canary",
+          async () => {
+            return new Response(
+              new ReadableStream({
+                start(stream) {
+                  controller.abort();
+                  stream.error(new Error("private-cancellation-canary"));
+                },
+                async cancel() {
+                  await new Promise((resolve) => setTimeout(resolve, 5));
+                },
+              }),
+            );
+          },
+          [target],
+          controller.signal,
+        ],
+      ] as const) {
+        const client = createOperations({
+          authorize: () => authorize,
+          queryToken,
+          fetch,
+        });
+        expect(await client.query(scope, [...targets], signal)).toMatchObject({
+          code,
+        });
+      }
+      const originalTimeout = AbortSignal.timeout;
+      const deadline = vi
+        .spyOn(AbortSignal, "timeout")
+        .mockImplementation((ms) =>
+          ms === 10_000 ? AbortSignal.abort() : originalTimeout(ms),
+        );
+      try {
+        const client = createOperations({
+          authorize: () => true,
+          queryToken: "private-query-token-canary",
+          fetch: async (_url, init) => {
+            init?.signal?.throwIfAborted();
+            throw new Error("Expected the query deadline to abort");
+          },
+        });
+        expect(
+          await client.query(scope, [target], new AbortController().signal),
+        ).toMatchObject({ code: "timeout" });
+      } finally {
+        deadline.mockRestore();
+      }
+      const empty = createOperations({
+        authorize: () => true,
+        queryToken: "private-query-token-canary",
+        fetch: async () =>
+          Response.json({ status: { isPartial: false }, tables: [] }),
+      });
+      expect(
+        await empty.query(scope, [target], new AbortController().signal),
+      ).toMatchObject({ status: "ready", spans: [] });
       for (const [request, status] of [
         [{ query: "private-query-canary" }, 200],
         [{ urls: ["https://example.com/private-url-canary"] }, 429],
@@ -182,6 +413,148 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
   expect(spans.some((s) => s.name === "pi.durable.phase")).toBe(true);
   expect(spans.some((s) => s.name === "interaction/admit")).toBe(true);
   expect(spans.some((s) => s.name === "worker/admit")).toBe(true);
+  const attr = (span: (typeof spans)[number], key: string) =>
+    span.attributes.find((a) => a.key === key)?.value.stringValue;
+  const timing = spans.find((s) => s.name === "computah.operations.timing");
+  expect(timing).toBeDefined();
+  expect(timing && attr(timing, "tool.name")).toBe("message_timing");
+  expect(timing && attr(timing, "outcome")).toBe("ready");
+  const nativeTool = spans.find(
+    (s) => s.spanId === timing?.parentSpanId && s.traceId === timing?.traceId,
+  );
+  expect(nativeTool?.name).toBe("pi.durable.phase");
+  const discovery = spans.find(
+    (s) =>
+      s.name === "computah.operations.discover" &&
+      attr(s, "tool.name") === "operations_discover",
+  );
+  expect(discovery && attr(discovery, "outcome")).toBe("ready");
+  expect(
+    spans.some(
+      (s) =>
+        s.spanId === discovery?.parentSpanId &&
+        s.traceId === discovery?.traceId &&
+        s.name === "pi.durable.phase",
+    ),
+  ).toBe(true);
+  const query = spans.find(
+    (s) =>
+      s.name === "computah.operations.query" &&
+      s.parentSpanId === timing?.spanId &&
+      s.traceId === timing?.traceId,
+  );
+  expect(query && attr(query, "outcome")).toBe("ready");
+  for (const name of ["operations_discover", "message_timing"]) {
+    const denied = spans.find(
+      (s) => attr(s, "tool.name") === name && attr(s, "outcome") === "denied",
+    );
+    expect(denied?.status.code).toBe(2);
+  }
+  const logs: {
+    traceId: string;
+    spanId: string;
+    attributes: {
+      key: string;
+      value: { stringValue?: string; doubleValue?: number };
+    }[];
+  }[] = logBodies.flatMap((body) =>
+    JSON.parse(body).resourceLogs.flatMap(
+      (r: {
+        scopeLogs: {
+          logRecords: typeof logs;
+        }[];
+      }) => r.scopeLogs.flatMap((s) => s.logRecords),
+    ),
+  );
+  for (const span of [timing, discovery, query]) {
+    const log = logs.find(
+      (row) => row.traceId === span?.traceId && row.spanId === span?.spanId,
+    );
+    expect(log?.attributes).toContainEqual({
+      key: "outcome",
+      value: { stringValue: "ready" },
+    });
+    if (span !== discovery)
+      expect(log?.attributes).toContainEqual({
+        key: "count",
+        value: { doubleValue: 1 },
+      });
+  }
+  for (const code of [
+    "denied",
+    "not_configured",
+    "correlation_unavailable",
+    "invalid_response",
+    "authorization_required",
+    "cancelled",
+    "timeout",
+  ]) {
+    const span = spans.find(
+      (s) =>
+        s.name === "computah.operations.query" && attr(s, "outcome") === code,
+    );
+    expect(span?.status.code).toBe(2);
+    const log = logs.find(
+      (row) => row.traceId === span?.traceId && row.spanId === span?.spanId,
+    );
+    expect(log?.attributes).toContainEqual({
+      key: "outcome",
+      value: {
+        stringValue:
+          code === "denied" || code === "cancelled" || code === "timeout"
+            ? code
+            : "error",
+      },
+    });
+    if (code !== "denied" && code !== "cancelled" && code !== "timeout")
+      expect(log?.attributes).toContainEqual({
+        key: "reason",
+        value: { stringValue: code },
+      });
+  }
+  const rejected = spans.find(
+    (s) =>
+      s.name === "computah.operations.query" &&
+      attr(s, "outcome") === "authorization_required",
+  );
+  expect(queryCleanupElapsed).toBeGreaterThan(10);
+  expect(
+    Number(
+      BigInt(rejected?.endTimeUnixNano ?? "0") -
+        BigInt(rejected?.startTimeUnixNano ?? "0"),
+    ) / 1_000_000,
+  ).toBeGreaterThanOrEqual(queryCleanupElapsed);
+  expect(
+    logs.some(
+      (row) =>
+        row.attributes.some(
+          (a) =>
+            a.key === "operation" && a.value.stringValue === "operations.query",
+        ) &&
+        row.attributes.some(
+          (a) => a.key === "count" && a.value.doubleValue === 0,
+        ) &&
+        row.attributes.some(
+          (a) => a.key === "outcome" && a.value.stringValue === "ready",
+        ),
+    ),
+  ).toBe(true);
+  for (const privateValue of [
+    "private-query-token-canary",
+    "private-returned-span-canary",
+    "private-operations-canary",
+    "private-operations-request-canary",
+    "private-denied-request-canary",
+    "private-request-id-canary",
+    "private-actor-canary",
+    "private-invalid-response-canary",
+    "private-cancellation-canary",
+    "e".repeat(32),
+    "f".repeat(16),
+  ]) {
+    expect(bodies.join()).not.toContain(privateValue);
+    expect(logBodies.join()).not.toContain(privateValue);
+  }
   for (const operation of ["review", "enforce", "cancel"])
     expect(spans.some((s) => s.name === `computah.sentinel.${operation}`)).toBe(
       true,

@@ -69,6 +69,26 @@ is memoized by the Pi tool task, while query evidence can change as late spans
 arrive. Abort cancels the query fetch/body, and HTTP/parse failures return bounded
 categories without provider bodies, headers or credentials.
 
+Operations telemetry uses the existing bounded trace/log pipeline, not a second
+exporter. `computah.operations.discover` covers availability/grant checks and
+the `operations_discover` tool (the tool span carries that fixed `tool.name`);
+`computah.operations.timing` carries `tool.name=message_timing` and covers host
+resolution, independent transport lookup, query and final disclosure checks.
+The tools restore the native Pi caller's propagated parent; the nested
+`computah.operations.query` span includes fetch, bounded parsing and awaited
+body cleanup. Resolved denials, missing configuration/correlation/time bounds,
+HTTP/validation failures, cancellation and timeout are explicit closed outcomes,
+not successful operations. Matching `operation.completed` logs share the
+span's IDs and bounded category/duration; query/timing `count` is the number of
+Axiom span rows actually returned (after their respective limits), not elapsed
+time or proof of complete coverage. An empty successful query logs `ready` and
+`count=0`; independently available transport evidence can make the timing tool
+ready while its query remains unavailable. No targets, request/actor IDs, query
+text, returned spans/history, bodies or credentials are added to telemetry.
+Native-parent, typed-denial, deadline/cancellation, empty-result, cleanup-lifetime
+and sanitization regressions are local proof; revision-matched production
+query/tool trace and log acceptance remains separate.
+
 Admission is a host commit clock, **not sender-to-ingress delay**. Model lifetime
 is through terminal stream result, **not TTFT**. Slack Web API lifetime is not
 platform delivery confirmation. Nested phases overlap: never add them as reply
