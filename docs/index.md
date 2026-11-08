@@ -122,6 +122,8 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
   serialized Alchemy delivery, readiness receipts and recovery limitations.
 - [Axiom observability](observability.md): full emitted trace export, privacy relay,
   credential/provisioning boundaries and actual ingestion/activation evidence.
+- [Public trace observatory](public-observatory.md): independent content-free
+  public projection, bounded live polling, hosting and activation evidence.
 - [Slack prototype](slack.md): dedicated app setup, private identity mapping,
   durable inbox, DM routing, delivery uncertainty and local/live verification.
 - [Native tools and credential boundaries](tools.md): first-class browser/search,

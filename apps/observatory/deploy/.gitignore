@@ -1,0 +1,4 @@
+.alchemy/
+.wrangler/
+.dev.vars
+.deploy.env

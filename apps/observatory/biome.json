@@ -1,0 +1,4 @@
+{
+  "extends": "//",
+  "files": { "includes": ["**", "!deploy/.wrangler", "!deploy/.alchemy"] }
+}

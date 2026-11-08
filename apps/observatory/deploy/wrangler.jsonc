@@ -1,0 +1,21 @@
+{
+  "name": "computah-observatory",
+  "main": "../src/worker.ts",
+  "compatibility_date": "2026-11-08",
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
+  "assets": {
+    "directory": "../public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "TRACES", "class_name": "PublicTraceFeed" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PublicTraceFeed"] }],
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "vars": {
+    "COMPUTAH_AXIOM_QUERY_TOKEN": "",
+    "PUBLIC_ID_SECRET": "",
+    "COMPUTAH_AXIOM_INGEST_TOKEN": ""
+  }
+}

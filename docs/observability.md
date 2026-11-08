@@ -180,3 +180,10 @@ Axiom queries can correlate these content-free trace IDs across operational
 boundaries. Native private diagnostics still provide details deliberately absent
 from Axiom. DEBUGSHARE remains identifier-only and separately authorized; an
 Axiom query is not permission to export a private diagnostic history.
+
+The separate [public observatory](public-observatory.md) uses a second positive
+projection and opaque IDs, not DEBUGSHARE content or a public query proxy. Its
+edge exporter is isolated from the Node bootstrap and explicitly credential-gated.
+Public shell hosting is enabled; actual Worker query/edge-ingest acceptance,
+browser interaction export, static/rejection Axiom coverage and real visitor
+disconnect proof remain gaps. A successful MCP query is not runtime activation.

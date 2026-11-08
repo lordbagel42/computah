@@ -1,0 +1,23 @@
+{
+  "name": "computah-observatory-deploy",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.0.0",
+  "scripts": {
+    "deploy": "alchemy deploy --stage prod",
+    "plan": "alchemy plan --stage prod",
+    "typecheck": "tsc --ignoreConfig --noEmit --strict --skipLibCheck --types node,@cloudflare/workers-types --target es2023 --module nodenext --allowImportingTsExtensions alchemy.run.ts ../src/*.ts"
+  },
+  "dependencies": {
+    "@alchemy.run/cloudflare": "2.0.0-beta.85",
+    "@effect/platform-node": "4.1.2",
+    "alchemy": "2.0.0-beta.85",
+    "effect": "4.1.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261108.1",
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2",
+    "wrangler": "4.158.0"
+  }
+}
