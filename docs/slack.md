@@ -231,37 +231,57 @@ principal does not inherit old subscriptions. No unrelated channel messages are
 admitted. Bot messages, edits, deletions, unmapped users/teams and nonallowlisted
 channels are ignored and ACKed. Oversized/empty inputs are ignored.
 
-## Identifier-only DEBUGSHARE
+## Durable DEBUGSHARE capture
 
 Mapped users can DM `DEBUGSHARE` or `DEBUGSHARE optional note`, or mention
 Computah with that command in an authorized channel. The first token must be
 exactly uppercase `DEBUGSHARE`; leading whitespace is allowed. Quoted/code text,
 `DEBUGSHAREfoo`, and lowercase `debugshare` are not commands.
 
-The adapter, not a model, generates a cryptographically random UUID v4 and sends
-an acknowledgment containing only the UUID, `time` (UTC admission time),
-`requested by` (trusted mapped Slack user ID), and `amp link: [disabled]`.
-It does not echo the optional note or perform a profile lookup. The disabled
-placeholder is not a generated URL. Channel commands always reply in the mapped
-sender's private DM; DM commands retain their existing reply routing. Ordinary
-channel or agent-selected routing cannot redirect this acknowledgment. No core
-submission, Pi, Worker or Amp thread, repair, context fetch, processing status,
-diagnostic collection or upload is triggered. Commands are not debounced into
-neighboring chat and do not create or refresh channel-thread subscriptions.
+The adapter generates a UUID v4 and commits its mapping to the originating Slack
+team/channel/message/thread, trusted requester, UTC time and core scope in the
+same SQLite transaction as admission, **before ACK**. The `debugshares` table is
+independent of seven-day delivery receipt pruning. It retains immutable report
+JSON, the job key, capture completion, confirmed tracker URL and retry time.
+An operator with access to the protected journal can look up `id` directly; no
+model or browser supplied scope authorizes reads. Prior identifier-only UUIDs
+have no retained mapping and are not retroactively reconstructed.
 
-The existing private inbox retains command input and delivery receipts under its
-ordinary retention policy; no separate diagnostics record or identifier lookup
-is created. The identifier is not an access credential or a diagnostics lookup
-key. Duplicate events within receipt retention do not emit another identifier.
-Ambiguous sends remain uncertain and are not reposted automatically. A crash
-before a send attempt may generate a replacement for an unexposed identifier;
-this is not a durable incident-correlation contract.
+After ACK, capture requests one bounded Slack page (20 messages, no pagination,
+2s deadline): the exact invoked thread, or recent top-level DM context. A new
+top-level channel command reads only its own root, never surrounding channel
+history. Observed history grants are required. Up to 4000 characters per prior
+message, actual author IDs/timestamps, command text, participants and at most 20
+same-location submission handles are retained. Missing context is explicit;
+native actor/task/trace IDs are not invented. Actual issue messages are shown,
+not replaced by privacy summaries. Configured credential values and recognizable
+token formats are redacted; this is not a universal unknown-secret detector.
+No hidden model reasoning, arbitrary backing-store export or bulk history read.
 
-Future Amp/Space handoff, diagnostic correlation and repair remain design intent,
-not implemented behavior. Synthetic tests cover UUID generation/recognition,
-authorization, private channel-command delivery, restart/dedup, uncertain sends,
-burst isolation and absence of core/status/context calls. No live Slack command
-roundtrip is claimed by these local checks.
+The concise private acknowledgment keeps UUID/time/requester/disabled Amp link.
+It adds a real internal report URL only after the tracker durably acknowledges
+that UUID, otherwise says `report: stored locally; tracker sync pending`.
+Channel commands still reply in the mapped sender's DM. No model submission,
+repair, processing status or new thread is started, and commands do not merge
+with bursts or subscribe threads. Ambiguous Slack sends are not blindly repeated.
+
+Optional upload requires all three protected runtime variables:
+`COMPUTAH_DEBUGSHARE_INGEST_URL` (Executor webhook callback),
+`COMPUTAH_DEBUGSHARE_SIGNING_SECRET` (at least 32 characters, private setup page),
+and `COMPUTAH_DEBUGSHARE_REPORT_URL` (authenticated Executor app URL). HTTPS only.
+The raw JSON is authenticated with HMAC-SHA256 over `timestamp + "." + body`,
+using `x-computah-timestamp` (epoch milliseconds) and `x-computah-signature`
+(lowercase hex). The receiver pins the source scope, allows five-minute skew,
+and returns `{id}` only after storage. A ten-second upload deadline and durable
+30-second idle outbox retry do not change the stored UUID/snapshot. Lost upload
+responses reconcile idempotently; a conflicting UUID never replaces a report.
+Upload failure does not prevent the locally indexed acknowledgment or chat.
+
+The Executor tracker source lives in `integrations/debugshare`; its authenticated
+tools expose exact lookup, assignment, evidence notes and revision-checked
+open/investigating/blocked/resolved state. Local restart/outbox tests are not a
+claim of deployed capture or production credential setup. Amp/Space handoff and
+automatic repair remain unimplemented.
 
 ## First-mention thread context
 

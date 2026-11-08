@@ -1,6 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { debugshareReply, isDebugshare } from "./debugshare.js";
+import {
+  type DebugReport,
+  debugshareReply,
+  initializeDebugshares,
+  isDebugshare,
+  readDebugshare,
+  redactDiagnostic,
+  serializeDiagnostic,
+} from "./debugshare.js";
 
 export interface Binding {
   teamId: string;
@@ -77,10 +85,20 @@ export const bindingKey = (binding: Binding & { channelId?: string }) =>
     ...(binding.channelId ? [binding.channelId] : []),
   ]);
 
+const bindingsSecrets = (bindings: Binding[]) =>
+  bindings.flatMap((binding) => [
+    binding.coreToken,
+    ...(binding.channelBindings ?? []).map((channel) => channel.coreToken),
+  ]);
+
 export interface Transport {
   request(binding: Binding, path: string, body?: unknown): Promise<unknown>;
   openDm(user: string): Promise<string>;
   post(channel: string, text: string, thread: string | null): Promise<void>;
+  diagnosticContext?(
+    source: DebugReport["source"],
+  ): Promise<{ messages?: unknown }>;
+  publishDebugshare?(report: DebugReport): Promise<string>;
   threadContext?(
     channel: string,
     thread: string,
@@ -106,6 +124,7 @@ export class SlackAdapter {
   private statusPaused = false;
   private contextFlight?: Promise<{ messages?: unknown }>;
   private contextAbort?: AbortController;
+  private lastStepWasUpload = false;
   constructor(
     path: string,
     private readonly privateBindings: Binding[],
@@ -115,6 +134,7 @@ export class SlackAdapter {
     private statusEnabled = false,
     private readonly debounceMs = 0,
     private readonly agentRouting = false,
+    private readonly diagnosticSecrets: readonly string[] = [],
   ) {
     const bindings = [...privateBindings];
     const scope = (b: Pick<Binding, "tenantId" | "userId" | "agentId">) =>
@@ -190,6 +210,7 @@ export class SlackAdapter {
       event TEXT PRIMARY KEY, source TEXT NOT NULL, kind TEXT NOT NULL, job TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS receipt_source ON receipts(source);`);
+    initializeDebugshares(this.db);
   }
 
   /** Called before Socket Mode ACK. Repeated event IDs cannot reroute a job. */
@@ -280,6 +301,9 @@ export class SlackAdapter {
     if (
       this.db.prepare("SELECT id FROM jobs WHERE id=?").get(id) ||
       this.db
+        .prepare("SELECT 1 FROM debugshares WHERE job=? OR source=?")
+        .get(id, source) ||
+      this.db
         .prepare(
           "SELECT 1 FROM receipts WHERE event=? OR (source=? AND kind!=?)",
         )
@@ -368,6 +392,50 @@ export class SlackAdapter {
       this.db
         .prepare("INSERT INTO receipts VALUES (?, ?, ?, ?)")
         .run(id, source, event.type ?? "", batch?.id ?? id);
+      if (isDebugshare(text)) {
+        const report: DebugReport = {
+          id: randomUUID(),
+          requestedAt: new Date(this.now()).toISOString(),
+          requestedBy: binding.slackUserId,
+          source: {
+            team: binding.teamId,
+            channel: event.channel,
+            message: event.ts,
+            thread: event.thread_ts ?? null,
+          },
+          scope: {
+            tenantId: binding.tenantId,
+            userId: binding.userId,
+            agentId: binding.agentId,
+          },
+          messages: [{ author: binding.slackUserId, ts: event.ts, text }],
+          participants: [binding.slackUserId],
+          submissions: (
+            this.db
+              .prepare(
+                "SELECT submission FROM jobs WHERE binding=? AND channel=? AND thread IS ? AND submission IS NOT NULL ORDER BY created DESC LIMIT 20",
+              )
+              .all(key, event.channel, thread) as { submission: string }[]
+          ).map((row) => row.submission),
+          activity: [
+            "DEBUGSHARE admitted durably; no model or repair job started.",
+          ],
+          limitations: [
+            "Bounded issue-context snapshot, not a complete conversation archive.",
+            "Native Rivet actor IDs, task IDs and trace IDs are unavailable at Slack admission; scope and observed submission handles are retained.",
+            "No hidden model reasoning is collected.",
+          ],
+        };
+        const safe = serializeDiagnostic(report, [
+          ...bindingsSecrets(this.privateBindings),
+          ...this.diagnosticSecrets,
+        ]);
+        this.db
+          .prepare(
+            "INSERT INTO debugshares(id,job,source,report) VALUES(?,?,?,?)",
+          )
+          .run(report.id, id, source, safe);
+      }
       if (!dm && thread && !isDebugshare(text)) {
         this.db
           .prepare(
@@ -392,6 +460,11 @@ export class SlackAdapter {
   /** One bounded network step; startup resumes queued/submitted receipts. */
   async step(): Promise<boolean> {
     this.pumpStatus();
+    if (!this.lastStepWasUpload) {
+      this.lastStepWasUpload = await this.syncDebugshare();
+      if (this.lastStepWasUpload) return true;
+    }
+    this.lastStepWasUpload = false;
     const job = this.db
       .prepare(
         "SELECT * FROM jobs WHERE (state='queued' AND ready<=?) OR state IN ('preparing','admitting','submitted') ORDER BY created, rowid LIMIT 1",
@@ -405,11 +478,109 @@ export class SlackAdapter {
     }
     try {
       // Only untouched queued input is a command, never wrapped/admitting text.
-      const commandReply =
-        job.state === "queued" && !job.submission
-          ? debugshareReply(job.text, binding.slackUserId, job.created)
-          : null;
-      if (commandReply) {
+      if (job.state === "queued" && !job.submission && isDebugshare(job.text)) {
+        let stored = readDebugshare(this.db, job.id);
+        // Legacy queued identifiers predate indexing; never fabricate their origin.
+        if (!stored) {
+          await this.deliver(
+            job,
+            binding,
+            "DEBUGSHARE predates durable capture. Send a new DEBUGSHARE to create an indexed report.",
+            true,
+          );
+          return true;
+        }
+        if (!stored.captured) {
+          const report = stored.report;
+          if (this.transport.diagnosticContext) {
+            try {
+              const result = await this.transport.diagnosticContext(
+                report.source,
+              );
+              const messages: DebugReport["messages"] = [];
+              if (Array.isArray(result.messages))
+                for (const raw of result.messages.slice(0, 20)) {
+                  if (!raw || typeof raw !== "object") continue;
+                  const m = raw as Record<string, unknown>;
+                  if (
+                    typeof m.text !== "string" ||
+                    typeof m.ts !== "string" ||
+                    typeof m.user !== "string" ||
+                    (m.subtype && m.subtype !== "bot_message") ||
+                    !/^\d{1,12}\.\d{1,6}$/.test(m.ts) ||
+                    Number(m.ts) > Number(report.source.message)
+                  )
+                    continue;
+                  const root =
+                    report.source.thread ??
+                    (report.source.channel.startsWith("D")
+                      ? null
+                      : report.source.message);
+                  if (
+                    root
+                      ? m.ts !== root && m.thread_ts !== root
+                      : m.thread_ts && m.thread_ts !== m.ts
+                  )
+                    continue;
+                  messages.push({
+                    author: m.user,
+                    ts: m.ts,
+                    text: redactDiagnostic(m.text, [
+                      ...bindingsSecrets(this.privateBindings),
+                      ...this.diagnosticSecrets,
+                    ]).slice(0, 4000),
+                  });
+                }
+              report.messages = [
+                ...messages.filter((m) => m.ts !== report.source.message),
+                ...report.messages,
+              ].sort((a, b) => Number(a.ts) - Number(b.ts));
+              report.participants = [
+                ...new Set(report.messages.map((m) => m.author)),
+              ];
+              report.activity.push(
+                "Captured one bounded Slack page at the originating location.",
+              );
+            } catch {
+              report.limitations.push(
+                "Slack context fetch unavailable; originating command retained.",
+              );
+            }
+          } else
+            report.limitations.push(
+              "Slack context transport unavailable; originating command retained.",
+            );
+          this.db
+            .prepare("UPDATE debugshares SET report=?,captured=1 WHERE job=?")
+            .run(
+              serializeDiagnostic(report, [
+                ...bindingsSecrets(this.privateBindings),
+                ...this.diagnosticSecrets,
+              ]),
+              job.id,
+            );
+          stored = readDebugshare(this.db, job.id) as NonNullable<
+            typeof stored
+          >;
+        }
+        if (!stored.url && this.transport.publishDebugshare) {
+          try {
+            stored.url = await this.publishDebugshare(stored.report);
+          } catch {
+            this.db
+              .prepare("UPDATE debugshares SET next_attempt=? WHERE job=?")
+              .run(this.now() + 30_000, job.id);
+          }
+        }
+        const commandReply =
+          (debugshareReply(
+            job.text,
+            binding.slackUserId,
+            job.created,
+            stored.report.id,
+            stored.url ?? undefined,
+          ) as string) +
+          (stored.url ? "" : "\nreport: stored locally; tracker sync pending");
         await this.deliver(job, binding, commandReply, true);
         return true;
       }
@@ -819,6 +990,48 @@ export class SlackAdapter {
 
   private finish(id: string, state: string) {
     this.db.prepare("UPDATE jobs SET state=? WHERE id=?").run(state, id);
+  }
+
+  private async publishDebugshare(report: DebugReport): Promise<string> {
+    if (!this.transport.publishDebugshare)
+      throw new Error("Tracker unavailable");
+    const url = new URL(await this.transport.publishDebugshare(report));
+    if (url.protocol !== "https:" || url.username || url.password)
+      throw new Error("Invalid report URL");
+    this.db
+      .prepare("UPDATE debugshares SET url=? WHERE id=?")
+      .run(url.href, report.id);
+    return url.href;
+  }
+
+  private async syncDebugshare(): Promise<boolean> {
+    if (!this.transport.publishDebugshare) return false;
+    const row = this.db
+      .prepare(
+        "SELECT id,report FROM debugshares WHERE captured=1 AND url IS NULL AND next_attempt<=? ORDER BY rowid LIMIT 1",
+      )
+      .get(this.now()) as { id: string; report: string } | undefined;
+    if (!row) return false;
+    this.db
+      .prepare("UPDATE debugshares SET next_attempt=? WHERE id=?")
+      .run(this.now() + 30_000, row.id);
+    const report = JSON.parse(row.report) as DebugReport;
+    if (
+      ![...this.bindings.values()].some(
+        (b) =>
+          b.teamId === report.source.team &&
+          b.tenantId === report.scope.tenantId &&
+          b.userId === report.scope.userId &&
+          b.agentId === report.scope.agentId,
+      )
+    )
+      return true;
+    try {
+      await this.publishDebugshare(report);
+    } catch {
+      /* Durable outbox retries the same immutable UUID. */
+    }
+    return true;
   }
 
   counts(): Record<string, number> {

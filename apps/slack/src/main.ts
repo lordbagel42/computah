@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -10,6 +11,7 @@ import {
 import { SocketModeClient } from "@slack/socket-mode";
 import { LogLevel, WebClient } from "@slack/web-api";
 import { type Binding, type Ingress, SlackAdapter } from "./adapter.js";
+import type { DebugReport } from "./debugshare.js";
 
 async function main() {
   const telemetry = await startObservability("slack");
@@ -130,6 +132,62 @@ async function main() {
     );
   if (process.env.COMPUTAH_SLACK_STATUS_ENABLED === "true" && !statusEnabled)
     console.info("computah.slack.status_disabled_missing_grants");
+  const diagnosticSecrets = Object.entries(process.env)
+    .filter(
+      ([key, value]) =>
+        /TOKEN|SECRET|API_KEY/.test(key) && value && value.length >= 8,
+    )
+    .map(([, value]) => value as string);
+  const uploadConfig = [
+    process.env.COMPUTAH_DEBUGSHARE_INGEST_URL,
+    process.env.COMPUTAH_DEBUGSHARE_SIGNING_SECRET,
+    process.env.COMPUTAH_DEBUGSHARE_REPORT_URL,
+  ];
+  if (uploadConfig.some(Boolean) && !uploadConfig.every(Boolean))
+    throw new Error("Incomplete DEBUGSHARE configuration");
+  const publishDebugshare = uploadConfig.every(Boolean)
+    ? async (report: DebugReport) => {
+        const [ingest, secret, origin] = uploadConfig as [
+          string,
+          string,
+          string,
+        ];
+        for (const target of [ingest, origin]) {
+          const url = new URL(target);
+          if (
+            url.protocol !== "https:" ||
+            url.username ||
+            url.password ||
+            url.hash
+          )
+            throw new Error("Protected DEBUGSHARE URL required");
+        }
+        if (secret.length < 32)
+          throw new Error("DEBUGSHARE signing key too short");
+        const body = JSON.stringify(report);
+        const timestamp = String(Date.now());
+        const signature = createHmac("sha256", secret)
+          .update(`${timestamp}.${body}`)
+          .digest("hex");
+        const response = await fetch(ingest, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-computah-timestamp": timestamp,
+            "x-computah-signature": signature,
+          },
+          body,
+          signal: AbortSignal.timeout(10_000),
+          redirect: "error",
+        });
+        const result = (await response.json()) as { id?: unknown };
+        if (!response.ok || result.id !== report.id)
+          throw new Error("DEBUGSHARE upload unavailable");
+        const url = new URL(origin);
+        url.hash = report.id;
+        return url.href;
+      }
+    : undefined;
   const request = async (binding: Binding, path: string, body?: unknown) =>
     traceOperation("slack.core", async () => {
       const response = await fetch(new URL(path, base), {
@@ -171,6 +229,43 @@ async function main() {
     auth.user_id,
     {
       request,
+      ...(publishDebugshare ? { publishDebugshare } : {}),
+      async diagnosticContext(source) {
+        const scope = source.channel.startsWith("D")
+          ? "im:history"
+          : source.channel.startsWith("G")
+            ? "groups:history"
+            : "channels:history";
+        if (!auth.response_metadata?.scopes?.includes(scope))
+          throw new Error("Diagnostic context unavailable");
+        const root =
+          source.thread ??
+          (source.channel.startsWith("D") ? null : source.message);
+        const url = new URL(
+          `https://slack.com/api/conversations.${root ? "replies" : "history"}`,
+        );
+        url.search = new URLSearchParams({
+          channel: source.channel,
+          ...(root ? { ts: root } : {}),
+          latest: source.message,
+          inclusive: "true",
+          limit: "20",
+        }).toString();
+        const response = await traceOperation("slack.api", () =>
+          fetch(url, {
+            headers: { authorization: `Bearer ${required("SLACK_BOT_TOKEN")}` },
+            signal: AbortSignal.timeout(2000),
+            redirect: "error",
+          }),
+        );
+        const result = (await response.json()) as {
+          ok?: boolean;
+          messages?: unknown;
+        };
+        if (!response.ok || result.ok !== true)
+          throw new Error("Diagnostic context unavailable");
+        return { messages: result.messages };
+      },
       async openDm(user) {
         const result = await traceOperation("slack.api", () =>
           web.conversations.open({ users: user }),
@@ -284,6 +379,7 @@ async function main() {
     statusEnabled,
     1200,
     true,
+    diagnosticSecrets,
   );
   let stopping = false;
   socket.on("slack_event", async ({ body, ack }) => {

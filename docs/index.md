@@ -64,10 +64,12 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
 - **Agent-selected Slack routing implemented in source:** finite host-offered
   destinations with durable choice and private/shared audience checks; no core
   identity switch or arbitrary destination IDs. Live acceptance remains separate.
-- **Identifier-only DEBUGSHARE implemented in source:** the authenticated Slack
-  adapter generates an opaque UUID and replies privately without model/core
-  submission, thread creation, repair or diagnostic upload. No diagnostics lookup
-  record is created. See [Slack command semantics](slack.md).
+- **Durable DEBUGSHARE implemented in source:** the authenticated Slack adapter
+  commits a UUID-to-origin mapping before ACK, captures bounded actual issue
+  context and retries an optional authenticated tracker upload without model/core
+  submission or repair. Hosted lookup and runtime activation require separate
+  acceptance. Older identifier-only UUIDs have no retained diagnostic mapping.
+  See [Slack command semantics](slack.md).
 - **Imported reference material:** faithful [Figma-to-Rune plan](../ui/IMPORT-PLAN.md),
   recovered standalone Canvas study and source reference images. These are not an
   implemented native app or finished Figma port.
@@ -96,8 +98,8 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
   Earlier timer rollout and post-rollout real history preservation also passed.
   No public ingress is provisioned.
 - **Planned:** Composio/Gmail onboarding, live Slack setup, adaptive recall/Dreaming,
-  selected json-render native migration, Reflection, DEBUGSHARE diagnostic
-  correlation/repair and future Amp/Space handoff.
+  selected json-render native migration, Reflection, deeper DEBUGSHARE actor/trace
+  correlation and repair, and future Amp/Space handoff.
 - **Not claimed:** live integration-account onboarding, tested imported laptop
   build, production tenant isolation, exactly-once effects, forced OAuth refresh,
   backup restore or automatic runtime doc loading.
