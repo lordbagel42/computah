@@ -67,6 +67,11 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
 - **Imported experiment:** generic [native Rune frontend](rune-pi.md), with local
   Pi coding-agent subprocess mode, deterministic mock, inert layout registry and
   independent blank-layout recovery. This is not Pi Durable or the Figma port.
+- **Native product UI implemented locally:** [Rune client](../apps/native/README.md)
+  for the existing durable core, with json-render native cards/composition,
+  persisted drafts/layouts and independent blank-app recovery. Linux synthetic
+  render/input and REST-fixture checks are not a real authenticated client exchange
+  or Mac/platform runtime acceptance. This is separate from the local-Pi experiment.
 - **Unimplemented seam:** full streaming core-to-wire AgentAdapter;
   raw Pi histories are not the renderer-neutral protocol.
 - **Live-verified on nest-bagel:** protected real-mode legacy Codex HTTP requests
@@ -93,6 +98,8 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
   compaction, tested recovery and transport limitations.
 - [Native Rune experiment](rune-pi.md): source-build setup, local Pi/mock modes,
   layout customization, portable snapshot fallback and recovery.
+- [Native product client](../apps/native/README.md): durable-core REST boundary,
+  json-render registry, versioned composition, local owner tools and platform limits.
 - [Architecture and authority](architecture.md): owners, tenancy, runtime intent,
   secret handles and owner self-shipping versus other-user escalation.
 - [Development and recovery](development.md): commands, packet ownership,

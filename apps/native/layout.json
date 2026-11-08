@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "theme": {
+    "background": "#000000",
+    "surface": "#111111",
+    "text": "#F5F5F5",
+    "muted": "#B0B0B0",
+    "gap": 16,
+    "padding": 24,
+    "radius": 28
+  },
+  "root": {
+    "id": "shell",
+    "kind": "column",
+    "version": 1,
+    "style": { "gap": 24, "padding": 0 },
+    "children": [
+      { "id": "header", "kind": "header", "version": 1, "text": "Computah" },
+      {
+        "id": "workspace",
+        "kind": "row",
+        "version": 1,
+        "style": { "gap": 64, "padding": 0 },
+        "children": [
+          {
+            "id": "panels",
+            "kind": "sidebar",
+            "version": 1,
+            "data": {
+              "panels": [
+                {
+                  "title": "Dinner with Laura",
+                  "body": "Juniper · Friday, 7:30 PM\nA quieter table for two.\n\nNot booked yet"
+                },
+                {
+                  "title": "Up next",
+                  "body": "3:00   Design catch-up\n         Calendar\n\n4:30   Pick up groceries\n         Reminders"
+                },
+                {
+                  "title": "Spending",
+                  "body": "$1,284  of $1,600\n\nFinance tools · 8 min ago"
+                },
+                {
+                  "title": "Weekend away",
+                  "body": "Watching hotel prices\nTravel tools · since Sep 3"
+                }
+              ]
+            }
+          },
+          {
+            "id": "conversation",
+            "kind": "column",
+            "version": 1,
+            "style": { "padding": 0, "gap": 24 },
+            "children": [
+              { "id": "messages", "kind": "transcript", "version": 1 },
+              { "id": "composer", "kind": "composer", "version": 1 }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

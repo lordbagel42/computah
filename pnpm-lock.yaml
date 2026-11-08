@@ -131,6 +131,15 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  apps/native:
+    dependencies:
+      '@json-render/core':
+        specifier: 0.22.0
+        version: 0.22.0(zod@4.6.7)
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+
   apps/server:
     dependencies:
       '@computah/contracts':
@@ -815,6 +824,11 @@ packages:
 
   '@jridgewell/sourcemap-codec@1.6.0':
     resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
+
+  '@json-render/core@0.22.0':
+    resolution: {integrity: sha512-BIfJ2V3bLYETetBu2KWoxxRPU5cSAf77dDTBgqaV54kEAfyHta1psPJgNk0fDcB3FCrnCZ5KO/X41VDkrNSYgw==}
+    peerDependencies:
+      zod: ^4.0.0
 
   '@lmdb/lmdb-darwin-arm64@3.5.9':
     resolution: {integrity: sha512-7HlQ5rJEQca3zSyng5H80Fo97GngLUvJ2yyMbK+qpJAeTxA2jNSiu6D3jx9z5i2OwXDAEteGp0nk/nPqxd0W+g==}
@@ -3005,6 +3019,10 @@ snapshots:
   '@isaacs/nonrecursive-glob-match@1.1.0': {}
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
+
+  '@json-render/core@0.22.0(zod@4.6.7)':
+    dependencies:
+      zod: 4.6.7
 
   '@lmdb/lmdb-darwin-arm64@3.5.9':
     optional: true

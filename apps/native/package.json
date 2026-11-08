@@ -1,0 +1,12 @@
+{
+  "name": "@computah/native",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test scripts/*.test.mjs"
+  },
+  "dependencies": {
+    "@json-render/core": "0.22.0",
+    "zod": "4.6.7"
+  }
+}

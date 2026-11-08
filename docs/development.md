@@ -22,6 +22,13 @@ See its README for native/headless rendering and OS dependencies. Mock mode need
 no model credentials; actual Pi mode uses terminal authentication and a pinned
 local coding-agent subprocess, not the server's durable runtime.
 
+The separate [native product client](../apps/native/README.md) in `apps/native`
+uses the existing durable core via REST, never a second local Pi brain. Root pnpm
+tests include its Node catalog/transport checks. Its isolated Rust workspace also
+requires `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings`,
+`cargo test --locked` and `cargo build --locked` from `apps/native`. Synthetic Linux
+render/input evidence does not establish live access, Mac or mobile acceptance.
+
 ## Parallel packet ownership
 
 | Owner           | Files                                                                             |

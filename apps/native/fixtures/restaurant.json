@@ -1,0 +1,19 @@
+{
+  "catalog": "computah.native@1",
+  "message": "Illustrative places, not live search results.",
+  "cards": [
+    {
+      "root": "dinner",
+      "elements": {
+        "dinner": {
+          "type": "Restaurant",
+          "props": {
+            "name": "Juniper Kitchen",
+            "description": "A quieter table for a long conversation. Synthetic fixture, not a reservation.",
+            "timezone": "America/Boise"
+          }
+        }
+      }
+    }
+  ]
+}

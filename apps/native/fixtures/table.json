@@ -1,0 +1,23 @@
+{
+  "catalog": "computah.native@1",
+  "message": "A comparison to keep in the conversation. Synthetic fixture.",
+  "cards": [
+    {
+      "root": "places",
+      "elements": {
+        "places": {
+          "type": "Table",
+          "props": {
+            "title": "Friday dinner",
+            "columns": ["Place", "Setting", "Availability"],
+            "rows": [
+              ["Juniper Kitchen", "Quiet dining room", "Not checked"],
+              ["Common Ground", "Small courtyard", "Unknown"],
+              ["Fieldwork", "Shared tables", "Not checked"]
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "catalog": "computah.native@1",
+  "message": "Composition removed. Conversation is retained. Undo and Restore remain available.",
+  "app": {
+    "spec": {
+      "root": "empty",
+      "elements": { "empty": { "type": "Empty", "props": {} } }
+    }
+  }
+}

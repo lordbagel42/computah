@@ -1,0 +1,21 @@
+{
+  "events": [
+    { "t": 0.1, "type": "move", "x": 26, "y": 730 },
+    { "t": 0.3, "type": "move", "key": "undo" },
+    { "t": 0.5, "type": "move", "key": "restore" },
+    { "t": 0.7, "type": "move", "x": 400, "y": 680 },
+    { "t": 0.9, "type": "tap", "key": "prompt" },
+    { "t": 1.1, "type": "type", "text": "compare in a table", "every": 0.025 },
+    { "t": 1.8, "type": "move", "key": "send" },
+    { "t": 2.0, "type": "tap", "key": "send" },
+    { "t": 2.7, "type": "move", "key": "prompt" },
+    { "t": 3.0, "type": "tap", "key": "prompt" },
+    { "t": 3.2, "type": "type", "text": "delete all", "every": 0.035 },
+    { "t": 3.8, "type": "key", "name": "Enter" },
+    { "t": 4.4, "type": "move", "key": "restore" },
+    { "t": 4.7, "type": "move", "key": "undo" },
+    { "t": 5.0, "type": "tap", "key": "undo" },
+    { "t": 5.7, "type": "move", "key": "restore" },
+    { "t": 6.0, "type": "tap", "key": "restore" }
+  ]
+}
