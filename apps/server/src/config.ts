@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Capability, Scope } from "./core.js";
+import type { Capability, CoreOptions, Scope } from "./core.js";
 import { interactionModel, workerModel } from "./model-policy.js";
 
 export type Principal = Scope & {
@@ -91,6 +91,52 @@ export function readConfig(env: NodeJS.ProcessEnv) {
   const model =
     mode === "faux" ? "computah-smoke/deterministic" : interactionModel;
   const executionModel = mode === "faux" ? model : workerModel;
+  let sentinel:
+    | Omit<NonNullable<CoreOptions["sentinel"]>, "review">
+    | undefined;
+  if (env.COMPUTAH_SENTINEL_JSON) {
+    try {
+      if (mode !== "real") throw new Error();
+      const policy = JSON.parse(env.COMPUTAH_SENTINEL_JSON);
+      const validScope = (scope: Scope) =>
+        scope &&
+        typeof scope === "object" &&
+        Object.keys(scope).sort().join(",") === "agentId,tenantId,userId" &&
+        [scope.tenantId, scope.userId, scope.agentId].every(
+          (value) =>
+            typeof value === "string" &&
+            value.length > 0 &&
+            value.length <= 200,
+        ) &&
+        scopes.has(principalKey(scope));
+      if (
+        !policy ||
+        Object.keys(policy).sort().join(",") !== "ownerScope,reviews" ||
+        !validScope(policy.ownerScope) ||
+        !Array.isArray(policy.reviews) ||
+        !policy.reviews.length ||
+        policy.reviews.length > principals.size ||
+        policy.reviews.some(
+          (entry: { scope: Scope; mode: string }) =>
+            !entry ||
+            Object.keys(entry).sort().join(",") !== "mode,scope" ||
+            !validScope(entry.scope) ||
+            !["monitor", "preflight"].includes(entry.mode),
+        ) ||
+        new Set(
+          policy.reviews.map((entry: { scope: Scope }) =>
+            principalKey(entry.scope),
+          ),
+        ).size !== policy.reviews.length
+      )
+        throw new Error();
+      sentinel = policy;
+    } catch {
+      throw new Error(
+        "Invalid COMPUTAH_SENTINEL_JSON: explicit existing owner/review scopes and monitor/preflight modes required in real mode",
+      );
+    }
+  }
   const port = Number(env.PORT ?? "3000");
   if (!Number.isInteger(port) || port < 0 || port > 65535)
     throw new Error("PORT must be an integer between 0 and 65535");
@@ -107,6 +153,7 @@ export function readConfig(env: NodeJS.ProcessEnv) {
     principals,
     model,
     workerModel: executionModel,
+    sentinel,
     port,
     authFile,
     apiKeys: key ? { [provider]: key } : undefined,

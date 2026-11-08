@@ -15,6 +15,7 @@ import { afterAll, expect, test } from "vitest";
 import { readConfig } from "../src/config.js";
 import { type Capability, createCore, type Scope } from "../src/core.js";
 import { closeHttp, createHttpServer } from "../src/http.js";
+import type { SentinelDecision, SentinelInput } from "../src/sentinel.js";
 
 const alice = { tenantId: "tenant-one", userId: "alice", agentId: "default" };
 const bob = { tenantId: "tenant-one", userId: "bob", agentId: "default" };
@@ -44,7 +45,7 @@ const providerCore = createFauxCore({
   models,
   tokensPerSecond: 0,
 });
-const requests: { tools: string[]; text: string }[] = [];
+const requests: { tools: string[]; text: string; afterTool: boolean }[] = [];
 const provider: PiProviderConfig = {
   api: "computah-test",
   baseUrl: "http://unused.invalid",
@@ -71,7 +72,7 @@ const provider: PiProviderConfig = {
           offered.delete(tool.name);
       }
     const tools = [...offered];
-    requests.push({ tools, text });
+    requests.push({ tools, text, afterTool: latest?.role === "toolResult" });
     const response =
       latest?.role === "toolResult"
         ? fauxAssistantMessage(
@@ -94,8 +95,9 @@ const provider: PiProviderConfig = {
               fauxText(`Result: ${text}`),
             ]);
     const engine =
-      text.includes("[slow]") &&
-      (!tools.includes("Task") || latest?.role === "toolResult")
+      (text.includes("[slow]") &&
+        (!tools.includes("Task") || latest?.role === "toolResult")) ||
+      (text.includes("[handover]") && latest?.role === "toolResult")
         ? createFauxCore({
             api: "computah-test",
             provider: "computah-test",
@@ -108,6 +110,10 @@ const provider: PiProviderConfig = {
     return engine.streamSimple(model, context, options);
   },
 };
+const reviewPolicies: { scope: Scope; mode: "monitor" | "preflight" }[] = [];
+let review: (input: SentinelInput) => Promise<SentinelDecision> = async () => {
+  throw new Error("No review expected");
+};
 const coreOptions = {
   connectionSecret: randomBytes(32).toString("hex"),
   authorize: (scope, capability) =>
@@ -116,6 +122,11 @@ const coreOptions = {
   providers: { "computah-test": provider },
   apiKeys: { "computah-test": "local-not-a-credential" },
   settings: { compaction: { keepRecentTokens: 1 } },
+  sentinel: {
+    ownerScope: alice,
+    reviews: reviewPolicies,
+    review: (input: SentinelInput) => review(input),
+  },
 } satisfies Parameters<typeof createCore>[0];
 const core = createCore(coreOptions);
 let replacement: ReturnType<typeof createCore> | undefined;
@@ -657,6 +668,331 @@ test("two users cannot read, submit to, or control each other's actor histories"
       "forged-owner",
     ),
   ).rejects.toThrow("denied");
+});
+
+test("Sentinel preflight fences before Worker admission, persists a safe verdict and denies foreign audit access", async (context) => {
+  const { client } = await setupTest(context, core.registry);
+  const gateway = core.attach(client)(alice);
+  const before = (await gateway.history(gateway.workerId())).items;
+  let calls = 0;
+  reviewPolicies.push({ scope: alice, mode: "preflight" });
+  review = async (input) => {
+    calls++;
+    expect(input.principal).toBe("owner");
+    expect(input.evidence).toEqual([
+      {
+        id: "task",
+        source: "assistant",
+        text: "Work: sentinel-private-canary",
+      },
+    ]);
+    return {
+      action: "pause",
+      reason: "privacy-risk",
+      evidence: ["task"],
+      scope: { reviewId: input.reviewId, stage: input.stage },
+    };
+  };
+  try {
+    const submitted = await gateway.submit(
+      gateway.interactionId,
+      "sentinel-private-canary",
+      "sentinel-denied",
+    );
+    expect(
+      (await gateway.wait(gateway.interactionId, submitted.submissionId))
+        .status,
+    ).toBe("unanswered");
+    expect((await gateway.history(gateway.workerId())).items).toEqual(before);
+    const audit = await gateway.sentinelAudits(
+      gateway.interactionId,
+      submitted.submissionId,
+    );
+    expect(audit).toMatchObject([
+      {
+        action: "pause",
+        reason: "privacy-risk",
+        enforcement: "fenced",
+        mode: "preflight",
+      },
+    ]);
+    expect(JSON.stringify(audit)).not.toContain("canary");
+    expect(
+      await gateway.submit(
+        gateway.interactionId,
+        "sentinel-private-canary",
+        "sentinel-denied",
+      ),
+    ).toEqual(submitted);
+    expect(calls).toBe(1);
+    await gateway.sleep(gateway.interactionId);
+    expect(
+      await gateway.sentinelAudits(
+        gateway.interactionId,
+        submitted.submissionId,
+      ),
+    ).toEqual(audit);
+    const foreign = core.attach(client)(bob);
+    await expect(
+      foreign.sentinelAudits(gateway.interactionId, submitted.submissionId),
+    ).rejects.toThrow("denied");
+    expect(
+      (await gateway.history(gateway.interactionId)).items.some((item) =>
+        JSON.stringify(item).includes("sentinel-private-canary"),
+      ),
+    ).toBe(true);
+  } finally {
+    reviewPolicies.length = 0;
+  }
+});
+
+test("Sentinel monitor cancels the original native Interaction and active Worker, without blocking ordinary admission", async (context) => {
+  const { client } = await setupTest(context, core.registry);
+  const gateway = core.attach(client)(alice);
+  let resolveReview!: (decision: SentinelDecision) => void;
+  let captured: SentinelInput | undefined;
+  reviewPolicies.push({ scope: alice, mode: "monitor" });
+  review = (input) => {
+    captured = input;
+    return new Promise((resolve) => {
+      resolveReview = resolve;
+    });
+  };
+  try {
+    const submission = await gateway.submit(
+      gateway.interactionId,
+      "[slow] sentinel cancel this lengthy delegated answer",
+      "sentinel-monitor",
+    );
+    const controller = new AbortController();
+    let workerSubmission:
+      | import("@earendil-works/pi-durable").SubmissionId
+      | undefined;
+    try {
+      for await (const frame of gateway.observe(
+        submission.submissionId,
+        controller.signal,
+      )) {
+        const worker = frame.find(
+          (item) =>
+            item.source === "worker" && item.submission?.status === "placed",
+        );
+        if (worker?.submission) {
+          workerSubmission = worker.submission.id;
+          break;
+        }
+      }
+    } finally {
+      controller.abort();
+    }
+    await expect.poll(() => Boolean(captured)).toBe(true);
+    if (!captured) throw new Error("Missing review input");
+    resolveReview({
+      action: "cancel",
+      reason: "unintended-effect",
+      evidence: ["task"],
+      scope: { reviewId: captured.reviewId, stage: captured.stage },
+    });
+    expect(
+      (await gateway.wait(gateway.interactionId, submission.submissionId))
+        .status,
+    ).toBe("unanswered");
+    expect(workerSubmission).toBeDefined();
+    if (!workerSubmission) throw new Error("Missing Worker admission");
+    expect(
+      (await gateway.wait(gateway.workerId(), workerSubmission)).status,
+    ).toBe("unanswered");
+    const stopped = (await gateway.history(gateway.workerId())).items;
+    expect(
+      await gateway.sentinelAudits(
+        gateway.interactionId,
+        submission.submissionId,
+      ),
+    ).toMatchObject([{ action: "cancel", enforcement: "fenced" }]);
+    reviewPolicies.length = 0;
+    const followup = await gateway.submit(
+      gateway.interactionId,
+      "sentinel clean followup",
+      "sentinel-followup",
+    );
+    expect(
+      (await gateway.wait(gateway.interactionId, followup.submissionId)).status,
+    ).toBe("done");
+    expect(
+      (await gateway.history(gateway.workerId())).items.slice(
+        0,
+        stopped.length,
+      ),
+    ).toEqual(stopped);
+  } finally {
+    reviewPolicies.length = 0;
+  }
+});
+
+test("Sentinel cancels an original submission after Pi hands it to the post-tool generation", async (context) => {
+  const { client } = await setupTest(context, core.registry);
+  const gateway = core.attach(client)(alice);
+  let finish!: (decision: SentinelDecision) => void;
+  let captured: SentinelInput | undefined;
+  reviewPolicies.push({ scope: alice, mode: "monitor" });
+  review = (input) => {
+    captured = input;
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  };
+  try {
+    const text =
+      "[handover] sentinel stop final streaming answer after Worker completes";
+    const original = await gateway.submit(
+      gateway.interactionId,
+      text,
+      "sentinel-handover",
+    );
+    await expect
+      .poll(
+        () =>
+          requests.some(
+            (request) => request.afterTool && request.text === text,
+          ),
+        { timeout: 5000 },
+      )
+      .toBe(true);
+    expect(
+      (await gateway.result(gateway.interactionId, original.submissionId))
+        .submission.status,
+    ).toBe("placed");
+    if (!captured) throw new Error("Missing review input");
+    finish({
+      action: "cancel",
+      reason: "privacy-risk",
+      evidence: ["task"],
+      scope: { reviewId: captured.reviewId, stage: captured.stage },
+    });
+    expect(
+      (await gateway.wait(gateway.interactionId, original.submissionId)).status,
+    ).toBe("unanswered");
+    expect(
+      await gateway.sentinelAudits(
+        gateway.interactionId,
+        original.submissionId,
+      ),
+    ).toMatchObject([{ action: "cancel", enforcement: "fenced" }]);
+  } finally {
+    reviewPolicies.length = 0;
+  }
+});
+
+test("late monitor verdict cannot cancel a successor, and unavailable review obeys the selected failure policy", async (context) => {
+  const { client } = await setupTest(context, core.registry);
+  const gateway = core.attach(client)(alice);
+  let finish!: (decision: SentinelDecision) => void;
+  let captured: SentinelInput | undefined;
+  reviewPolicies.push({ scope: alice, mode: "monitor" });
+  review = (input) => {
+    captured = input;
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  };
+  try {
+    const original = await gateway.submit(
+      gateway.interactionId,
+      "sentinel late original",
+      "sentinel-late",
+    );
+    expect(
+      (await gateway.wait(gateway.interactionId, original.submissionId)).status,
+    ).toBe("done");
+    await expect.poll(() => Boolean(captured)).toBe(true);
+    reviewPolicies.length = 0;
+    const successor = await gateway.submit(
+      gateway.interactionId,
+      "[slow] sentinel unaffected successor",
+      "sentinel-successor",
+    );
+    if (!captured) throw new Error("Missing review input");
+    finish({
+      action: "cancel",
+      reason: "prompt-injection",
+      evidence: ["task"],
+      scope: { reviewId: captured.reviewId, stage: captured.stage },
+    });
+    await expect
+      .poll(
+        async () =>
+          (
+            await gateway.sentinelAudits(
+              gateway.interactionId,
+              original.submissionId,
+            )
+          )[0]?.enforcement,
+      )
+      .toBe("settled");
+    expect(
+      (await gateway.wait(gateway.interactionId, successor.submissionId))
+        .status,
+    ).toBe("done");
+    review = async () => {
+      throw new Error("private-review-failure-canary");
+    };
+    for (const mode of ["preflight", "monitor"] as const) {
+      reviewPolicies.splice(0, reviewPolicies.length, { scope: alice, mode });
+      const attempt = await gateway.submit(
+        gateway.interactionId,
+        `sentinel unavailable ${mode}`,
+        `sentinel-unavailable-${mode}`,
+      );
+      expect(
+        (await gateway.wait(gateway.interactionId, attempt.submissionId))
+          .status,
+      ).toBe(mode === "monitor" ? "done" : "unanswered");
+      await expect
+        .poll(
+          async () =>
+            (
+              await gateway.sentinelAudits(
+                gateway.interactionId,
+                attempt.submissionId,
+              )
+            )[0]?.reason,
+        )
+        .toBe("review-unavailable");
+    }
+  } finally {
+    reviewPolicies.length = 0;
+  }
+});
+
+test("Sentinel allow does not bypass a revoked host grant", async (context) => {
+  const { client } = await setupTest(context, core.registry);
+  const gateway = core.attach(client)(alice);
+  const before = (await gateway.history(gateway.workerId())).items;
+  reviewPolicies.push({ scope: alice, mode: "preflight" });
+  review = async (input) => {
+    grants.get(key(alice))?.delete("task.send");
+    return {
+      action: "allow",
+      reason: "consistent-with-intent",
+      evidence: [],
+      scope: { reviewId: input.reviewId, stage: input.stage },
+    };
+  };
+  try {
+    const attempt = await gateway.submit(
+      gateway.interactionId,
+      "sentinel grant revoke",
+      "sentinel-revoked",
+    );
+    await gateway.wait(gateway.interactionId, attempt.submissionId);
+    expect((await gateway.history(gateway.workerId())).items).toEqual(before);
+    expect(
+      await gateway.sentinelAudits(gateway.interactionId, attempt.submissionId),
+    ).toMatchObject([{ action: "allow" }]);
+  } finally {
+    grants.get(key(alice))?.add("task.send");
+    reviewPolicies.length = 0;
+  }
 });
 
 test("a new registry activation reopens the same durable Worker and dedup receipts", async (context) => {

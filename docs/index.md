@@ -110,6 +110,9 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
   replay rules, renderer-neutral generated JSON Schema.
 - [Durable core](core.md): private scoped gateway, Task/Worker lifecycle, native
   compaction, tested recovery and transport limitations.
+- [Sentinel Specialist](sentinel.md): explicit host-selected Task preflight or
+  asynchronous monitoring, durable verdict/fence and native cancellation; not
+  downstream effect-dispatch protection or a blanket owner bypass.
 - [Native Rune experiment](rune-pi.md): source-build setup, local Pi/mock modes,
   layout customization, portable snapshot fallback and recovery.
 - [Native product client](../apps/native/README.md): durable-core REST boundary,

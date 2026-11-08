@@ -1,9 +1,9 @@
 # Sentinel protective Specialist
 
-Status: additive review module and local synthetic decision tests, reviewed against
-main `49fda85` / core `5bcf9c8`. No production caller imports this module. Core hook,
-native Sentinel cancellation acceptance and executable activation are pending
-integration; this page does **not** claim enabled protection or a live model evaluation.
+Status: native Task admission and asynchronous monitoring implemented and locally
+tested on real Rivet/Pi with synthetic verdicts. Production activation requires
+explicit private host policy; source publication is not deployment or evidence
+of real-model detection quality. Unconfigured scopes retain existing behavior.
 
 Sentinel follows the planned [Specialist architecture](architecture.md): a bounded
 helper around Interaction → Task → persistent Worker, not another primary agent,
@@ -59,29 +59,52 @@ evidence count only. No payload, quotations, raw provider errors, model-authored
 rationale or chain of thought enter this audit. The audit is not another canonical
 history; the host must persist it alongside the existing Pi cancellation fence.
 
-## First runnable interception contract
+## Native interception and policy
 
-Core owns the hook and native cancellation lifecycle. The additive module must
-not be mistaken for an installed dispatch guard. Current core already has durable
-`Delegations`, `Receipt.cancelled`, `cancelCascade`, `computah.cancel` and Worker
-`cancelRequest` with native abort/join. None invokes Sentinel or persists its audit.
-The integration contract is:
+The optional private `COMPUTAH_SENTINEL_JSON` contains exactly `ownerScope` and
+`reviews`. `ownerScope` is an explicit `{tenantId,userId,agentId}` binding, not a
+capability inference. Each review has exactly `scope` (the same three fields) and
+`mode` (`monitor` or `preflight`). All scopes must already exist in host auth;
+duplicates, extra policy fields, unknown scopes and faux-mode activation fail
+startup. This configuration grants no capabilities. Disposable deployment
+preflight passes an explicit synthetic env allowlist without this key or real
+credentials, so it cannot invoke Sentinel's real model.
+
+`main` supplies Sentinel and core the same runtime Models boundary and configured
+Worker model, retaining priority/high. Core selects policy from the authenticated
+Binding, not Slack/web/tool content. Its only automatic evidence is the current
+Task's assistant-authored text argument (maximum 12,000 characters), already
+authorized for the same scoped Worker/provider. No reasoning, raw history,
+retrieval result, host metadata or credentials are loaded by the reviewer.
+Over-limit evidence is unavailable, never silently truncated. This is a text
+projection, not universal secret redaction or a full original-intent reconstruction.
+
+Core owns the native lifecycle:
 
 1. Host authorizes current scope/capability independently of Sentinel. Missing
    authority is denied even when Sentinel says allow and even for the owner.
-2. For a selected Task preflight, core records its durable Worker delegation link,
-   then builds bounded safe review input before Worker admission. A trusted policy
-   callback selects the review and principal; model content cannot set that policy.
+2. For a selected Task, core records its durable Worker delegation link and bounded
+   review. `preflight` waits for review before Worker admission; `monitor` schedules
+   one replay-deduplicated native background `computah.sentinel` task and proceeds
+   without waiting for the extra model roundtrip.
 3. Persist the safe verdict and request fence before scheduling the existing
    `computah.cancel` path on pause/cancel. Do not admit the Worker after a fence,
    including on replay. Do not call and await the external gateway's cancellation
    from the same running Task: it can wait on itself.
-4. An independent monitor can call `inspect(session, [resourceId, submissionId],
-   input)`. A non-allow verdict calls the existing scoped `CoreSession.cancel`;
-   its returned native cancellation result is forwarded without inventing success.
-   Only an authorized host may construct this monitor. The core still checks
-   exact ownership and `task.control`. Verify actual terminal Interaction/Worker
-   state separately; a request receipt is insufficient.
+4. The native monitor commits its categorical verdict and fence atomically. Original
+   submission IDs, not transient generation IDs, identify the active request across
+   Pi tool-round handovers; a late verdict is marked `settled` and cannot cancel an
+   unrelated successor. Existing `computah.cancel` aborts/joins the
+   Interaction and every linked Worker via `cancelRequest`, including its durable
+   pre-admission tombstone. RPC failure retries rather than claiming completion.
+5. `CoreSession.sentinelAudits(interactionId,submissionId)` is a private host API,
+   requiring current history authority and exact submission ownership. It returns
+   categorical receipts (plus mode/enforcement), never review payloads. It is not
+   exposed as a public bus DTO. History and original admission IDs remain canonical.
+
+The standalone `inspect` helper remains for independently authorized external
+monitors; its gateway control calls still require `task.control`. Native policy
+review is host-provisioned protective authority, not a user control capability.
 
 `pause` stops/fences this attempt like cancel, but communicates clarification is
 needed. There is no automatic resume or new approval authority. A clarified or
@@ -97,8 +120,7 @@ preserve its deduplication/cancellation tombstone and original durable history.
 | Risky effect intent                | Mandatory at the actual enabled effect dispatcher | Fail closed (`pause`, `review-unavailable`) | Recheck authority and durable request fence immediately before effect        |
 | Task preflight                     | Optional host-selected review                     | As selected policy                          | Prevents Worker admission, not a substitute for later effect-dispatch guards |
 
-The current Worker has no external-effect tools, shell, file access or account
-credentials. No external-effect dispatcher is protected by this module yet. A
+No external-effect dispatcher is protected by this integration yet. A
 future tool must opt into **enforced risky review at dispatch**, not merely run a
 pre-Task check and claim downstream protection. Ordinary chat is not silently
 model-gated. Output monitoring after emission cannot undo a disclosure; protected
@@ -112,19 +134,25 @@ cancel target, even if a model follows injected instructions. Cancellation canno
 undo an already-started external mutation; interrupted ambiguous effects remain
 unknown and require reconciliation rather than blind retry.
 
-## Evidence required before activation
+## Verification and remaining limits
 
 Decision tests check bounded scope/schema, untrusted-content separation, rejected
 authority fields, safe audits and fail-closed/fail-soft deadlines. These are
 synthetic model outputs, not proof a real model reliably recognizes injection.
-Acceptance additionally requires actual Rivet/Pi tests showing denied-before-admit,
-Sentinel-triggered active Interaction **and** Worker terminal cancellation,
-replay/idempotent fences, retained history, and denied cross-user controls even
-with a model allow. Live legacy Codex review quality, provider refresh, output
-publication buffering and external effects remain separately unverified.
+Actual Rivet/Pi tests exercise denied-before-admit with unchanged Worker history,
+active Interaction **and** Worker terminal cancellation, replay/idempotent receipt,
+sleep/reopen persistence, retained originals, post-tool generation handover,
+late verdict successor safety,
+fail-closed preflight/fail-soft monitoring, cross-user audit denial and revoked
+host grants despite an allow verdict. These synthetic verdicts establish native
+enforcement, not real-model judgment quality. Model review may repeat after a
+crash before its verdict transaction commits; durable committed verdicts and
+monitor scheduling deduplicate, not provider billing.
 
-There is intentionally no source-only switch claiming to enable this behavior.
-The integration owner must add the explicit owner scope/policy binding, safe
-projection selection, review-before-admission transaction and audit/fence storage,
-then prove those native outcomes. Publication of these three additive source files
-does not satisfy that activation contract and requires no host rollout or restart.
+Metadata-only `sentinel.review`, `sentinel.enforce` and `sentinel.cancel` spans
+use the existing privacy relay/Axiom pipeline, with trusted stored trace carriers.
+Only action/mode/fixed reason/enforcement categories are exported; review keys,
+evidence IDs/text and raw provider errors are not trace attributes. Live ingestion
+and enabled-host proof must be recorded separately after supported deployment.
+Live review quality, provider refresh, output publication buffering and external
+effect-dispatch protection remain unverified or unimplemented.

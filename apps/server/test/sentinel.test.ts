@@ -6,6 +6,7 @@ import {
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { SubmissionId } from "@earendil-works/pi-durable";
 import { expect, test } from "vitest";
+import { readConfig } from "../src/config.js";
 import {
   createSentinel,
   type SentinelDecision,
@@ -169,6 +170,50 @@ test("an allow verdict leaves the host cancellation target untouched", async () 
   );
   expect(result.decision.action).toBe("allow");
   expect(result.cancellation).toBeNull();
+});
+
+test("host policy requires exact existing scopes and cannot enable real review in disposable faux mode", () => {
+  const scope = { tenantId: "synthetic", userId: "owner", agentId: "default" };
+  const env = {
+    COMPUTAH_CONNECTION_SECRET: "synthetic-private-secret-at-least-32-bytes",
+    COMPUTAH_AUTH_JSON: JSON.stringify([
+      {
+        ...scope,
+        token: "synthetic-private-token-at-least-32-bytes",
+        capabilities: [],
+      },
+    ]),
+  };
+  const policy = { ownerScope: scope, reviews: [{ scope, mode: "monitor" }] };
+  expect(
+    readConfig({ ...env, COMPUTAH_SENTINEL_JSON: JSON.stringify(policy) })
+      .sentinel,
+  ).toEqual(policy);
+  for (const invalid of [
+    { ...policy, ownerScope: { ...scope, userId: "unprovisioned" } },
+    {
+      ...policy,
+      reviews: [
+        { scope: { ...scope, tenantId: "foreign" }, mode: "preflight" },
+      ],
+    },
+    { ...policy, reviews: [...policy.reviews, ...policy.reviews] },
+    { ...policy, allowOwnerBypass: true },
+    { ...policy, reviews: [{ scope, mode: "off" }] },
+  ])
+    expect(() =>
+      readConfig({ ...env, COMPUTAH_SENTINEL_JSON: JSON.stringify(invalid) }),
+    ).toThrow("Invalid COMPUTAH_SENTINEL_JSON");
+  expect(() =>
+    readConfig({
+      ...env,
+      COMPUTAH_MODE: "faux",
+      COMPUTAH_SENTINEL_JSON: JSON.stringify(policy),
+    }),
+  ).toThrow("Invalid COMPUTAH_SENTINEL_JSON");
+  expect(
+    readConfig({ ...env, COMPUTAH_MODE: "faux" }).sentinel,
+  ).toBeUndefined();
 });
 
 test("a cancel verdict cannot override a host control denial", async () => {

@@ -1,9 +1,15 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { traceEvent } from "@computah/observability";
+import {
+  createTraceCarrier,
+  currentTraceHeaders,
+  traceEvent,
+  traceOperation,
+} from "@computah/observability";
 import { effectTracing } from "@computah/observability/effect";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { applyImmutable } from "@earendil-works/chord/delta";
 import {
+  type ConversationId,
   type ConversationView,
   type Cursor,
   createRegistry,
@@ -37,6 +43,11 @@ import {
   operationalInstructions,
 } from "./operations.js";
 import { interactionInstructions, workerInstructions } from "./personality.js";
+import {
+  type SentinelDecision,
+  type SentinelInput,
+  sentinelAudit,
+} from "./sentinel.js";
 import { createTavily, createTavilyExtension } from "./tavily.js";
 
 export type Scope = { tenantId: string; userId: string; agentId: string };
@@ -152,11 +163,26 @@ type Delegation = {
   requestId: string;
   inputs: SubmissionId[];
   submissionId?: SubmissionId;
+  reviewTaskId?: TaskId;
+  reviewCarrier?: Record<string, string>;
+};
+type SentinelReceipt = ReturnType<typeof sentinelAudit> & {
+  mode: "monitor" | "preflight";
+  enforcement: "allowed" | "fenced" | "settled";
+};
+type SentinelWork = {
+  scope: Scope;
+  conversationId: ConversationId;
+  requestId: string;
+  input: SentinelInput;
+  mode: "monitor" | "preflight";
+  carrier: Record<string, string>;
 };
 const Delegations = defineDoc<{
   calls: Record<string, Delegation>;
   cancelled: Record<string, boolean>;
   cancellations: Record<string, TaskId>;
+  reviews?: Record<string, SentinelReceipt>;
 }>({
   kind: "computah.delegations",
   version: 1,
@@ -211,6 +237,11 @@ export interface CoreOptions {
   tavily?: { apiKey: string; fetch?: typeof fetch };
   /** Separate dataset-scoped read credential; never reuse an ingest/MCP token. */
   operations?: { queryToken?: string; fetch?: typeof fetch };
+  sentinel?: {
+    ownerScope: Scope;
+    reviews: readonly { scope: Scope; mode: "monitor" | "preflight" }[];
+    review(input: SentinelInput): Promise<SentinelDecision>;
+  };
   models?: PiOptions["models"];
   settings?: PiOptions["settings"];
 }
@@ -267,7 +298,13 @@ export function createCore(options: CoreOptions) {
 
   // A background Pi task keeps a cancellation alive across gateway disconnects/reopens.
   const cancelDelegated = defineTask<
-    { scope: Scope; runId: TaskId; links: Delegation[] },
+    {
+      scope: Scope;
+      runId: TaskId;
+      links: Delegation[];
+      inputs?: SubmissionId[];
+      carrier?: Record<string, string>;
+    },
     { phase: "cancel" },
     null
   >({
@@ -275,33 +312,158 @@ export function createCore(options: CoreOptions) {
     version: 1,
     initial: () => ({ phase: "cancel" }),
     phases: {
-      cancel: async (task, runtime, context) => {
-        const { scope, runId, links } = task.input;
+      cancel: async (task, runtime, context) =>
+        traceOperation(
+          task.input.carrier ? "sentinel.cancel" : "cancel",
+          async (span) => {
+            const { scope, runId, links } = task.input;
+            try {
+              const actor = handle(
+                controlClient(),
+                "interaction",
+                scopeKey(scope),
+              );
+              if (task.input.inputs)
+                await actor.cancelInputs(task.input.inputs);
+              else await actor.harness.abortTask(runId);
+              for (const link of links) {
+                await handle(controlClient(), "worker", [
+                  ...scopeKey(scope),
+                  link.worker,
+                ]).cancelRequest(link.requestId);
+              }
+              if (!task.input.inputs) await actor.harness.waitForTask(runId);
+            } catch {
+              // RPC failure must not become a terminal faulted cancellation. All steps replay safely.
+              await runtime.sleepUntil(
+                Date.now() + 1000,
+                { phase: "cancel" },
+                context,
+              );
+              return;
+            }
+            await runtime.commit(
+              () => ({
+                status: "terminal",
+                outcome: { status: "completed", result: null },
+              }),
+              context,
+            );
+            span.setAttribute("outcome", "cancelled");
+          },
+          task.input.carrier,
+        ),
+    },
+    abort: async (_task, runtime, context) => {
+      await runtime.commit(
+        () => ({ status: "terminal", outcome: { status: "aborted" } }),
+        context,
+      );
+    },
+  });
+
+  // Only categorical receipts live here, beside the existing cancellation fence.
+  // A late monitor verdict must never cancel a successor run on the same Worker.
+  async function recordReview(
+    tx: Tx,
+    work: SentinelWork,
+    decision: SentinelDecision,
+  ) {
+    const state = await tx.doc(Delegations, work.conversationId);
+    state.reviews ??= {};
+    const existing = state.reviews[work.requestId];
+    if (existing) return existing;
+    const live = await tx.doc(LiveDoc, work.conversationId);
+    const original = state.calls[work.requestId]?.inputs ?? [];
+    const active = original.some((id) => live.run?.inputs.includes(id));
+    const receipt: SentinelReceipt = {
+      ...sentinelAudit(decision),
+      mode: work.mode,
+      enforcement:
+        decision.action === "allow" ? "allowed" : active ? "fenced" : "settled",
+    };
+    state.reviews[work.requestId] = receipt;
+    if (decision.action !== "allow" && active && live.run) {
+      for (const id of live.run.inputs) state.cancelled[String(id)] = true;
+      let taskId = live.run.inputs
+        .map((id) => state.cancellations[String(id)])
+        .find(Boolean);
+      if (!taskId) {
+        const links = Object.values(state.calls).filter((link) =>
+          link.inputs.some((id) => live.run?.inputs.includes(id)),
+        );
+        taskId = await tx.createTask(
+          cancelDelegated,
+          {
+            scope: work.scope,
+            runId: live.run.taskId,
+            inputs: [...live.run.inputs],
+            links,
+            carrier: work.carrier,
+          },
+          { ownership: { kind: "conversation" }, background: true },
+        );
+      }
+      for (const id of live.run.inputs)
+        state.cancellations[String(id)] = taskId;
+    }
+    return receipt;
+  }
+  async function reviewWork(work: SentinelWork) {
+    return traceOperation(
+      "sentinel.review",
+      async (span) => {
+        let decision: SentinelDecision;
         try {
-          const actor = handle(controlClient(), "interaction", scopeKey(scope));
-          await actor.harness.abortTask(runId);
-          for (const link of links) {
-            await handle(controlClient(), "worker", [
-              ...scopeKey(scope),
-              link.worker,
-            ]).cancelRequest(link.requestId);
-          }
-          await actor.harness.waitForTask(runId);
+          if (!work.input.evidence.length || !options.sentinel)
+            throw new CoreError("invalid");
+          decision = await options.sentinel.review(work.input);
         } catch {
-          // RPC failure must not become a terminal faulted cancellation. All steps replay safely.
-          await runtime.sleepUntil(
-            Date.now() + 1000,
-            { phase: "cancel" },
-            context,
-          );
-          return;
+          decision = {
+            action: work.mode === "preflight" ? "pause" : "allow",
+            reason: "review-unavailable",
+            evidence: [],
+            scope: { reviewId: work.input.reviewId, stage: work.input.stage },
+          };
         }
-        await runtime.commit(
-          () => ({
-            status: "terminal",
-            outcome: { status: "completed", result: null },
-          }),
-          context,
+        span.setAttributes({
+          action: decision.action,
+          reason: decision.reason,
+          mode: work.mode,
+        });
+        return decision;
+      },
+      work.carrier,
+    );
+  }
+  const sentinelTask = defineTask<SentinelWork, { phase: "review" }, null>({
+    name: "computah.sentinel",
+    version: 1,
+    initial: () => ({ phase: "review" }),
+    phases: {
+      review: async (task, runtime, context) => {
+        const decision = await reviewWork(task.input);
+        await traceOperation(
+          "sentinel.enforce",
+          async (span) => {
+            let enforcement: SentinelReceipt["enforcement"] = "settled";
+            await runtime.commit(async (tx) => {
+              enforcement = (await recordReview(tx, task.input, decision))
+                .enforcement;
+              return {
+                status: "terminal",
+                outcome: { status: "completed", result: null },
+              } as const;
+            }, context);
+            // The durable transaction, not telemetry, owns the decision.
+            span.setAttributes({
+              mode: task.input.mode,
+              action: decision.action,
+              reason: decision.reason,
+              outcome: enforcement,
+            });
+          },
+          task.input.carrier,
         );
       },
     },
@@ -316,7 +478,7 @@ export function createCore(options: CoreOptions) {
   interactionTools.install(
     defineExtension({
       name: "computah.task",
-      tasks: [cancelDelegated],
+      tasks: [cancelDelegated, sentinelTask],
       tools: [
         defineTool({
           name: "Task",
@@ -328,10 +490,18 @@ export function createCore(options: CoreOptions) {
           execute: async (args, api, context) => {
             const binding = await api.snapshot(Binding, context);
             if (!binding?.scope) throw new CoreError("denied");
+            const scope = binding.scope;
+            const sentinel = options.sentinel;
             await permit(binding.scope, "task.send");
             workerId(binding.scope, args.worker);
             const requestId = `task:${api.taskId}`;
-            await api.commit(async (tx) => {
+            const selected = sentinel?.reviews.find(
+              (policy) =>
+                JSON.stringify(scopeKey(policy.scope)) ===
+                JSON.stringify(scopeKey(scope)),
+            );
+            const carrier = currentTraceHeaders();
+            const work = await api.commit(async (tx) => {
               const state = await tx.doc(Delegations, api.conversationId);
               const live = await tx.doc(LiveDoc, api.conversationId);
               const inputs = live.run?.inputs ?? [];
@@ -345,6 +515,82 @@ export function createCore(options: CoreOptions) {
                 requestId,
                 inputs: [...inputs],
               };
+              if (!selected || !sentinel || !live.run) return null;
+              state.calls[requestId].reviewCarrier ??= carrier.traceparent
+                ? carrier
+                : createTraceCarrier("sentinel.review");
+              const work: SentinelWork = {
+                scope,
+                conversationId: api.conversationId,
+                requestId,
+                carrier: { ...state.calls[requestId].reviewCarrier },
+                mode: selected.mode,
+                input: {
+                  reviewId: requestId,
+                  stage: "tool-intent",
+                  policy:
+                    selected.mode === "preflight"
+                      ? "risky-effect"
+                      : "benign-monitor",
+                  principal:
+                    JSON.stringify(scopeKey(sentinel.ownerScope)) ===
+                    JSON.stringify(scopeKey(scope))
+                      ? "owner"
+                      : "other-user",
+                  evidence:
+                    args.text.length <= 12_000
+                      ? [{ id: "task", source: "assistant", text: args.text }]
+                      : [],
+                },
+              };
+              if (
+                selected.mode === "monitor" &&
+                !state.calls[requestId].reviewTaskId
+              )
+                state.calls[requestId].reviewTaskId = await tx.createTask(
+                  sentinelTask,
+                  work,
+                  { ownership: { kind: "conversation" }, background: true },
+                );
+              return work;
+            }, context);
+            if (work?.mode === "preflight") {
+              const previous = (
+                await api.snapshot(Delegations, api.conversationId, context)
+              )?.reviews?.[requestId];
+              if (!previous) {
+                const decision = await reviewWork(work);
+                await traceOperation(
+                  "sentinel.enforce",
+                  async (span) => {
+                    const receipt = await api.commit(
+                      (tx) => recordReview(tx, work, decision),
+                      BACKGROUND_CONTEXT,
+                    );
+                    span.setAttributes({
+                      action: receipt.action,
+                      reason: receipt.reason,
+                      outcome: receipt.enforcement,
+                      mode: receipt.mode,
+                    });
+                  },
+                  work.carrier,
+                );
+              }
+            }
+            await permit(binding.scope, "task.send");
+            // Close review/revocation/cancellation races before the remote admit;
+            // the existing cancelRequest tombstone closes the later RPC race.
+            await api.commit(async (tx) => {
+              const state = await tx.doc(Delegations, api.conversationId);
+              const link = state.calls[requestId];
+              const live = await tx.doc(LiveDoc, api.conversationId);
+              if (
+                !live.run ||
+                !link.inputs.every((id) => live.run?.inputs.includes(id)) ||
+                link.inputs.some((id) => state.cancelled[String(id)])
+              )
+                throw new CoreError("denied");
             }, context);
             const result = await dispatch(
               binding.scope,
@@ -591,6 +837,20 @@ export function createCore(options: CoreOptions) {
             ?.calls ?? {},
         ).filter((link) => link.inputs.includes(submissionId));
       },
+      sentinelAudits: async (
+        c: { pi: Harness },
+        submissionId: SubmissionId,
+      ) => {
+        const root = await c.pi.root(BACKGROUND_CONTEXT);
+        const state = await c.pi.snapshot(
+          Delegations,
+          root.id,
+          BACKGROUND_CONTEXT,
+        );
+        return Object.entries(state?.calls ?? {})
+          .filter(([, link]) => link.inputs.includes(submissionId))
+          .flatMap(([id]) => (state?.reviews?.[id] ? [state.reviews[id]] : []));
+      },
       awaitCancellation: async (
         c: { pi: Harness },
         submissionId: SubmissionId,
@@ -617,6 +877,9 @@ export function createCore(options: CoreOptions) {
           return receipt.submissionId;
         }, BACKGROUND_CONTEXT);
         if (submissionId !== null) await stopSubmission(c.pi, submissionId);
+      },
+      cancelInputs: async (c: { pi: Harness }, inputs: SubmissionId[]) => {
+        for (const id of inputs) await stopSubmission(c.pi, id);
       },
       cancelCascade: async (
         c: { key: string[]; pi: Harness },
@@ -652,7 +915,12 @@ export function createCore(options: CoreOptions) {
           );
           const taskId = await tx.createTask(
             cancelDelegated,
-            { scope: scopeOf(c.key), runId: live.run.taskId, links },
+            {
+              scope: scopeOf(c.key),
+              runId: live.run.taskId,
+              inputs: [...live.run.inputs],
+              links,
+            },
             { ownership: { kind: "conversation" }, background: true },
           );
           for (const id of live.run.inputs)
@@ -1112,6 +1380,17 @@ export function createCore(options: CoreOptions) {
           run("cancel", async () => {
             const actor = await resolve(id, "task.control");
             return actor.cancelCascade(submissionId);
+          }),
+        sentinelAudits: (id: string, submissionId: SubmissionId) =>
+          run("history", async () => {
+            const actor = await resolve(id, "history.read");
+            const root = await actor.harness.root();
+            const record = await actor.harness.submission(submissionId);
+            if (!record || record.conversationId !== root.id)
+              throw new CoreError("denied");
+            const audits = await actor.sentinelAudits(submissionId);
+            await permit(scope, "history.read");
+            return audits;
           }),
         compact: (id: string) =>
           run("compact", async () => {

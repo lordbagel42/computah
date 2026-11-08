@@ -9,22 +9,44 @@ import { createTavily } from "../src/tavily.js";
 test("Pi phases and delegated Rivet actions reach the sanitized exporter without private content", async (context) => {
   const originalFetch = globalThis.fetch;
   const bodies: string[] = [];
+  const logBodies: string[] = [];
   const cleanupElapsed: number[] = [];
   globalThis.fetch = async (input, init) => {
     if (String(input) === "https://api.axiom.co/v1/traces") {
       bodies.push(String(init?.body));
       return new Response("{}", { status: 200 });
     }
+    if (String(input) === "https://api.axiom.co/v1/logs") {
+      logBodies.push(String(init?.body));
+      return new Response("{}", { status: 200 });
+    }
     return originalFetch(input, init);
   };
   process.env.COMPUTAH_AXIOM_INGEST_TOKEN = "synthetic-only";
+  process.env.COMPUTAH_AXIOM_LOG_DATASET = "synthetic-sentinel-logs";
   const telemetry = await startObservability("backend");
+  const scope = {
+    tenantId: "private-tenant-canary",
+    userId: "private-user-canary",
+    agentId: "default",
+  };
+  let action: "allow" | "cancel" = "allow";
   const core = createCore({
     connectionSecret: "a".repeat(64),
     authorize: () => true,
     model: "computah-smoke/deterministic",
     providers: { "computah-smoke": smokeProvider() },
     apiKeys: { "computah-smoke": "synthetic" },
+    sentinel: {
+      ownerScope: scope,
+      reviews: [{ scope, mode: "preflight" }],
+      review: async (input) => ({
+        action,
+        reason: action === "allow" ? "consistent-with-intent" : "privacy-risk",
+        evidence: action === "allow" ? [] : ["task"],
+        scope: { reviewId: input.reviewId, stage: input.stage },
+      }),
+    },
   });
   const runtime = await setupTest(context, core.registry);
   try {
@@ -44,11 +66,15 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
       true,
     );
     expect(result.submission.status).toBe("done");
-    const scope = {
-      tenantId: "private-tenant-canary",
-      userId: "private-user-canary",
-      agentId: "default",
-    };
+    action = "cancel";
+    const denied = await session.submit(
+      session.interactionId,
+      "private-sentinel-canary",
+      "sentinel-denial",
+    );
+    expect(
+      (await session.wait(session.interactionId, denied.submissionId)).status,
+    ).toBe("unanswered");
     await traceOperation("synthetic", async () => {
       for (const [request, status] of [
         [{ query: "private-query-canary" }, 200],
@@ -128,6 +154,7 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
   }
   const spans: {
     name: string;
+    traceId: string;
     spanId: string;
     parentSpanId?: string;
     startTimeUnixNano: string;
@@ -140,6 +167,7 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
         scopeSpans: {
           spans: {
             name: string;
+            traceId: string;
             spanId: string;
             parentSpanId?: string;
             startTimeUnixNano: string;
@@ -154,6 +182,43 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
   expect(spans.some((s) => s.name === "pi.durable.phase")).toBe(true);
   expect(spans.some((s) => s.name === "interaction/admit")).toBe(true);
   expect(spans.some((s) => s.name === "worker/admit")).toBe(true);
+  for (const operation of ["review", "enforce", "cancel"])
+    expect(spans.some((s) => s.name === `computah.sentinel.${operation}`)).toBe(
+      true,
+    );
+  const cancellation = spans.find((s) => s.name === "computah.sentinel.cancel");
+  expect(cancellation?.traceId).toMatch(/^[a-f0-9]{32}$/);
+  expect(cancellation?.parentSpanId).toMatch(/^[a-f0-9]{16}$/);
+  for (const operation of ["review", "enforce"])
+    expect(
+      spans.some(
+        (s) =>
+          s.name === `computah.sentinel.${operation}` &&
+          s.traceId === cancellation?.traceId &&
+          s.parentSpanId === cancellation?.parentSpanId,
+      ),
+    ).toBe(true);
+  expect(
+    spans
+      .filter((s) => s.name === "computah.sentinel.enforce")
+      .some((s) =>
+        s.attributes.some(
+          (a) => a.key === "outcome" && a.value.stringValue === "fenced",
+        ),
+      ),
+  ).toBe(true);
+  expect(bodies.join()).not.toContain("private-sentinel-canary");
+  expect(bodies.join()).not.toContain("reviewKey");
+  for (const operation of ["review", "enforce", "cancel"])
+    expect(logBodies.join()).toContain(`sentinel.${operation}`);
+  for (const privateValue of [
+    "private-sentinel-canary",
+    "private-prompt-canary",
+    "private-user-canary",
+    "private-tenant-canary",
+    "reviewKey",
+  ])
+    expect(logBodies.join()).not.toContain(privateValue);
   const parent = spans.find((s) => s.name === "computah.synthetic");
   expect(parent?.spanId).toMatch(/^[a-f0-9]{16}$/);
   const web = spans.filter((s) =>

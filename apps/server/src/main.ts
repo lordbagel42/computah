@@ -11,6 +11,7 @@ import { principalKey, readConfig } from "./config.js";
 import { createCore } from "./core.js";
 import { closeHttp, createHttpServer } from "./http.js";
 import { priorityModels } from "./model-policy.js";
+import { createSentinel } from "./sentinel.js";
 import { smokeProvider } from "./smoke-model.js";
 
 async function main() {
@@ -42,6 +43,12 @@ async function main() {
       principal,
     ]),
   );
+  const runtimeModels = models
+    ? priorityModels(models, (diagnostic) => {
+        console.info(`computah.model ${JSON.stringify(diagnostic)}`);
+        traceEvent("model", diagnostic);
+      })
+    : undefined;
   const core = createCore({
     connectionSecret: config.secret,
     authorize: (scope, capability) =>
@@ -54,12 +61,17 @@ async function main() {
       ? { apiKey: process.env.COMPUTAH_TAVILY_API_KEY }
       : undefined,
     operations: { queryToken: process.env.COMPUTAH_AXIOM_QUERY_TOKEN },
-    models: models
-      ? priorityModels(models, (diagnostic) => {
-          console.info(`computah.model ${JSON.stringify(diagnostic)}`);
-          traceEvent("model", diagnostic);
-        })
-      : undefined,
+    models: runtimeModels,
+    sentinel:
+      config.sentinel && runtimeModels
+        ? {
+            ...config.sentinel,
+            review: createSentinel({
+              models: runtimeModels,
+              model: config.workerModel,
+            }).review,
+          }
+        : undefined,
     apiKeys:
       config.mode === "faux"
         ? { "computah-smoke": "explicit-smoke" }
