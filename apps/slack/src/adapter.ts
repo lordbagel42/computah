@@ -407,7 +407,7 @@ export class SlackAdapter {
       // Only untouched queued input is a command, never wrapped/admitting text.
       const commandReply =
         job.state === "queued" && !job.submission
-          ? debugshareReply(job.text)
+          ? debugshareReply(job.text, binding.slackUserId, job.created)
           : null;
       if (commandReply) {
         await this.deliver(job, binding, commandReply, true);

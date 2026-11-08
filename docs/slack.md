@@ -239,7 +239,10 @@ exactly uppercase `DEBUGSHARE`; leading whitespace is allowed. Quoted/code text,
 `DEBUGSHAREfoo`, and lowercase `debugshare` are not commands.
 
 The adapter, not a model, generates a cryptographically random UUID v4 and sends
-an identifier-only acknowledgment. Channel commands always reply in the mapped
+an acknowledgment containing only the UUID, `time` (UTC admission time),
+`requested by` (trusted mapped Slack user ID), and `amp link: [disabled]`.
+It does not echo the optional note or perform a profile lookup. The disabled
+placeholder is not a generated URL. Channel commands always reply in the mapped
 sender's private DM; DM commands retain their existing reply routing. Ordinary
 channel or agent-selected routing cannot redirect this acknowledgment. No core
 submission, Pi, Worker or Amp thread, repair, context fetch, processing status,

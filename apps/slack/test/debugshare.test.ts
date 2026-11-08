@@ -7,18 +7,33 @@ import { type Ingress, SlackAdapter, type Transport } from "../src/adapter.js";
 import { debugshareReply } from "../src/debugshare.js";
 
 const uuid =
-  /^DEBUGSHARE [a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\n/;
+  /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\n/;
 
 test("DEBUGSHARE mints distinct opaque UUIDs, without echoing report text", () => {
-  const first = debugshareReply("DEBUGSHARE");
-  const second = debugshareReply(" \nDEBUGSHARE padding is off");
+  const first = debugshareReply(
+    "DEBUGSHARE",
+    "UOWNER",
+    Date.UTC(2026, 10, 8, 7),
+  );
+  const second = debugshareReply(
+    " \nDEBUGSHARE padding is off",
+    "UOTHER",
+    Date.UTC(2026, 10, 8, 7, 1, 31),
+  );
   assert.match(first ?? "", uuid);
   assert.match(second ?? "", uuid);
   assert.notEqual(first, second);
   assert.doesNotMatch(second ?? "", /padding is off/);
-  assert.match(first ?? "", /no diagnostics collected or shared/);
-  assert.match(first ?? "", /no investigation or thread started/);
-  assert.match(first ?? "", /not a diagnostics lookup key/);
+  assert.deepEqual(first?.split("\n").slice(1), [
+    "time: 2026-11-08T07:00:00.000Z",
+    "requested by: UOWNER",
+    "amp link: [disabled]",
+  ]);
+  assert.deepEqual(second?.split("\n").slice(1), [
+    "time: 2026-11-08T07:01:31.000Z",
+    "requested by: UOTHER",
+    "amp link: [disabled]",
+  ]);
   for (const text of [
     "DEBUGSHAREfoo",
     "debugshare",
@@ -27,7 +42,7 @@ test("DEBUGSHARE mints distinct opaque UUIDs, without echoing report text", () =
     "`DEBUGSHARE`",
     "```\nDEBUGSHARE\n```",
   ])
-    assert.equal(debugshareReply(text), null);
+    assert.equal(debugshareReply(text, "UOWNER", 1000), null);
 });
 
 test("authorized DEBUGSHARE bypasses core, replies privately, and never replays after restart", async () => {
@@ -133,6 +148,11 @@ test("authorized DEBUGSHARE bypasses core, replies privately, and never replays 
     await adapter.step();
     assert.equal(posts.length, 1);
     assert.match(posts[0]?.text ?? "", uuid);
+    assert.deepEqual(posts[0]?.text.split("\n").slice(1), [
+      "time: 1970-01-01T00:00:01.000Z",
+      "requested by: UOWNER",
+      "amp link: [disabled]",
+    ]);
     assert.equal(posts[0]?.channel, "DPRIVATE");
     assert.equal(posts[0]?.thread, null);
     assert.equal(dmOpens, 1);
