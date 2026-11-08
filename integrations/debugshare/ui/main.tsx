@@ -167,7 +167,7 @@ function IssueView({ id }: { id: string }) {
     return (
       <section className="detail empty" aria-live="polite">
         <h2>{pending ? "Loading captured report…" : "Report unavailable"}</h2>
-        <p>{error || "Resolving the exact UUID."}</p>
+        <p>{error || "Resolving the exact issue ID."}</p>
       </section>
     );
   const { issue, report, events } = snapshot;
@@ -345,10 +345,10 @@ function App() {
               location.hash = lookup.trim();
             }}
           >
-            <label htmlFor="uuid">Look up an exact UUID</label>
+            <label htmlFor="issue-id">Look up an exact issue ID</label>
             <div>
               <input
-                id="uuid"
+                id="issue-id"
                 value={lookup}
                 onChange={(e) => setLookup(e.target.value)}
                 placeholder="Paste DEBUGSHARE ID"
@@ -362,7 +362,7 @@ function App() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Title, UUID or assignee"
+              placeholder="Title, issue ID or assignee"
             />
           </label>
           <label className="filter">
@@ -398,7 +398,7 @@ function App() {
                     </div>
                     <strong>{issue.title}</strong>
                     <small>
-                      {issue.assignee || "Unassigned"} · {issue.id.slice(0, 8)}
+                      {issue.assignee || "Unassigned"} · {issue.id}
                     </small>
                   </a>
                 </li>

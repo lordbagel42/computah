@@ -110,3 +110,9 @@ editing the source. Commit the generated files with the source change. Breaking
 changes require a wire/fixture version change and agreement with both adapters;
 do not hand-maintain parallel Rust and TypeScript authority definitions.
 `pnpm check` detects stale generated schemas without rewriting them.
+
+DEBUGSHARE report IDs use the separate pure `debugshare.ts` contract exported
+from this package: exactly `computah_bug_[a-z0-9]{24}` for new reports or legacy
+lowercase UUIDv4. It is not a change to generic wire `Id` or wire version 1.
+The standalone Executor app materializes its `ids.ts` symlink to this same file;
+there is no second validator or generated report-ID backfill.

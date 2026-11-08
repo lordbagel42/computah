@@ -1,5 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { randomInt } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import type { DebugshareId } from "../../../packages/contracts/src/debugshare.js";
+
+/** 24 unbiased base-36 draws: ~124 bits, independent of time, origin and credentials. */
+export const createDebugshareId = (): DebugshareId =>
+  `computah_bug_${Array.from({ length: 24 }, () => randomInt(36).toString(36)).join("")}` as DebugshareId;
 
 export const isDebugshare = (text: string): boolean =>
   /^\s*DEBUGSHARE(?:\s|$)/u.test(text);
@@ -9,7 +14,7 @@ export function debugshareReply(
   text: string,
   requestedBy: string,
   requestedAt: number,
-  id: string = randomUUID(),
+  id: string = createDebugshareId(),
   reportUrl?: string,
 ): string | null {
   if (!isDebugshare(text)) return null;
@@ -63,7 +68,7 @@ export const serializeDiagnostic = (
     typeof value === "string" ? redactDiagnostic(value, secrets) : value,
   );
 
-/** Same SQLite transaction as Slack admission: the UUID is never an unindexed receipt. */
+/** Same SQLite transaction as Slack admission: the ID is never an unindexed receipt. */
 export function initializeDebugshares(db: DatabaseSync) {
   db.exec(`CREATE TABLE IF NOT EXISTS debugshares (
     id TEXT PRIMARY KEY, job TEXT UNIQUE NOT NULL, source TEXT UNIQUE NOT NULL,

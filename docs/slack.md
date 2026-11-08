@@ -238,7 +238,9 @@ Computah with that command in an authorized channel. The first token must be
 exactly uppercase `DEBUGSHARE`; leading whitespace is allowed. Quoted/code text,
 `DEBUGSHAREfoo`, and lowercase `debugshare` are not commands.
 
-The adapter generates a UUID v4 and commits its mapping to the originating Slack
+The adapter generates `computah_bug_` plus exactly 24 cryptographically random
+lowercase ASCII alphanumeric characters (~124 bits, unbiased base-36 draws), and
+commits its mapping to the originating Slack
 team/channel/message/thread, trusted requester, UTC time and core scope in the
 same SQLite transaction as admission, **before ACK**. The `debugshares` table is
 independent of seven-day delivery receipt pruning. It retains immutable report
@@ -258,9 +260,14 @@ not replaced by privacy summaries. Configured credential values and recognizable
 token formats are redacted; this is not a universal unknown-secret detector.
 No hidden model reasoning, arbitrary backing-store export or bulk history read.
 
-The concise private acknowledgment keeps UUID/time/requester/disabled Amp link.
+Existing UUIDv4 reports, URLs, journal bindings and immutable retries remain valid;
+there is no rewrite or backfill. The shared `isDebugshareId` contract accepts only
+the exact new syntax or the previously accepted lowercase UUIDv4 syntax. IDs are
+opaque correlation keys, not authentication or authority to read another scope.
+
+The concise private acknowledgment keeps issue ID/time/requester/disabled Amp link.
 It adds a real internal report URL only after the tracker durably acknowledges
-that UUID, otherwise says `report: stored locally; tracker sync pending`.
+that ID, otherwise says `report: stored locally; tracker sync pending`.
 Channel commands still reply in the mapped sender's DM. No model submission,
 repair, processing status or new thread is started, and commands do not merge
 with bursts or subscribe threads. Ambiguous Slack sends are not blindly repeated.
@@ -273,8 +280,8 @@ The raw JSON is authenticated with HMAC-SHA256 over `timestamp + "." + body`,
 using `x-computah-timestamp` (epoch milliseconds) and `x-computah-signature`
 (lowercase hex). The receiver pins the source scope, allows five-minute skew,
 and returns `{id}` only after storage. A ten-second upload deadline and durable
-30-second idle outbox retry do not change the stored UUID/snapshot. Lost upload
-responses reconcile idempotently; a conflicting UUID never replaces a report.
+30-second idle outbox retry do not change the stored ID/snapshot. Lost upload
+responses reconcile idempotently; a conflicting ID never replaces a report.
 Upload failure does not prevent the locally indexed acknowledgment or chat.
 
 The Executor tracker source lives in `integrations/debugshare`; its authenticated
@@ -282,6 +289,23 @@ tools expose exact lookup, assignment, evidence notes and revision-checked
 open/investigating/blocked/resolved state. Local restart/outbox tests are not a
 claim of deployed capture or production credential setup. Amp/Space handoff and
 automatic repair remain unimplemented.
+
+### Amp issue links
+
+The project-local `.amp/plugins/computah-bugs.ts` registers Amp's supported
+`registerLinkPattern` hook. Exact new-format IDs in user messages and assistant
+prose link to `https://computah-issues.raygen.executor.website/#<id>`; the tracker
+still requires authentication. Amp supplies token boundaries and URL-encoded
+substitution and records patterns on threads the executor connects to, so later
+readers do not need an executor. Other projects/global installation are not covered.
+Bare legacy UUIDs are deliberately not auto-linked (they are ambiguous); existing
+explicit UUID tracker URLs still work. Code blocks are not promised prose matches.
+
+The installed API exposes `id`, `pattern` and `href`, not custom label, icon or
+chip CSS. This is native clickable text recognition, **not** a custom thread-style
+chip. Loading/listing proves activation, not independently observed transcript
+rendering or later-reader persistence. Run the plugin contract check separately:
+`pnpm exec tsx --test scripts/test-computah-bug-plugin.test.ts`.
 
 ## First-mention thread context
 
@@ -710,7 +734,7 @@ across restart. Legacy jobs with missing carriers stay independent roots; they
 are not retroactively attached to an ambient pump or neighboring message.
 No message, channel, sender, job or receipt identifiers enter transport spans or
 generic runtime logs; explicitly enabled private content records are separate. The
-separate opaque DEBUGSHARE UUID is an explicitly registered capture attribute.
+separate opaque DEBUGSHARE issue ID is an explicitly registered capture attribute.
 The authenticated report persists its real transport carrier and actual first
 capture span association before upload; a retry does not invent new report IDs.
 

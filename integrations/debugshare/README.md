@@ -22,6 +22,10 @@ Deploy these files through Executor appManagement.create/deploy, using exactly
 apps@0.0.1-beta.122. This integration is deliberately outside the pnpm workspace:
 it is built by Executor, not the Computah Docker image. Do not send node_modules,
 README or local verification files as UI assets. Keep the immutable migrations.
+Include `ids.ts`: this tracked symlink points to the canonical pure contract in
+`packages/contracts/src/debugshare.ts`. Materialize its UTF-8 contents in the
+Executor source snapshot (not the symlink target path). Slack and telemetry import
+the same contract; the standalone app needs no workspace dependency or Node crypto.
 
 The `sources` app-account collection is optional for UI/MCP operation. Connect a
 source reference (a non-secret deployment label) to enable its `capture` manual
@@ -34,7 +38,10 @@ One subscription signs uploads for that scope; it grants no read/status authorit
 Separate scopes need separately pinned subscriptions and runtime routing.
 
 Runtime variables and signing are documented in [Slack capture](../../docs/slack.md#durable-debugshare-capture).
-Report URLs are the actual authenticated app URL with `#<UUID>`. A source-local
+New IDs are `computah_bug_` plus exactly 24 cryptographically random lowercase
+alphanumeric characters. The shared validator also accepts existing lowercase
+UUIDv4 reports unchanged, without a migration or backfill. Event IDs are separate.
+Report URLs are the actual authenticated app URL with `#<id>`. A source-local
 pending report is not a hosted report and does not get a fabricated link.
 
 ## Tools and lifecycle
@@ -43,7 +50,7 @@ pending report is not a hosted report and does not get a fabricated link.
 - `getIssue({id})`: exact immutable snapshot plus up to 200 earliest history
   entries. Older identifier-only UUIDs truthfully return not found.
 - `receiveIssue(report)`: authorized operator import. Exact duplicate is
-  idempotent; conflicting snapshot for an existing UUID is rejected.
+  idempotent; conflicting snapshot for an existing issue ID is rejected.
 - `updateIssue({id,expectedRevision,status,assignee,actor,note})`: authenticated
   agent/operator update. States: open, investigating, blocked, resolved; reopening
   is explicit by setting open. Every change appends a timestamped evidence note.

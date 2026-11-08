@@ -1,5 +1,12 @@
 # Axiom observability
 
+DEBUGSHARE correlation accepts exact `computah_bug_[a-z0-9]{24}` IDs and legacy
+lowercase UUIDv4 IDs through the shared bounded validator. Only this opaque key
+passes the capture attribute allowlist; issue bodies do not. The public
+observatory still excludes all attributes and remaps trace/span identities.
+Local sanitized-export checks are separate from host adoption and live Axiom
+ingestion of new-format IDs; no old evidence or stored IDs are rewritten.
+
 Computah exports every emitted trace, without sampling, from the instrumented
 backend, Slack and bus entry points when `COMPUTAH_AXIOM_INGEST_TOKEN` is present.
 This is operational tracing, not a copy of user histories. No automatic

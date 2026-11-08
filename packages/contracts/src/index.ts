@@ -1,5 +1,11 @@
 import { Schema } from "effect";
 
+export {
+  type DebugshareId,
+  debugshareIdPattern,
+  isDebugshareId,
+} from "./debugshare.js";
+
 /** Wire version, not a permission or backend implementation version. */
 export const WireVersion = Schema.Literal(1);
 export const Id = Schema.String.check(Schema.isMinLength(1));

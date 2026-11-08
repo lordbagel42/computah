@@ -70,10 +70,12 @@ cores decline compaction until its retry boundary can enforce current source gra
   destinations with durable choice and private/shared audience checks; no core
   identity switch or arbitrary destination IDs. Live acceptance remains separate.
 - **Durable DEBUGSHARE implemented in source:** the authenticated Slack adapter
-  commits a UUID-to-origin mapping before ACK, captures bounded actual issue
+  commits an opaque issue-ID-to-origin mapping before ACK, captures bounded actual issue
   context and retries an optional authenticated tracker upload without model/core
   submission or repair. Hosted lookup and runtime activation require separate
-  acceptance. Older identifier-only UUIDs have no retained diagnostic mapping.
+  acceptance. New reports use `computah_bug_` plus 24 random lowercase alphanumeric
+  characters; existing UUID reports remain readable without migration. Older
+  identifier-only UUIDs have no retained diagnostic mapping.
   See [Slack command semantics](slack.md).
 - **Imported reference material:** faithful [Figma-to-Rune plan](../ui/IMPORT-PLAN.md),
   recovered standalone Canvas study and source reference images. These are not an

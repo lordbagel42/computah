@@ -1,6 +1,8 @@
 import { array, json, number, object, string } from "apps";
 
 export const Report = object({
+  // apps.string supports minLength only; exact dual-format validation is enforced
+  // by isDebugshareId at import, lookup and update, not by a parallel schema regex.
   id: string({ minLength: 1 }),
   requestedAt: string(),
   requestedBy: string(),

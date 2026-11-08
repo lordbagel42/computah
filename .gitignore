@@ -1,5 +1,8 @@
 node_modules/
-.amp/
+.amp/*
+!.amp/plugins/
+.amp/plugins/*
+!.amp/plugins/computah-bugs.ts
 dist/
 target/
 .env

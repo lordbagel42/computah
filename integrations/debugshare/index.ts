@@ -16,6 +16,7 @@ import {
   type Webhook,
   type WebhookContext,
 } from "apps";
+import { isDebugshareId } from "./ids.js";
 import { Detail, Report, Summary, statuses } from "./schema.js";
 
 // This account identifies the uploader, not an upstream API credential.
@@ -34,12 +35,10 @@ type Read = QueryContext<typeof requirements>;
 type Write = MutationContext<typeof requirements>;
 type IssueRow = Infer<typeof Summary> & { report: string };
 type ReportData = Infer<typeof Report>;
-const uuid =
-  /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
 function validateReport(value: ReportData) {
   if (
-    !uuid.test(value.id) ||
+    !isDebugshareId(value.id) ||
     !Number.isFinite(Date.parse(value.requestedAt)) ||
     value.messages.length > 21 ||
     value.participants.length > 21 ||
@@ -73,7 +72,7 @@ function receive(sql: Write["sql"], report: ReportData) {
     if (prior) {
       if (prior.report !== body)
         throw new Error(
-          "UUID already belongs to a different immutable snapshot",
+          "Issue ID already belongs to a different immutable snapshot",
         );
       return { id: prior.id };
     }
@@ -121,17 +120,18 @@ export const listIssues = query(
 export const getIssue = query(
   {
     description:
-      "Resolve an exact DEBUGSHARE UUID to its immutable conversation snapshot and resolution history",
+      "Resolve an exact DEBUGSHARE issue ID (including legacy UUIDs) to its immutable conversation snapshot and resolution history",
     input: object({ id: string() }),
     output: Detail,
   },
   async ({ sql }: Read, { id }) => {
+    if (!isDebugshareId(id)) throw new Error("Invalid issue ID");
     const row = sql
       .exec<IssueRow>("SELECT * FROM issues WHERE id=?", id)
       .toArray()[0];
     if (!row)
       throw new Error(
-        "No captured report for that UUID. Older identifier-only DEBUGSHAREs have no retained context.",
+        "No captured report for that issue ID. Older identifier-only DEBUGSHAREs have no retained context.",
       );
     return {
       issue: row,
@@ -154,7 +154,7 @@ export const getIssue = query(
 export const receiveIssue = mutation(
   {
     description:
-      "Import one bounded diagnostic report as an authorized operator. Repeating the same UUID and snapshot is idempotent; conflicts never overwrite it.",
+      "Import one bounded diagnostic report as an authorized operator. Repeating the same issue ID and snapshot is idempotent; conflicts never overwrite it.",
     input: Report,
     output: object({ id: string() }),
   },
@@ -176,6 +176,7 @@ export const updateIssue = mutation(
   },
   async ({ sql }: Write, input) => {
     if (
+      !isDebugshareId(input.id) ||
       !statuses.includes(input.status as (typeof statuses)[number]) ||
       !input.actor.trim() ||
       !input.note.trim() ||
@@ -298,7 +299,7 @@ const capture = {
       return Response.json(receive(ctx.sql, report));
     } catch {
       return Response.json(
-        { error: "Invalid report or conflicting immutable UUID" },
+        { error: "Invalid report or conflicting immutable issue ID" },
         { status: 409 },
       );
     }
@@ -314,7 +315,7 @@ export default defineApp(requirements, {
     { listIssues, getIssue, receiveIssue, updateIssue },
     {
       instructions:
-        "Use exact DEBUGSHARE UUID lookup. Reports show actual bounded messages and location. Use updateIssue with current revision and concise investigation evidence; do not claim repair from status alone. Actor attribution is self-declared; Executor authenticates callers and controls app access. Never insert credentials or hidden model reasoning. This app is an operator boundary, not a multi-tenant public service.",
+        "Use exact DEBUGSHARE issue ID lookup (new computah_bug_ IDs or legacy UUIDs). Reports show actual bounded messages and location. Use updateIssue with current revision and concise investigation evidence; do not claim repair from status alone. Actor attribution is self-declared; Executor authenticates callers and controls app access. Never insert credentials or hidden model reasoning. This app is an operator boundary, not a multi-tenant public service.",
     },
   ),
   webhooks: { capture },

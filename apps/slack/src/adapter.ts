@@ -12,6 +12,7 @@ import {
   withTraceContext,
 } from "@computah/observability";
 import {
+  createDebugshareId,
   type DebugReport,
   debugshareReply,
   initializeDebugshares,
@@ -593,7 +594,7 @@ export class SlackAdapter {
       if (isDebugshare(text)) {
         const carrier = this.timing(id)?.traceparent?.split("-");
         const report: DebugReport = {
-          id: randomUUID(),
+          id: createDebugshareId(),
           ...(carrier
             ? {
                 transport: {

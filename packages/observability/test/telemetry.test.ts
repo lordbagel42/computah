@@ -108,6 +108,20 @@ test("OTLP export preserves native relationships and outcomes but removes conten
                     },
                     {
                       key: "computah.debugshare.id",
+                      value: {
+                        stringValue: "computah_bug_abcd0123456789efghijklmn",
+                      },
+                    },
+                    ...[
+                      "computah_bug_abcd0123456789efghijklmno",
+                      "computah_bug_Abcd0123456789efghijklmn",
+                      "computah_bug_abcd0123456789efghijklmn\n",
+                    ].map((stringValue) => ({
+                      key: "computah.debugshare.id",
+                      value: { stringValue },
+                    })),
+                    {
+                      key: "computah.debugshare.id",
                       value: { stringValue: secret },
                     },
                     { key: "tool.name", value: { stringValue: secret } },
@@ -159,6 +173,10 @@ test("OTLP export preserves native relationships and outcomes but removes conten
     {
       key: "computah.debugshare.id",
       value: { stringValue: "12b42dd4-8123-4234-9234-123456789abc" },
+    },
+    {
+      key: "computah.debugshare.id",
+      value: { stringValue: "computah_bug_abcd0123456789efghijklmn" },
     },
   ]);
 });

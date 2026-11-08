@@ -9,6 +9,7 @@ import {
   SpanStatusCode,
   trace,
 } from "@opentelemetry/api";
+import { isDebugshareId } from "../../contracts/src/debugshare.js";
 import { LiveSpanProcessor } from "./live.js";
 import {
   type RuntimeLogFields,
@@ -367,14 +368,7 @@ function attributes(input: unknown): Json[] {
   return input.flatMap<Json>((entry: Json) => {
     const key = entry?.key ?? "";
     const value = entry?.value;
-    if (
-      key === "computah.debugshare.id" &&
-      typeof value?.stringValue === "string" &&
-      /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
-        value.stringValue,
-      ) &&
-      value.stringValue.length === 36
-    )
+    if (key === "computah.debugshare.id" && isDebugshareId(value?.stringValue))
       return [{ key, value: { stringValue: value.stringValue } }];
     if (stringKeys.has(key) && value && categories.has(value.stringValue ?? ""))
       return [{ key, value: { stringValue: value.stringValue } }];
