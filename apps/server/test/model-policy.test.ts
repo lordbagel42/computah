@@ -298,7 +298,21 @@ test("opted-in model evidence preserves native async parents, content, usage and
       fauxAssistantMessage([
         fauxThinking("hidden-input-canary"),
         fauxText("visible-prior-answer"),
+        {
+          type: "toolCall",
+          id: "call-lookup",
+          name: "lookup",
+          arguments: { query: "visible-query" },
+        },
       ]),
+      {
+        role: "toolResult" as const,
+        toolCallId: "call-lookup",
+        toolName: "lookup",
+        content: [fauxText("visible-tool-result")],
+        isError: false,
+        timestamp: 1,
+      },
     ],
   };
   const diagnostics: unknown[] = [];
@@ -317,7 +331,10 @@ test("opted-in model evidence preserves native async parents, content, usage and
           ],
           { stopReason },
         );
+        message.model = "gpt-6.1-sol";
         message.usage.input = 7;
+        message.usage.cacheRead = 11;
+        message.usage.cacheWrite = 13;
         message.errorMessage =
           stopReason === "error" ? "private-provider-error" : undefined;
         const stream = createAssistantMessageEventStream();
@@ -395,7 +412,10 @@ test("opted-in model evidence preserves native async parents, content, usage and
   type Row = {
     traceId: string;
     spanId: string;
-    attributes: { key: string; value: { stringValue?: string } }[];
+    attributes: {
+      key: string;
+      value: { stringValue?: string; doubleValue?: number };
+    }[];
   };
   const rows: Row[] = bodies.flatMap((body) =>
     JSON.parse(body).resourceLogs.flatMap(
@@ -453,8 +473,95 @@ test("opted-in model evidence preserves native async parents, content, usage and
     "private-thrown-error",
   ])
     expect(exported).not.toContain(excluded);
+  const spans = traces.flatMap((body) =>
+    JSON.parse(body).resourceSpans.flatMap(
+      (r: {
+        scopeSpans: {
+          spans: (Row & {
+            name: string;
+            parentSpanId: string;
+            kind: number;
+            status: { code: number };
+          })[];
+        }[];
+      }) => r.scopeSpans.flatMap((s) => s.spans),
+    ),
+  );
+  const chats = spans.filter(
+    (span) => field(span, "gen_ai.operation.name") === "chat",
+  );
+  expect(chats).toHaveLength(14);
+  for (const span of chats) {
+    expect(span.name).toBe("chat gpt-6.1-terra");
+    expect(field(span, "gen_ai.provider.name")).toBe("openai-codex");
+    expect(field(span, "gen_ai.request.model")).toBe("gpt-6.1-terra");
+    expect(field(span, "gen_ai.capability.name")).toBe("chat");
+    expect(field(span, "gen_ai.step.name")).toBe("model");
+    expect(span.kind).toBe(3);
+    expect(span.traceId).toBe(restored.traceparent?.split("-")[1]);
+    expect(span.parentSpanId).toBe(restored.traceparent?.split("-")[2]);
+    const messages = JSON.parse(field(span, "gen_ai.input.messages") ?? "null");
+    expect(messages.at(-3)).toEqual({
+      role: "user",
+      parts: [{ type: "text", content: "private-input-canary [redacted]" }],
+    });
+    expect(messages.at(-2)).toEqual({
+      role: "assistant",
+      parts: [
+        { type: "text", content: "visible-prior-answer" },
+        {
+          type: "tool_call",
+          id: "call-lookup",
+          name: "lookup",
+          arguments: { query: "visible-query" },
+        },
+      ],
+    });
+    expect(messages.at(-1)).toEqual({
+      role: "tool",
+      parts: [
+        {
+          type: "tool_call_response",
+          id: "call-lookup",
+          response: [{ type: "text", content: "visible-tool-result" }],
+        },
+      ],
+    });
+  }
+  expect(
+    chats.filter((span) => field(span, "gen_ai.output.messages")),
+  ).toHaveLength(12);
+  for (const span of chats.filter((span) =>
+    field(span, "gen_ai.output.messages"),
+  )) {
+    expect(field(span, "gen_ai.response.model")).toBe("gpt-6.1-sol");
+    expect(
+      span.attributes.find(
+        (attribute: Row["attributes"][number]) =>
+          attribute.key === "gen_ai.usage.input_tokens",
+      )?.value.doubleValue,
+    ).toBe(31);
+    expect(JSON.parse(field(span, "gen_ai.output.messages") ?? "null")).toEqual(
+      [
+        {
+          role: "assistant",
+          parts: [{ type: "text", content: "private-output-canary" }],
+          finish_reason: field(span, "outcome"),
+        },
+      ],
+    );
+  }
+  for (const reason of ["stop", "error", "aborted"])
+    expect(
+      chats.filter(
+        (span) =>
+          JSON.parse(field(span, "gen_ai.output.messages") ?? "[]")[0]
+            ?.finish_reason === reason,
+      ),
+    ).toHaveLength(4);
+  expect(chats.filter((span) => span.status.code === 2)).toHaveLength(6);
   expect(traces.join()).not.toMatch(
-    /private-input-canary|private-output-canary|private-provider-error|hidden-output-canary/,
+    /private-provider-error|hidden-output-canary|hidden-input-canary|synthetic-configured-secret/,
   );
   expect(
     diagnostics.filter(

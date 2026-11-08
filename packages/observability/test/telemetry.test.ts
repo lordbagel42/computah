@@ -67,6 +67,81 @@ test("durable carriers remain unique and restorable without telemetry enabled", 
   assert.deepEqual(currentTraceHeaders(), {});
 });
 
+test("private GenAI messages require opt-in and never enter the observatory export", () => {
+  const messages = JSON.stringify([
+    { role: "user", parts: [{ type: "text", content: "visible question" }] },
+    {
+      role: "assistant",
+      parts: [
+        { type: "thinking", content: "hidden-canary" },
+        {
+          type: "tool_call",
+          id: "call-1",
+          name: "lookup",
+          arguments: { query: "visible argument", token: "credential-canary" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      parts: [
+        {
+          type: "tool_call_response",
+          id: "call-1",
+          response: "visible result",
+        },
+      ],
+    },
+  ]);
+  const body = {
+    resourceSpans: [
+      {
+        scopeSpans: [
+          {
+            spans: [
+              {
+                traceId: "a".repeat(32),
+                spanId: "b".repeat(16),
+                name: "chat gpt-6.1-sol",
+                attributes: [
+                  {
+                    key: "gen_ai.input.messages",
+                    value: { stringValue: messages },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  for (const result of [
+    sanitizeTraces(body, "backend"),
+    sanitizeTraces(body, "observatory", undefined, true),
+  ])
+    assert.ok(!JSON.stringify(result).includes("visible question"));
+  const result = JSON.stringify(
+    sanitizeTraces(body, "backend", undefined, true),
+  );
+  for (const visible of [
+    "visible question",
+    "visible argument",
+    "visible result",
+    "tool_call_response",
+    "call-1",
+  ])
+    assert.ok(result.includes(visible));
+  assert.ok(!result.includes("hidden-canary"));
+  assert.ok(!result.includes("credential-canary"));
+  const invalid = structuredClone(body);
+  invalid.resourceSpans[0].scopeSpans[0].spans[0].attributes[0].value.stringValue =
+    "invalid JSON";
+  assert.doesNotThrow(() =>
+    sanitizeTraces(invalid, "backend", undefined, true),
+  );
+});
+
 test("OTLP export preserves native relationships and outcomes but removes content and identities", () => {
   const secret = "private-content-not-exportable";
   const traceId = "a".repeat(32);

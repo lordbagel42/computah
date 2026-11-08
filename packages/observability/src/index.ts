@@ -6,10 +6,12 @@ import {
   isSpanContextValid,
   ROOT_CONTEXT,
   type Span,
+  SpanKind,
   SpanStatusCode,
   trace,
 } from "@opentelemetry/api";
 import { isDebugshareId } from "../../contracts/src/debugshare.js";
+import { projectChatMessages } from "./content.js";
 import { LiveSpanProcessor } from "./live.js";
 import {
   type RuntimeLogFields,
@@ -142,6 +144,7 @@ const operations = new Set([
   "observatory.poll",
 ]);
 const categories = new Set([
+  "model",
   "input",
   "write",
   "continue",
@@ -308,9 +311,12 @@ const stringKeys = new Set([
   "extension",
   "entry.kind",
   "gen_ai.operation.name",
+  "gen_ai.capability.name",
+  "gen_ai.step.name",
   "gen_ai.agent.name",
   "gen_ai.provider.name",
   "gen_ai.request.model",
+  "gen_ai.response.model",
   "model",
   "http.request.method",
   "event",
@@ -363,11 +369,24 @@ function name(value: unknown): string {
   // Preserve timing/relationships even for unrecognized vendor operations, never their dynamic name.
   return "runtime.operation";
 }
-function attributes(input: unknown): Json[] {
+function attributes(input: unknown, privateContent = false): Json[] {
   if (!Array.isArray(input)) return [];
   return input.flatMap<Json>((entry: Json) => {
     const key = entry?.key ?? "";
     const value = entry?.value;
+    if (
+      privateContent &&
+      (key === "gen_ai.input.messages" || key === "gen_ai.output.messages") &&
+      typeof value?.stringValue === "string" &&
+      Buffer.byteLength(value.stringValue) <= 65_536
+    ) {
+      try {
+        const messages = projectChatMessages(JSON.parse(value.stringValue));
+        return messages ? [{ key, value: { stringValue: messages } }] : [];
+      } catch {
+        return [];
+      }
+    }
     if (key === "computah.debugshare.id" && isDebugshareId(value?.stringValue))
       return [{ key, value: { stringValue: value.stringValue } }];
     if (stringKeys.has(key) && value && categories.has(value.stringValue ?? ""))
@@ -399,6 +418,7 @@ export function sanitizeTraces(
   body: Json,
   service: string,
   revision?: string,
+  privateContent = false,
 ): Json {
   return {
     resourceSpans: (Array.isArray(body.resourceSpans)
@@ -441,7 +461,10 @@ export function sanitizeTraces(
                 : 1,
             startTimeUnixNano: time(span.startTimeUnixNano),
             endTimeUnixNano: time(span.endTimeUnixNano),
-            attributes: attributes(span.attributes),
+            attributes: attributes(
+              span.attributes,
+              privateContent && service !== "observatory",
+            ),
             status: {
               code:
                 span.status?.code === 2 ? 2 : span.status?.code === 1 ? 1 : 0,
@@ -498,6 +521,9 @@ async function start(service: string) {
     import("@opentelemetry/sdk-trace-node"),
   ]);
   const dataset = "computah-prod-traces";
+  const privateContent =
+    service !== "observatory" &&
+    process.env.COMPUTAH_AXIOM_CONTENT_ENABLED === "1";
   let active = 0;
   let closing = false;
   const pending = new Set<Promise<void>>();
@@ -531,6 +557,7 @@ async function start(service: string) {
           JSON.parse(Buffer.concat(chunks).toString()),
           service,
           process.env.COMPUTAH_REVISION,
+          privateContent,
         );
         const result = await fetch("https://api.axiom.co/v1/traces", {
           method: "POST",
@@ -590,8 +617,10 @@ async function start(service: string) {
           timeoutMillis: 7000,
         }),
         {
-          maxQueueSize: 4096,
-          maxExportBatchSize: 256,
+          // Bounded message attributes are much larger than timing-only spans.
+          // Keep encoded batches below the relay's existing 2-MiB admission cap.
+          maxQueueSize: privateContent ? 256 : 4096,
+          maxExportBatchSize: privateContent ? 4 : 256,
           scheduledDelayMillis: 1000,
           exportTimeoutMillis: 8000,
         },
@@ -630,60 +659,104 @@ export function traceModelStream<
     return withTraceContext(parent, () => traceModelStream(model, call));
   return trace
     .getTracer("computah")
-    .startActiveSpan(`chat ${model}`, {}, context.active(), (span) => {
-      const started = performance.now();
-      const finish = (outcome: "success" | "error" | "cancelled") => {
-        context.with(trace.setSpan(context.active(), span), () =>
-          runtimeLog(
-            "model.completed",
-            {
-              operation: "model",
-              outcome,
-              duration_ms: performance.now() - started,
+    .startActiveSpan(
+      `chat ${model}`,
+      { kind: SpanKind.CLIENT },
+      context.active(),
+      (span) => {
+        const started = performance.now();
+        const finish = (outcome: "success" | "error" | "cancelled") => {
+          context.with(trace.setSpan(context.active(), span), () =>
+            runtimeLog(
+              "model.completed",
+              {
+                operation: "model",
+                outcome,
+                duration_ms: performance.now() - started,
+              },
+              outcome === "error" ? "error" : "info",
+            ),
+          );
+          span.end();
+        };
+        span.setAttribute("gen_ai.request.model", model);
+        try {
+          const stream = call();
+          void stream.result().then(
+            (message) => {
+              if (message.usage) {
+                span.setAttributes({
+                  "usage.input": message.usage.input,
+                  "usage.output": message.usage.output,
+                  "usage.cache_read": message.usage.cacheRead,
+                  "usage.cache_write": message.usage.cacheWrite,
+                  "computah.usage.source": "sdk_unverified",
+                });
+              }
+              if (message.stopReason === "error")
+                span.setStatus({ code: SpanStatusCode.ERROR });
+              span.setAttribute("outcome", message.stopReason);
+              finish(
+                message.stopReason === "error"
+                  ? "error"
+                  : message.stopReason === "aborted"
+                    ? "cancelled"
+                    : "success",
+              );
             },
-            outcome === "error" ? "error" : "info",
-          ),
-        );
-        span.end();
-      };
-      span.setAttribute("gen_ai.request.model", model);
-      try {
-        const stream = call();
-        void stream.result().then(
-          (message) => {
-            if (message.usage) {
-              span.setAttributes({
-                "usage.input": message.usage.input,
-                "usage.output": message.usage.output,
-                "usage.cache_read": message.usage.cacheRead,
-                "usage.cache_write": message.usage.cacheWrite,
-                "computah.usage.source": "sdk_unverified",
-              });
-            }
-            if (message.stopReason === "error")
+            () => {
               span.setStatus({ code: SpanStatusCode.ERROR });
-            span.setAttribute("outcome", message.stopReason);
-            finish(
-              message.stopReason === "error"
-                ? "error"
-                : message.stopReason === "aborted"
-                  ? "cancelled"
-                  : "success",
-            );
-          },
-          () => {
-            span.setStatus({ code: SpanStatusCode.ERROR });
-            finish("error");
-          },
-        );
-        return stream;
-      } catch (error) {
-        span.setStatus({ code: SpanStatusCode.ERROR });
-        finish("error");
-        throw error;
-      }
-    });
+              finish("error");
+            },
+          );
+          return stream;
+        } catch (error) {
+          span.setStatus({ code: SpanStatusCode.ERROR });
+          finish("error");
+          throw error;
+        }
+      },
+    );
 }
+
+/** Enrich the existing model operation, never create a parallel conversation trace. */
+export function traceModelChat(
+  provider: string,
+  model: string,
+  messages: unknown,
+) {
+  const span = trace.getActiveSpan();
+  span?.updateName(`chat ${model}`);
+  span?.setAttributes({
+    "gen_ai.operation.name": "chat",
+    "gen_ai.provider.name": provider,
+    "gen_ai.request.model": model,
+    "gen_ai.capability.name": "chat",
+    "gen_ai.step.name": "model",
+  });
+  const write = (direction: "input" | "output", value: unknown) => {
+    if (!span || process.env.COMPUTAH_AXIOM_CONTENT_ENABLED !== "1") return;
+    const projected = projectChatMessages(value);
+    if (projected) span.setAttribute(`gen_ai.${direction}.messages`, projected);
+  };
+  write("input", messages);
+  // Keep the recording span, not a carrier-restored non-recording span, for
+  // native stream results that settle in a different async context.
+  return (
+    output: unknown,
+    response?: { model: string; input: number; output: number },
+  ) => {
+    write("output", output);
+    if (response)
+      span?.setAttributes({
+        "gen_ai.response.model": response.model,
+        "gen_ai.usage.input_tokens": response.input,
+        "gen_ai.usage.output_tokens": response.output,
+        "computah.usage.source": "sdk_unverified",
+      });
+  };
+}
+
 export function traceOperation<T>(
   operation: string,
   body: (span: Span) => Promise<T>,
@@ -697,6 +770,7 @@ export function traceOperation<T>(
   return trace.getTracer("computah").startActiveSpan(
     `computah.${operation}`,
     {
+      kind: operation === "model" ? SpanKind.CLIENT : SpanKind.INTERNAL,
       links: links.slice(0, 32).flatMap((carrier) => {
         const remote = trace.getSpanContext(traceParent(carrier.traceparent));
         return remote ? [{ context: remote }] : [];

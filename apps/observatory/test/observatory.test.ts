@@ -47,6 +47,15 @@ test("public projection retains timing and true topology without private content
     [
       row({
         attributes: { prompt: privateText },
+        "attributes.gen_ai.input.messages": [
+          { role: "user", parts: [{ type: "text", content: privateText }] },
+        ],
+        "attributes.gen_ai.output.messages": [
+          {
+            role: "assistant",
+            parts: [{ type: "text", content: privateText }],
+          },
+        ],
         "content.payload": JSON.stringify({
           text: privateText,
           actor: privateText,

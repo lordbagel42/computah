@@ -2,6 +2,7 @@ import {
   currentTraceHeaders,
   registerContentSecrets,
   runtimeContent,
+  traceModelChat,
   traceModelStream,
   traceOperation,
   withTraceContext,
@@ -118,7 +119,48 @@ export function priorityModels(
       },
     };
   }
-  function terminal(model: Model<Api>, message: AssistantMessage) {
+  function chatParts(content: unknown): unknown[] {
+    if (typeof content === "string") return [{ type: "text", content }];
+    if (!Array.isArray(content)) return [];
+    return content.slice(0, 128).flatMap<unknown>((part) =>
+      part.type === "text"
+        ? [{ type: "text", content: part.text }]
+        : part.type === "toolCall"
+          ? [
+              {
+                type: "tool_call",
+                id: part.id,
+                name: part.name,
+                arguments: part.arguments,
+              },
+            ]
+          : [],
+    );
+  }
+  function terminal(
+    model: Model<Api>,
+    message: AssistantMessage,
+    output: ReturnType<typeof traceModelChat>,
+  ) {
+    output(
+      [
+        {
+          role: "assistant",
+          parts: chatParts(message.content),
+          finish_reason:
+            message.stopReason === "toolUse" ? "tool_call" : message.stopReason,
+        },
+      ],
+      message.usage && {
+        model: message.model,
+        // Pi separates cache reads/writes; OTel's input count includes both.
+        input:
+          message.usage.input +
+          message.usage.cacheRead +
+          message.usage.cacheWrite,
+        output: message.usage.output,
+      },
+    );
     runtimeContent("model.output", {
       model: `${model.provider}/${model.id}`,
       sourceTruncated: message.content.length > 128,
@@ -234,10 +276,28 @@ export function priorityModels(
       missing: [...missing],
       // Most recent first so the shared byte budget prioritizes this request.
       messageOrder: "newest_first",
-      messages: projected.reverse(),
+      messages: [...projected].reverse(),
       system: context.systemPrompt,
       tools: context.tools?.slice(0, 64),
     });
+    return traceModelChat(model.provider, model.id, [
+      ...(context.systemPrompt
+        ? [{ role: "system", parts: chatParts(context.systemPrompt) }]
+        : []),
+      ...projected.map((message) => ({
+        role: message.role === "toolResult" ? "tool" : message.role,
+        parts:
+          "toolCallId" in message
+            ? [
+                {
+                  type: "tool_call_response",
+                  id: message.toolCallId,
+                  response: chatParts(message.content),
+                },
+              ]
+            : chatParts(message.content),
+      })),
+    ]);
   }
   function failure(model: Model<Api>, input?: StreamOptions) {
     runtimeContent("model.output", {
@@ -261,11 +321,12 @@ export function priorityModels(
     // Invoked INSIDE traceModelStream's active span. Restore that exact carrier
     // for terminal callbacks rather than inheriting the result consumer's context.
     const carrier = currentTraceHeaders();
-    captureInput(model, context, input);
+    const output = captureInput(model, context, input);
     try {
       const stream = call();
       void stream.result().then(
-        (message) => withTraceContext(carrier, () => terminal(model, message)),
+        (message) =>
+          withTraceContext(carrier, () => terminal(model, message, output)),
         () => withTraceContext(carrier, () => failure(model, input)),
       );
       return stream;
@@ -305,7 +366,7 @@ export function priorityModels(
       return traceOperation(
         "model",
         async (span) => {
-          captureInput(model, context, input);
+          const output = captureInput(model, context, input);
           try {
             const message = await models.complete<Api>(
               model,
@@ -314,7 +375,7 @@ export function priorityModels(
             );
             span.setAttribute("outcome", message.stopReason);
             if (message.stopReason === "error") span.setStatus({ code: 2 });
-            return terminal(model, message);
+            return terminal(model, message, output);
           } catch (error) {
             failure(model, input);
             throw error;
@@ -327,7 +388,7 @@ export function priorityModels(
       return traceOperation(
         "model",
         async (span) => {
-          captureInput(model, context, input);
+          const output = captureInput(model, context, input);
           try {
             const message = await models.completeSimple(model, context, {
               ...options(model, input ?? {}),
@@ -335,7 +396,7 @@ export function priorityModels(
             });
             span.setAttribute("outcome", message.stopReason);
             if (message.stopReason === "error") span.setStatus({ code: 2 });
-            return terminal(model, message);
+            return terminal(model, message, output);
           } catch (error) {
             failure(model, input);
             throw error;

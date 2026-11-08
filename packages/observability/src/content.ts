@@ -212,3 +212,65 @@ export function projectContent(payload: unknown) {
     };
   }
 }
+
+/** OTel GenAI messages only, using the same private credential/content boundary. */
+export function projectChatMessages(messages: unknown): string | undefined {
+  if (!Array.isArray(messages) || !contentRedactionReady()) return undefined;
+  // Prioritize the latest request/response within the shared bounded projection.
+  const projected = projectContent(messages.slice(-64).reverse());
+  const data: unknown = JSON.parse(projected.payload);
+  if (!Array.isArray(data)) return undefined;
+  const result = data.flatMap((message) => {
+    if (
+      !message ||
+      !["system", "user", "assistant", "tool"].includes(message.role) ||
+      !Array.isArray(message.parts)
+    )
+      return [];
+    const parts = message.parts.flatMap((part: Record<string, unknown>) => {
+      if (!part || typeof part !== "object") return [];
+      if (part.type === "text" && typeof part.content === "string")
+        return [{ type: "text", content: part.content }];
+      if (
+        part.type === "tool_call" &&
+        typeof part.id === "string" &&
+        typeof part.name === "string"
+      )
+        return [
+          {
+            type: "tool_call",
+            id: part.id,
+            name: part.name,
+            arguments: part.arguments,
+          },
+        ];
+      if (part.type === "tool_call_response" && typeof part.id === "string")
+        return [
+          { type: "tool_call_response", id: part.id, response: part.response },
+        ];
+      return [];
+    });
+    const finishReason = [
+      "stop",
+      "length",
+      "content_filter",
+      "tool_call",
+      "error",
+      "aborted",
+      "pending",
+      "deferred",
+    ].includes(message.finish_reason)
+      ? message.finish_reason
+      : undefined;
+    return parts.length || finishReason
+      ? [
+          {
+            role: message.role,
+            parts,
+            ...(finishReason ? { finish_reason: finishReason } : {}),
+          },
+        ]
+      : [];
+  });
+  return JSON.stringify(result.reverse());
+}

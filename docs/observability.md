@@ -13,9 +13,45 @@ This is operational tracing, not a copy of user histories. No automatic
 DEBUGSHARE collection, diagnostics bundles or diagnostic-agent spawning is added.
 Separately, the owner-authorized opt-in [private content log lane](logging.md#authorized-private-content-records)
 exports bounded actual normal-operation input/replies, model inputs/outputs and
-available tool/activity evidence into `computah-prod-logs`. It does not broaden
-trace attributes or the public observatory projection. Source/local proof,
+available tool/activity evidence into `computah-prod-logs`. The same explicit
+opt-in now permits bounded OTel GenAI messages on private model spans, as described
+below; it never broadens the public observatory projection. Source/local proof,
 protected-host activation and independently queried ingestion are separate states.
+
+## Native Axiom conversations
+
+The injected Models wrapper enriches its existing stream/complete spans (including
+Sentinel calls through that wrapper) with `gen_ai.operation.name=chat`, the actual
+catalog provider (`openai-codex`), requested model, capability/step and available
+SDK response model/token usage. These remain the original parented operations,
+not a second synthetic conversation trace. SDK usage remains `sdk_unverified`.
+
+[Axiom's manual instrumentation contract](https://axiom.co/docs/use-cases/llm-observability/manual-instrumentation)
+identifies chat spans by `gen_ai.operation.name`, not their display names. With
+`COMPUTAH_AXIOM_CONTENT_ENABLED=1`, input/output messages use its OTel JSON-string
+array schema: `role`, `parts`, text `content`, `tool_call` with actual ID/name/
+arguments, and `tool_call_response` with matching ID/response. System messages,
+visible assistant text and tool exchanges are retained; images and hidden thinking
+are excluded. The shared credential scrubber and 32-KiB content budget apply,
+prioritizing recent messages (at most 64) and restoring chronological order.
+Malformed/truncated message envelopes and unknown part types are omitted. Existing
+private content logs retain their separate source truncation/missing evidence.
+
+The OTLP relay revalidates these two message attributes only under the same
+private opt-in; default and observatory-service exports strip them. Public settled
+queries and live timing projection still select no attributes/content. The trace
+dataset is now explicitly private content when opted in: never grant public
+clients unrestricted access to it. No credential, hidden reasoning, public content
+export, unsolicited model call or history backfill is introduced. Failed/cancelled
+calls keep their existing outcomes and emit no fabricated output when none exists.
+
+Local intercepted Axiom-export tests exercise all four Models methods, async
+parent continuity, native message schema, credentials/hidden-block exclusion,
+failure/cancellation and opt-out/public-service stripping. Source/local proof is
+not protected-host adoption or native Conversation UI acceptance. The historical
+`06274a339b809d7f7d2569c13c5fb5b5` trace was exported without operation/provider/
+message attributes and is not rewritten; newly ingested genuine work is required
+for live acceptance.
 
 ## Collection boundaries
 
@@ -121,6 +157,8 @@ status codes and explicitly allowed scalar/category attributes. Raw actor keys,
 tenant/user/principal IDs, conversation/task IDs, personal identifiers, URLs,
 headers, prompts, reasoning, email/Slack text, tool arguments/results, exception
 messages/stacks, baggage and original resource attributes are not forwarded.
+The only content exception is the explicitly opted-in private model-message
+attributes above, scrubbed and rebuilt rather than blindly forwarded.
 Unknown span/event names become `runtime.operation`; the span is not sampled out.
 Registered code-owned names can be added to the allowlist as needed.
 
@@ -130,9 +168,10 @@ regression test exercises actual Interaction → Task → Worker activity to det
 that failure, rather than just sending an artificial OTLP payload.
 
 Export is best-effort, not a durable audit log: Node buffers at most 4096 spans,
-exports batches of at most 256, and the relay permits eight concurrent requests
-of at most 2 MiB with a five-second Axiom deadline. Native Rivet uses its own SDK
-buffer. Overload, process crashes or sustained destination failure can lose spans.
+exports batches of at most 256 (private-content mode instead bounds the queue to
+256 and batches to four to keep encoded messages below the relay cap), and the
+relay permits eight concurrent requests of at most 2 MiB with a five-second Axiom
+deadline. Native Rivet uses its own SDK buffer. Overload, process crashes or sustained destination failure can lose spans.
 Shutdown drains native runtime telemetry before the Node exporter and relay.
 Export failures log categories only and do not fail application work. No history
 backfill is performed and no model call is needed for ingestion verification.
@@ -153,8 +192,8 @@ or proof that priority was served.
 
 ## Private content coverage
 
-Source implements explicitly enabled private `content.record` logs, not content
-trace attributes. Local intercepted Axiom export tests cover admitted message
+Source implements explicitly enabled private `content.record` logs and the bounded
+native GenAI message attributes above. Local intercepted Axiom export tests cover admitted message
 search, final text, native tool arguments/results, actual model input/output,
 scope/participant identity, existing trace context, typed failure/cancellation,
 credential/hidden-thinking exclusion, truncation, overload and public projection.
