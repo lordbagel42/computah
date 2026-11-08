@@ -396,6 +396,21 @@ do not establish availability of Socket Mode human typing events.
 
 ## Native working indicator and its boundary
 
+### Native reply metrics
+
+The shared telemetry bootstrap now optionally exports native OTel metrics to the
+dedicated `computah-prod-metrics` dataset. See [native metrics](observability.md#native-reply-metrics)
+for configuration, schema, bucket/temporality support and verification limits.
+The successful receive→actual awaited answer histogram is per durable receipt,
+not core execution/progress timing. The current pending-replies gauge is read
+every ten seconds even while idle or awaiting core; missing storage is unknown,
+not zero. Durable terminal totals expose only success/error/cancel/uncertain,
+without identity labels. Ambiguous posting leaves metric pending but retains the
+separate unanswered diagnostic and existing no-repost reconciliation. Neither
+shutdown nor a cancellation request alone fabricates a terminal cancellation.
+This does not wire the broader backend analytics catalog or change Slack sends,
+receipt retention, private diagnostics or trace/content permissions.
+
 ### Stop and observed progress integration
 
 The source supports the following controls and observations; runtime adoption

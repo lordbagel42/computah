@@ -91,6 +91,8 @@ const operations = [
   "delivery",
   "recovery",
   "export",
+  "metrics.collect",
+  "metrics.export",
   "web.search",
   "web.extract",
   "browser.agentos",

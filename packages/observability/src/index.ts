@@ -18,6 +18,7 @@ import {
   runtimeLog,
   startRuntimeLogging,
 } from "./logs.js";
+import { startRuntimeMetrics } from "./metrics.js";
 
 export { type RuntimeContentKind, registerContentSecrets } from "./content.js";
 export {
@@ -32,6 +33,11 @@ export {
   runtimeSlackReplyLatency,
   startRuntimeLogging,
 } from "./logs.js";
+export {
+  type ReplyMetricSnapshot,
+  registerReplyMetrics,
+  runtimeReplyDuration,
+} from "./metrics.js";
 
 type Json = {
   [key: string]: unknown;
@@ -134,6 +140,8 @@ const operations = new Set([
   "axiom.persist",
   "start.failed",
   "logs.export",
+  "metrics.collect",
+  "metrics.export",
   "files.read",
   "files.write",
   "files.edit",
@@ -631,8 +639,10 @@ async function start(service: string) {
     ],
   });
   provider.register();
+  const metrics = startRuntimeMetrics(service);
   return {
     close: async () => {
+      await metrics.close();
       await logs.close();
       await provider.shutdown().catch(() => {
         console.warn("computah.telemetry.flush_failed");

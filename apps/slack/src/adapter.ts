@@ -2045,6 +2045,7 @@ export class SlackAdapter {
     this.closed = true;
     this.statusAbort?.abort();
     this.contextAbort?.abort();
+    this.replyLatency.close();
     this.db.close();
   }
 }

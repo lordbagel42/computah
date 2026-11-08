@@ -7,7 +7,9 @@ projection, and sends committed increments through the shared typed
 Task invocations, and gateway lifetimes. Deployment and genuine Axiom ingestion
 must be verified separately for the consumed revision. No new dashboard endpoint,
 collector, paid service, budget enforcement, or host/container inspection is
-introduced. Slack-specific analytics hooks remain unwired here.
+introduced. Slack-specific analytics hooks remain unwired here. The separate
+[native reply metrics](observability.md#native-reply-metrics) slice uses its own
+private OTel MeterProvider; it does not convert this catalog's logs into metrics.
 
 ## Inventory of the actual pinned stack
 

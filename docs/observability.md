@@ -53,6 +53,91 @@ not protected-host adoption or native Conversation UI acceptance. The historical
 message attributes and is not rewritten; newly ingested genuine work is required
 for live acceptance.
 
+## Native reply metrics
+
+Slack's shared bootstrap owns a private OTel `MeterProvider` and periodic reader,
+separate from the LOGS-only `runtimeMetric`/`analytics.sample` route. Enable with
+the existing protected `COMPUTAH_AXIOM_INGEST_TOKEN` and
+`COMPUTAH_AXIOM_METRIC_DATASET=computah-prod-metrics`. This dedicated dataset is
+`otel:metrics:v1`, provisioned in US east through the authorized Axiom connector,
+inheriting organization retention. Existing logs/traces datasets, credentials
+and retention are unchanged. No additional host metrics or backend analytics
+instruments are enabled by this slice.
+
+| Instrument                      | OTel/Axiom type                               | Meaning                                                                                                                                         |
+| ------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `computah.slack.reply.latency`  | Histogram, delta, ms                          | First durable receive → actual awaited successful assistant-answer post, once per receipt (including coalesced inputs with distinct clocks)     |
+| `computah.slack.reply.pending`  | Observable Gauge, replies                     | Fresh SQLite count of pending/answer-qualified receipts without a terminal metric outcome, every ten seconds, even idle or blocked in core/post |
+| `computah.slack.reply.outcomes` | Observable monotonic Sum, cumulative, replies | Durable receipt totals with exactly four `outcome` values: `success`, `error`, `cancel`, `uncertain`                                            |
+
+Only successful actual answer confirmation enters the histogram; progress,
+commands, diagnostic/error posts, cancellation and ambiguous sends do not.
+`error` includes denial, empty answer and the adapter's terminal wait timeout,
+not every retried transport failure. `cancel` requires observed cancellation or
+local withdrawal, not merely a cancellation request. Ambiguous posting/recovered
+posting is `uncertain`, never success and never blindly resent. It leaves the
+metric pending cohort, but the separate unanswered/overdue log diagnostic is
+preserved. Shutdown alone does not invent cancellation. Existing terminal receipt
+history is not backfilled; still-unresolved durable receipts join the current
+census/recovery. Four-row cumulative totals and their epoch survive receipt
+pruning and restart, without replaying increments or exporting receipt IDs.
+
+Histogram boundaries are equal-width 5,000ms steps through 300,000ms, plus the
+required +Inf overflow bucket: 61 buckets, below Axiom's 256-point-bucket limit.
+Min/max/sum are included: Axiom can ingest an incomplete histogram with a warning
+but rejects percentile interpolation without min/max. Exponential histograms are
+unsupported. Delta temporality makes the first real reply batch queryable without
+a fabricated zero observation. Axiom quantiles interpolate within buckets; they
+are estimates, not exact raw reply percentiles. Query with
+`interpolate_delta_histogram(...)`, not cumulative conversion or an unfiltered
+sum across bucket/count/sum/min/max components.
+
+The package-owned exporter reconstructs the positive OTLP schema from SDK
+aggregates. It forwards only the three fixed instrument names, fixed
+`service.name=computah-slack`, fixed scope, scalar measurements and the outcome
+enum. No message/actor/task IDs, pseudonyms, histories, resources from ambient
+configuration, arbitrary attributes or exemplars escape. SDK cardinality is
+bounded to one histogram, one gauge and four outcome series (plus reserved SDK
+overflow slots, not forwarded). Delivery is OTLP/HTTP JSON to the fixed US-east
+`/v1/metrics`, with `x-axiom-metrics-dataset`, not `X-Axiom-Dataset`.
+
+One export request at a time, at most 128KiB request/8KiB response, five-second
+HTTP deadline, ten-second collection interval and no transport retry/backlog.
+HTTP failures, malformed/oversized replies and OTLP partial rejection/warnings
+produce sanitized error outcomes without failing Slack work. Collection failures
+omit unknown gauge/counter points rather than inventing zero. `metrics.collect`
+and `metrics.export` spans/logs use the shared sanitized traces/logs path; export
+links to its collection, explicitly clearing SDK export tracing suppression.
+Shutdown drains metrics before logs/traces. No sampling does not imply no loss:
+histogram queue acceptance, its durable sent marker and remote ingestion are not
+atomic; crashes or failed delta exports can lose samples, and crash/replay can
+duplicate a sample. Cumulative outcome totals are not an exactly-once audit log.
+
+Local tests exercise native periodic collection with an actual SQLite adapter,
+idle/stalled gauges, asymmetric 5s bucket boundaries, duplicate/reopen outcomes,
+uncertain sends, positive-schema rejection and linked export failure spans.
+Local synthetic Axiom canaries are distinct from production process adoption and
+real human receive→reply acceptance. Pre-adoption experimental
+`computah.slack.reply.duration` data is retained unchanged; it mixes temporalities
+and is not a production instrument. Production uses the delta-only `.latency`.
+
+**Actual exporter → Axiom canary, 2026-11-08 10:23:40–10:24:26 UTC:**
+the local synthetic Slack adapter used real ten-second OTel collection and the
+actual remote exporter, with no real Slack/model request. Native metric discovery
+returned `.latency` Histogram/Delta/ms, `.pending` Gauge and `.outcomes`
+CounterMonotonic/Cumulative. Independent readback returned pending 0→2→2→0,
+terminal totals success 2/error 1/cancel 1/uncertain 1 and one histogram with
+count 2, sum 10,100ms, mean 5,050ms, p50 5,000ms and interpolated p99 5,098ms.
+The raw bucket readback placed one sample at 5,000ms and one at 10,000ms; native
+tag discovery contained only fixed scope/service/outcome and Axiom's histogram
+tags. Complete min/max/sum exports returned HTTP 200 `{}` without ingest warnings.
+The [independently queried sanitized traces](https://app.axiom.co/bagel-w3ue/query?qid=YYZIXTruj5x-to6if5)
+contain five collection/export pairs with exact export→collection links. This is
+real Axiom ingestion of a local synthetic emitter, not production process or
+human conversation acceptance. The protected host separately authenticated an
+empty batch and installed the opt-in environment variable without changing its
+credential; only a consumed-revision and post-rollout query establish adoption.
+
 ## Collection boundaries
 
 - Node OpenTelemetry records HTTP request lifetime/status, existing Effect gateway
