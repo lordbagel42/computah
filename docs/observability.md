@@ -193,6 +193,21 @@ permitted when the orb's credentials cannot write secrets.
 
 ## Verified status
 
+- **Native Axiom OAuth verified on host, 2026-11-08 08:43 UTC:** the isolated
+  native consumer discovered all three read schemas, listed both Computah
+  datasets and read their fields. Count-only queries over the fixed five-minute
+  UTC window 08:38:17–08:43:17 returned 699 traces and 230 logs. Expiry-aware
+  refresh changed both tokens and saved future expiry via atomic file replacement,
+  retaining owner-only mode. This is actual native consumer acceptance, not an
+  ingress grant or serving-container activation receipt.
+  The server consumes an explicitly mounted private SDK state file and refreshes
+  before saved expiry or on 401 through the bounded transport. `axiom.refresh` and
+  `axiom.persist` spans link to the initiating discovery/call; local checks cover
+  refresh success/failure/cancellation, cancelled shared-refresh waiters and
+  recovery from a failed state save. No credential bytes enter telemetry.
+  Owner approval/code exchange succeeded on 2026-11-08; serving activation and
+  production refresh-span ingestion remain separate acceptance.
+  Atomic rename protects process replacement, not a claim of power-loss durability.
 - **Live dataset and synthetic ingestion verified, 2026-11-08 06:59 UTC:** Axiom
   accepted a harmless `computah.synthetic` trace with HTTP 200. The connected MCP
   returned exact trace `cdaef19880af286c1508dc3c4f89e95f` and span

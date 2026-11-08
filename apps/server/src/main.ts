@@ -134,6 +134,7 @@ async function main() {
     operations: { queryToken: process.env.COMPUTAH_AXIOM_QUERY_TOKEN },
     axiomMcp: {
       pat: process.env.COMPUTAH_AXIOM_MCP_PAT,
+      oauthFile: process.env.COMPUTAH_AXIOM_MCP_OAUTH_FILE,
       orgId: process.env.COMPUTAH_AXIOM_MCP_ORG_ID,
     },
     models: runtimeModels,

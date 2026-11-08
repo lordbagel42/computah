@@ -119,6 +119,8 @@ const operations = new Set([
   "gmail.retrieval",
   "axiom.discover",
   "axiom.call",
+  "axiom.refresh",
+  "axiom.persist",
   "start.failed",
   "logs.export",
   "files.read",

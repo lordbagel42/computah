@@ -281,8 +281,13 @@ export interface CoreOptions {
       current?: () => Promise<void>,
     ): Promise<SentinelDecision>;
   };
-  /** Operator-wide read access via dedicated member PAT, not dataset API tokens. */
-  axiomMcp?: { pat?: string; orgId?: string; fetch?: typeof fetch };
+  /** Operator-wide reads via protected OAuth state or dedicated member PAT. */
+  axiomMcp?: {
+    pat?: string;
+    oauthFile?: string;
+    orgId?: string;
+    fetch?: typeof fetch;
+  };
   models?: PiOptions["models"];
   settings?: PiOptions["settings"];
   /** Private scalar projection; never exposed to tenant actions. */

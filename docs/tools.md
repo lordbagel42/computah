@@ -145,13 +145,32 @@ member with query-only access to Computah traces/logs and minimal discovery,
 check additive base/group grants, and set Axiom role query-cost limits. Runtime
 tool filtering does not narrow an overprivileged PAT. Dataset isolation is
 enforced by that upstream member role, not by parsing arbitrary APL in the host.
-Official remote OAuth is also supported by Axiom, but an interactive login,
-callback, refresh and private state store are **not implemented** here.
+Alternatively set `COMPUTAH_AXIOM_MCP_OAUTH_FILE` to an absolute path to a
+privately mounted SDK `McpOAuthState` file for this exact server and public client.
+OAuth takes precedence, with no PAT fallback on failure. The file must be regular,
+not a symlink, at most 64 KiB and owner-only; mount its directory writable and
+persistent (0700 directory, 0600 file) so atomic refresh rotation survives replacement.
+Only one runtime process may own this grant; overlapping processes/independent
+refreshers are unsupported. The approved user's upstream authority applies; a
+read-only local allowlist does not narrow that account's upstream permissions.
+Before dispatch, a saved expiry within 30 seconds triggers SDK refresh using the
+fixed Axiom issuer/token endpoint; HTTP 401 also permits one refresh/retry.
+Axiom may report expired-token rejection inside an HTTP-success tool result, so
+waiting only for HTTP 401 is insufficient. Tool error text is never used to retry.
+Concurrent operations share refresh; cancellation
+of its initiating operation also stops that refresh. Refresh uses the same grant
+checks, deadline and response budget, and saves rotated tokens before reuse.
+Persistence failures fail closed; an operator must repair storage/re-authorize if
+the process exits before a rotated grant can be saved. No background login,
+browser prompt, credential discovery or interactive server is started at runtime.
+Revoked/missing grants return `authorization_required`, never an OAuth link or
+token. New authorization is a separate private operator action.
 
 Each operation creates and closes its own session, with at most four admitted
 operations, a 15-second total network deadline, 16 KiB call arguments, 256 KiB
 cumulative response budget and 120 KiB result limit. Redirects, background GET
-streams and reconnect retries are disabled. No automatic query retry occurs.
+streams and reconnect retries are disabled. Only the one OAuth challenge retry
+above is automatic; no retry follows an accepted query or transport failure.
 Cancellation aborts initialization/query transport; close is awaited before
 settlement (best-effort session DELETE has its own one-second SDK deadline).
 Read tools are replay-safe: recovery may repeat a query and incur query cost;
@@ -163,15 +182,24 @@ An accepted MCP call with `isError` returns `provider_error`, not successful que
 evidence or a raw provider error body.
 
 `computah.axiom.discover`/`computah.axiom.call` span full operation lifetimes and
-cleanup with categorical outcomes, through the sanitized exporter. Local checks
+cleanup; nested `computah.axiom.refresh` and `computah.axiom.persist` record
+refresh and state-save outcomes, through the
+sanitized exporter. Local OAuth checks cover concurrent 401 recovery, rotation,
+reopen, missing/revoked state, cancellation, secret suppression and linked
+success/failure/cancel refresh spans. Local checks
 exercise actual Pi Interaction tool discovery/call, sleep/wake and nonoperator
 denial against synthetic official-protocol responses; exporter tests verify
 parentage, failures/cancel/timeout and absence of credential/identity canaries.
 Interrupted in-flight execute-intent replay and abrupt-restart trace continuity
 have not been independently exercised.
-No restricted-member credential has been demonstrated provisioned, and no real
-runtime list/query success is claimed. Missing MCP setup must not block existing
-ingestion, conversation timing tools or backend startup.
+Owner OAuth approval/code exchange succeeded on 2026-11-08 with a fresh dedicated
+public client; protected host state includes a refresh token. The isolated host
+native consumer then verified discovery, both dataset listings/field schemas and
+five-minute count-only queries (699 traces, 230 logs), including actual expired
+grant refresh and atomic token rotation persistence. This does not establish a
+restricted-member role, ingress operator grant or serving-runtime activation.
+Missing MCP setup must not block existing ingestion, conversation timing tools
+or backend startup.
 
 ## First-class Worker capabilities
 
