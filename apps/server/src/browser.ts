@@ -16,6 +16,8 @@ import { obj, str } from "@earendil-works/pi-schema";
 import { Effect } from "effect";
 import type { Scope } from "./core.js";
 
+type BrowserStage = "launch" | "navigate" | "text" | "title" | "cleanup";
+
 export type BrowserResult =
   | {
       status: "ready";
@@ -39,6 +41,8 @@ export type BrowserResult =
         | "cleanup_unknown";
       requestState: "not_sent" | "possibly_sent";
       cleanup: "not_started" | "closed" | "unknown";
+      /** Omitted when no native stage is known; never a diagnosis of cause. */
+      stage?: BrowserStage;
     };
 
 const MAX_BYTES = 131_072;
@@ -196,13 +200,16 @@ export function createBrowser(options: BrowserOptions) {
             async (span): Promise<BrowserResult> => {
               let requestState: "not_sent" | "possibly_sent" = "not_sent";
               let cleanup: "not_started" | "closed" | "unknown" = "not_started";
+              let stage: BrowserStage | undefined;
               const fail = (
                 code: Extract<BrowserResult, { status: "unavailable" }>["code"],
+                failureStage = stage,
               ): BrowserResult => ({
                 status: "unavailable",
                 code,
                 requestState,
                 cleanup,
+                ...(failureStage ? { stage: failureStage } : {}),
               });
               let result: BrowserResult;
               if (!(await permitted())) result = fail("denied");
@@ -211,16 +218,23 @@ export function createBrowser(options: BrowserOptions) {
               else if (active >= 2) result = fail("capacity");
               else {
                 active++;
+                stage = "launch";
                 let home: string | undefined;
                 let daemon: ReturnType<typeof spawn> | undefined;
                 let exited = false;
                 let timedOut = false;
+                let timeoutStage: BrowserStage | undefined;
+                let cancelledStage: BrowserStage | undefined;
                 const controller = new AbortController();
-                const cancel = () => controller.abort();
+                const cancel = () => {
+                  cancelledStage ??= stage;
+                  controller.abort();
+                };
                 signal.addEventListener("abort", cancel, { once: true });
                 if (signal.aborted) cancel();
                 const timer = setTimeout(() => {
                   timedOut = true;
+                  timeoutStage = stage;
                   controller.abort();
                 }, timeoutMs);
                 result = fail("runtime");
@@ -293,16 +307,19 @@ export function createBrowser(options: BrowserOptions) {
                     if (!(await permitted())) result = fail("denied");
                     else {
                       controller.signal.throwIfAborted();
+                      stage = "navigate";
                       requestState = "possibly_sent";
                       await call({
                         action: "navigate",
                         url,
                         waitUntil: "domcontentloaded",
                       });
+                      stage = "text";
                       const content = await call({
                         action: "gettext",
                         selector: "body",
                       });
+                      stage = "title";
                       const title = await call({ action: "title" });
                       if (
                         typeof content.text !== "string" ||
@@ -333,6 +350,7 @@ export function createBrowser(options: BrowserOptions) {
                   );
                 } finally {
                   // Independent cleanup budget: cancellation must not cancel cleanup.
+                  stage = "cleanup";
                   await traceOperation(
                     "browser.cleanup",
                     async (cleanupSpan) => {
@@ -420,7 +438,10 @@ export function createBrowser(options: BrowserOptions) {
                 if (cleanup === "unknown") result = fail("cleanup_unknown");
                 else if (!(await permitted())) result = fail("denied");
                 else if (signal.aborted || timedOut)
-                  result = fail(signal.aborted ? "cancelled" : "timeout");
+                  result = fail(
+                    signal.aborted ? "cancelled" : "timeout",
+                    signal.aborted ? cancelledStage : timeoutStage,
+                  );
                 else if (result.status === "unavailable")
                   result = { ...result, cleanup };
               }

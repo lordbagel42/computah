@@ -73,6 +73,14 @@ Unavailable results carry a fixed category (`denied`, `invalid_input`, `capacity
 `possibly_sent`) and cleanup state (`not_started`, `closed`, `unknown`). Raw errors,
 provider stdout and protocol/CDP details never become tool results.
 
+When known, unavailable results also carry a fixed `stage`: `launch` (including
+version/socket readiness), `navigate`, `text`, `title` or `cleanup`. Timeout and
+cancellation snapshot the active stage before independent cleanup, so a navigation
+timeout is not relabeled as cleanup merely because cleanup subsequently ran.
+The field is absent before native work or when the bridge cannot recover the
+native outcome. A stage locates an operation boundary, not its underlying cause;
+it contains no URL, page content, daemon stderr or credential information.
+
 ## Lifetime, cancellation and recovery
 
 Each admitted read owns a random session, mode-0700 temporary HOME, profile,

@@ -60,6 +60,7 @@ test("browser rejects denied bindings and non-web inputs before launch; missing 
     code: "runtime",
     cleanup: "closed",
     requestState: "not_sent",
+    stage: "launch",
   });
   const guest = createAgentOSBrowser(client);
   expect(await run(guest, "https://example.org", bob)).toMatchObject({
@@ -187,6 +188,7 @@ test.skipIf(!real)(
       expect(await run(short, `${site.url}/slow`)).toMatchObject({
         code: "timeout",
         cleanup: "closed",
+        stage: "navigate",
       });
       const after = (await readdir(tmpdir())).filter(
         (name) => name.startsWith("cb-") && !before.has(name),
