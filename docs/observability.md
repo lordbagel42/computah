@@ -143,7 +143,8 @@ trace attributes. Local intercepted Axiom export tests cover admitted message
 search, final text, native tool arguments/results, actual model input/output,
 scope/participant identity, existing trace context, typed failure/cancellation,
 credential/hidden-thinking exclusion, truncation, overload and public projection.
-This source/local proof is not protected-host activation or live content ingestion.
+Protected-host activation and bounded live ingestion at `ab6567b` are independently
+verified below; local tests alone do not establish those states.
 
 - Core fresh committed admissions capture trusted scope/resource, request and
   submission IDs, actual input and already-available frozen source evidence.
@@ -166,18 +167,65 @@ This source/local proof is not protected-host activation or live content ingesti
   has a separate activity row and ambiguous sends retain existing error outcomes.
   No additional Slack lookup, history export or unsolicited message is performed.
 
+### Deployed private-content acceptance
+
+Backend and Slack consumed `ab6567b` before authorized activation. The backend
+same-revision reapply completed at `2026-11-08T09:41:14.562Z`; Slack was ready at
+`09:41:42.676631Z`. Both actual processes had content enabled before the single
+harmless self-doc canary at `09:42:18.730917Z`–`09:42:43.062514Z`.
+
+Independent private Axiom queries found ten `computah.content.v1` records:
+incoming 1, final 1, model.input 2, model.output 2, tool.call 1, tool.result 1 and
+activity 2 ([counts](https://app.axiom.co/bagel-w3ue/query?qid=oEgY2l7QG49-to6gc3)).
+The literal `computah-private-content-20261108-canary` occurs in actual incoming
+text, final content and terminal model output, not just incidental payload fields
+([visible-content predicates](https://app.axiom.co/bagel-w3ue/query?qid=p8itlu28Mvy-to6geo)).
+Incoming/final share a nonempty submission ID and transport trace
+`d39c37d78ee8ea4146f972f4f6f440c7`
+([submission match](https://app.axiom.co/bagel-w3ue/query?qid=DJj6zmpVDU8-to6ge1)).
+
+The model's `self_docs_read` call and private tool.call/tool.result records share
+one call ID; both tool records carry the same task/conversation IDs and native
+span `158ea1bbfa32cfd5`, argument `id=self-docs`, and a parsed ready result
+([tool grouping](https://app.axiom.co/bagel-w3ue/query?qid=raiLgNuyY93-to6gdz),
+[model/tool match](https://app.axiom.co/bagel-w3ue/query?qid=Kw7NRsp5dUt-to6gf5)).
+Runtime trace `468fb53332d1ce3a38e046997e2bc0e8` has an actual ready
+`self_docs.read` child `0f77ed257e553a8d` under that native tool span
+([native child](https://app.axiom.co/bagel-w3ue/query?qid=BSjH6x9dItD-to6ge2)).
+Tool records lack submission ID and there is no direct edge joining this runtime
+root to the transport root in this receipt; later causal source cannot
+retroactively create that edge.
+
+All ten records have active correlation. Both model inputs are truncated; eight
+records report `unsupported_value`, incoming/final report `none`. Eight records
+are redacted; the two model outputs are not. This proves bounded actual backend
+content search and observed tool correlation, not complete model context/history,
+exhaustive secret/hidden-reasoning auditing or live Slack content ingestion. No
+extra model request, Slack post, Procedure replay or historical backfill was made.
+
 The public observatory still queries only `computah-prod-traces` and reconstructs
-its closed timing/topology schema; private content/identity canaries are rejected
-even when injected into query rows or failures. This is local disclosure-boundary
-proof, not a certification of deployed token grants. Dataset metadata currently
-reports no explicit dataset retention period (`retentionDays: 0`,
-`useRetentionPeriod: false`); effective organization/plan retention is unknown.
-Do not interpret those values as zero-day or unlimited retention. The exact
-last-deployed public Worker query credential returned HTTP 200 for count-only
-queries on both traces and logs: it is not log-isolated. Private content activation
-is held until a separate trace-only Worker credential is installed and verified
-with positive trace access and log permission denial. No grants/retention are
-changed by runtime capture, and no universal "all data" or durable audit claim is made.
+its closed timing/topology schema; local tests reject private canaries injected
+into rows/failures. In the exact revision/window, full-row predicates over 103
+backend and 51 Slack traces found zero literal/content-schema matches
+([sanitizer](https://app.axiom.co/bagel-w3ue/query?qid=0GPhfAZo2mB-to6gco)).
+The deployment owner's public default/diagnostic snapshots at
+`2026-11-08T09:44:02.321184Z` each contained 1,000 spans and zero canary literals,
+raw transport IDs or forbidden keys. These are bounded checks, not a global
+no-disclosure claim.
+
+The old installed public Worker credential could query logs. Its replacement is
+a dedicated traces-only QueryRead credential, installed in Worker version
+`2c45e2bc-bff4-4e90-ac13-3d2c45739a3b` (receipt
+`78910b52-8c5d-475c-b49f-69cff117d863`). Identical valid count controls returned
+traces HTTP 200 and logs HTTP 400 dataset-inaccessible, versus old logs HTTP 200;
+this is permission concealment, not query-validation failure or HTTP 403. Shared
+backend credentials were unchanged.
+
+Dataset metadata reports no explicit dataset retention period (`retentionDays: 0`,
+`useRetentionPeriod: false`); effective organization/plan retention remains unknown,
+not zero-day or unlimited. Activation inherited the existing policy without
+retention changes/deletion. Runtime capture makes no universal "all data" or
+durable audit claim.
 
 ## Runtime coverage ledger
 
@@ -256,6 +304,13 @@ coverage is an executable operation and its observable outcome/linkage.
 | Gmail/analytics                    | Shared fixed Gmail names; analytics now wires bounded private projection, outer priority-preserving model observer, native task/usage watches and gateway/Task timings to the shared LOGS-only sink                                                                                                                           | Gmail wiring, full native admission join and revision-matched live analytics proof remain separate; no MeterProvider, invoice truth or complete task census; see [analytics](analytics.md)                                               |
 | Public observatory                 | `b3a507e` bounded positive-schema Worker HTTP/poll emitter; `480a953` fixes native fetch; owner-verified production query/render and 1000-row keyed correlation, documented in [observatory](public-observatory.md)                                                                                                           | Optional edge ingest remains disabled/unproved; static/rejection paths use platform telemetry; browser interaction and actual visitor-disconnect export remain gaps                                                                      |
 | Deployment/setup/quality scripts   | Checks/logs, not application trace export                                                                                                                                                                                                                                                                                     | Separate operational tracing policy; no host/process/SQL/socket/metrics/log pipeline coverage claim                                                                                                                                      |
+
+The [Axiom listener](../integrations/axiom-listener/README.md) is operational
+Amp-managed tooling, not another Computah exporter:
+
+| Runtime surface      | Actual coverage                                                                                                                                                                                     | Remaining proof/work                                                                                                                                                                                                                                                    |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Axiom alert listener | Amp-managed webhook spans and fixed `computah.alert.completed` verified/rejected/failure/cancel logs; capability-only URL, discarded untrusted wake text, fixed authenticated monitor-history reads | Not connected to Computah's shared sanitized Axiom export; registration/startup recovery/provisioning export continuity absent. Notification deliveries do not establish current health or causal recovery; runtime/monitors/credentials remain with the listener owner |
 
 ### Causal admission source update
 
@@ -349,15 +404,17 @@ permitted when the orb's credentials cannot write secrets.
   exports Pi phases, Rivet actor actions and Effect spans through the privacy
   relay; private-content/identity canaries are absent. Relay tests exercise SDK,
   HTTP and Effect spans, parentage, redaction and destination failure.
-- **Production collection not yet verified:** the existing nest-bagel operator
-  thread does not receive the saved project secret in its shell. No runtime token
-  was written and no service was restarted to bypass normal deployment. Secure
-  runner injection/private local bootstrap is the remaining activation gate.
+- **Production private content verified, 2026-11-08 09:42 UTC:** exact `ab6567b`
+  backend input/final/model/tool records are independently queryable after
+  authorized activation. See [deployed acceptance](#deployed-private-content-acceptance)
+  for the exact window, sanitizer/public controls and remaining correlation gaps.
+  Slack activation is verified, but this backend-only canary does not prove live
+  Slack content ingestion or every production path.
 
 Axiom queries can correlate these content-free trace IDs across operational
-boundaries. Native private diagnostics still provide details deliberately absent
-from Axiom. DEBUGSHARE remains identifier-only and separately authorized; an
-Axiom query is not permission to export a private diagnostic history.
+boundaries; the separately authorized private content lane now adds actual bounded
+normal-operation evidence. DEBUGSHARE remains a separate explicit diagnostic
+capture, not permission for automatic history export or backfill.
 
 The separate [public observatory](public-observatory.md) uses a second positive
 projection and opaque IDs, not DEBUGSHARE content or a public query proxy. Its
