@@ -53,7 +53,9 @@ categories and content-free spans; it is not a second durable workflow engine.
 ## Interaction → Task → Worker
 
 Each Interaction is keyed by tenant/user/agent. Its only registered tool is
-`Task({ worker, text })`; the Worker has no tools. The tool reads its trusted
+`Task({ worker, text })`. Workers optionally receive the native
+[Tavily web tools](tavily.md), only when the protected key and this principal's
+explicit `web.search` / `web.extract` grants are present. Task reads its trusted
 session binding, checks current task authority and addresses the Worker by the
 same scope plus the local worker label. Model arguments cannot select a tenant.
 Follow-ups that use the same label reopen/reuse the same Worker and history.
@@ -63,7 +65,8 @@ Task execution is declared replay-safe because dispatch uses a stable
 `input:<client-request-id>`. A small Pi document-family receipt stores the text
 hash and submission ID in the **same Pi commit** as admission, so concurrent
 Rivet actions cannot race an in-memory check-then-submit. This does not provide
-exactly-once external effects; no external-effect tools are enabled.
+exactly-once external effects. Tavily tools use unsafe replay and no automatic
+HTTP retries because interrupted requests may already consume provider credits.
 
 Dispatch uses submit/wait/history, not the adapter's ten-minute `prompt` helper.
 Native Pi compaction remains enabled by default. `compact()` appends a
@@ -105,12 +108,14 @@ All gateway reads, admissions and controls compare **all three** identity fields
 before resolving an actor. Current grants are checked outside prompts on each
 operation and again at actor admission/Task dispatch. Capabilities are:
 
-| Capability      | Effect                                                             |
-| --------------- | ------------------------------------------------------------------ |
-| `history.read`  | Read/wait on this scope's histories/results                        |
-| `task.send`     | Admit work/delegate within this scope                              |
-| `task.control`  | Cancel this scope's queued or active submission and linked Workers |
-| `core.maintain` | Compact/sleep this scope's actors; intended owner-only grant       |
+| Capability      | Effect                                                                       |
+| --------------- | ---------------------------------------------------------------------------- |
+| `history.read`  | Read/wait on this scope's histories/results                                  |
+| `task.send`     | Admit work/delegate within this scope                                        |
+| `task.control`  | Cancel this scope's queued or active submission and linked Workers           |
+| `core.maintain` | Compact/sleep this scope's actors; intended owner-only grant                 |
+| `web.search`    | Search public evidence through configured Tavily, in this scope              |
+| `web.extract`   | Extract bounded public URL evidence through configured Tavily, in this scope |
 
 The owner may receive the broader maintenance grant. It is **not** cross-user
 history authority. No one receives ambient host shell or shared-code writes:

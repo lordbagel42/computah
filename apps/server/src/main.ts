@@ -40,6 +40,9 @@ async function main() {
     model: config.model,
     workerModel: config.workerModel,
     thinkingLevel: config.mode === "real" ? "high" : undefined,
+    tavily: process.env.COMPUTAH_TAVILY_API_KEY
+      ? { apiKey: process.env.COMPUTAH_TAVILY_API_KEY }
+      : undefined,
     models: models
       ? priorityModels(models, (diagnostic) => {
           console.info(`computah.model ${JSON.stringify(diagnostic)}`);

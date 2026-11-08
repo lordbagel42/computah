@@ -16,6 +16,8 @@ const capabilities: Capability[] = [
   "history.read",
   "task.control",
   "core.maintain",
+  "web.search",
+  "web.extract",
 ];
 
 export function readConfig(env: NodeJS.ProcessEnv) {

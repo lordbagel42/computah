@@ -103,6 +103,8 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
   durable inbox, DM routing, delivery uncertainty and local/live verification.
 - [Native tools and credential boundaries](tools.md): first-class browser/search,
   Gmail/Executor, runtime secret references and later provider decisions.
+- [Tavily integration and tools inventory](tavily.md): native bounded web evidence,
+  explicit principal grants, current-versus-reusable source and verification limits.
 
 The detailed [research plan](https://ampcode.com/artifacts/computah-architecture-and-phased-implementation-plan-cc4c2e58-8a38-4977-9a06-c1c55aadbc13)
 is design context, not proof those features exist.

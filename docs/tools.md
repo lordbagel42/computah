@@ -1,7 +1,10 @@
 # Native tools and credential boundaries
 
-This page is a **product contract and later integration plan**, not enabled tooling.
-Phase 0's safe DTOs/fixtures contain no real accounts, tokens or provider setup.
+This page is a **product contract and integration plan**. Native
+[Tavily search/extract](tavily.md) is implemented with protected configuration and
+explicit principal grants; key presence alone is not activation. Browser,
+Executor and Composio/Gmail remain separate integrations. Safe DTOs/fixtures
+contain no real accounts, tokens or provider setup.
 
 ## First-class Worker capabilities
 
@@ -12,9 +15,10 @@ keeps its minimal Task-first role; Workers use native Effect service boundaries.
 The wire viewer's capability strings are projections, not a tool registry or grant.
 
 The research owner verified `vercel-labs/agent-browser` at source
-`370d41db67a198944bcee2c96cc454594e7d56c6` and orb binary 0.38.1; Tavily's native
-SDK is `@tavily/core`. Recheck selected versions at integration; neither provider
-is installed by this requirement. Define typed request/result/error schemas, trace correlation,
+`370d41db67a198944bcee2c96cc454594e7d56c6` and orb binary 0.38.1. Tavily uses the
+official HTTP search/extract API through the native Effect/Pi module, not an
+additional SDK or shell wrapper. Browser is not installed by this requirement.
+Define typed request/result/error schemas, trace correlation,
 bounded output, timeout/cancellation and explicit unknown outcomes for each tool.
 Web pages/search results are untrusted data, not authority or system instructions.
 

@@ -27,6 +27,7 @@ import { Effect } from "effect";
 import { type Client, setup } from "rivetkit";
 import { createClient } from "rivetkit/client";
 import { interactionInstructions, workerInstructions } from "./personality.js";
+import { createTavily, createTavilyExtension } from "./tavily.js";
 
 export type Scope = { tenantId: string; userId: string; agentId: string };
 export type CoreObservation = {
@@ -39,7 +40,9 @@ export type Capability =
   | "task.send"
   | "history.read"
   | "task.control"
-  | "core.maintain";
+  | "core.maintain"
+  | "web.search"
+  | "web.extract";
 
 export class CoreError extends Error {
   constructor(readonly code: "denied" | "invalid" | "conflict" | "runtime") {
@@ -128,6 +131,8 @@ export interface CoreOptions {
   thinkingLevel?: PiOptions["thinkingLevel"];
   providers?: PiOptions["providers"];
   apiKeys?: PiOptions["apiKeys"];
+  /** Host-only credential/test transport. Never model or ingress input. */
+  tavily?: { apiKey: string; fetch?: typeof fetch };
   models?: PiOptions["models"];
   settings?: PiOptions["settings"];
 }
@@ -283,6 +288,18 @@ export function createCore(options: CoreOptions) {
       ],
     }),
   );
+
+  const tavily = createTavily({
+    ...options.tavily,
+    authorize: options.authorize,
+  });
+  const tavilyExtension = createTavilyExtension({
+    client: tavily,
+    scope: async (api, context) =>
+      (await api.snapshot(Binding, context))?.scope ?? null,
+  });
+  const workerTools = createRegistry();
+  if (options.tavily) workerTools.install(tavilyExtension);
 
   const common = {
     model: options.model,
@@ -467,13 +484,20 @@ export function createCore(options: CoreOptions) {
   const worker = pi({
     ...common,
     model: options.workerModel ?? options.model,
-    registry: createRegistry(),
+    registry: workerTools,
     onBeforeConnect: guard("worker"),
     onWake: async (c) => {
       await common.onWake(c);
+      const capabilities = await tavily.capabilities(scopeOf(c.key));
+      const tools = (tavilyExtension.tools ?? []).filter((tool) =>
+        capabilities.includes(
+          tool.name === "web_search" ? "web.search" : "web.extract",
+        ),
+      );
       const root = await c.pi.root(BACKGROUND_CONTEXT);
       await root.configure(
         {
+          tools,
           instructions: workerInstructions,
           model: modelRef(options.workerModel ?? options.model),
           ...(options.thinkingLevel
