@@ -16,6 +16,31 @@ Default, table and Empty states were rendered with Rune's headless GPU tooling. 
 pointer/input recovery exercises are not a fresh live Pi call or Mac graphical relaunch.
 The owner-Mac observations below remain historical evidence with their stated limits.
 
+## Mac installed-source update · 2026-11-08
+
+The published saved-text fix was built and installed on the authorized Mac. The old
+binary rejected a synthetic336,862-byte plain-transcript checkpoint; the candidate
+admitted the same input and still rejected a malformed pending UI reply. Initial native
+launch left the existing saved file byte-identical, including draft/layout/active chat.
+During verification the owner separately added activity indicators through the app's own
+source tools; those local edits were preserved, not included in this logging source change.
+
+Bounded content-free local bridge events were then built into that local study. Native
+relaunch preserved an exact165-character unsent draft plus chats/layout/active selection.
+Existing isolated Pi authentication/runtime were retained without inspecting credentials.
+A separate real Pi bridge turn returned43 for17+26 and emitted correlated local session,
+prompt, attempt, settlement, pipe-close and reap categories. No conversation content was
+logged. Private native-window captures were inspected but are not published. Isolated
+synthetic Empty→Restore rendering completed546 frames and its final recovery image was
+inspected; this did not alter the owner's live conversation.
+
+Temporary actual-process probes covered fake-Pi failure/recovery/cancel, content canaries,
+0600 creation, unwritable log failure and24 concurrent bridge processes sharing rotating
+logs. JSONL stayed parseable and bounded with a stable cross-process try-lock. Focused
+review found that lock was necessary; uncoordinated rotation was fixed before publication.
+Events remain best-effort local records, not remote Axiom ingestion or complete runtime
+tracing. Authenticated client relay/export and remote query proof remain unavailable.
+
 ## Executed on this Mac
 
 - Rust1.99.1; Rune exact revision `99c123d6b2127d1226c72dec37919e51019142ff`.

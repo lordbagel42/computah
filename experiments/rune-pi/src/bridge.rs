@@ -1,4 +1,7 @@
 //! Local Pi RPC transport. Raw protocol, stderr, and credentials are never persisted.
+#[path = "telemetry.rs"]
+mod telemetry;
+
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
@@ -21,10 +24,13 @@ pub struct Bridge {
     commands: mpsc::SyncSender<Value>,
     pub events: mpsc::Receiver<Event>,
     sequence: u64,
+    trace: telemetry::Trace,
 }
 
 impl Bridge {
     pub fn start() -> Result<Self, ()> {
+        let trace = telemetry::Trace::new();
+        trace.event("pi.session", "starting");
         let root = crate::relaunch::root();
         let prompt = std::fs::read_to_string(root.join("prompt.txt"))
             .unwrap_or_else(|_| include_str!("../prompt.txt").into());
@@ -53,12 +59,13 @@ impl Bridge {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|_| ())?;
+            .map_err(|_| trace.event("pi.session", "spawn_failed"))?;
         let mut input = child.stdin.take().ok_or(())?;
         let output = child.stdout.take().ok_or(())?;
         let (tx, events) = mpsc::channel();
         let (commands, pending) = mpsc::sync_channel::<Value>(8);
         let write_events = tx.clone();
+        let write_trace = trace.clone();
         // A stalled Pi must never block a UI callback. Killing the child closes its pipe
         // and releases this worker even if an OS write was blocked.
         std::thread::spawn(move || {
@@ -67,11 +74,13 @@ impl Bridge {
                     .and_then(|_| input.flush())
                     .is_err()
                 {
+                    write_trace.event("pi.write", "failed");
                     let _ = write_events.send(Event::Unknown);
                     break;
                 }
             }
         });
+        let read_trace = trace.clone();
         std::thread::spawn(move || {
             // read_until uses LF only, unlike generic Unicode line splitting.
             let mut reader = BufReader::new(output);
@@ -85,28 +94,52 @@ impl Bridge {
                 if let Ok(v) = serde_json::from_slice::<Value>(&bytes)
                     && let Some(e) = decode(&v)
                 {
+                    match &e {
+                        Event::AttemptStart => read_trace.event("pi.attempt", "started"),
+                        Event::AttemptEnd { failed, .. } => {
+                            read_trace.event("pi.attempt", if *failed { "failed" } else { "ended" })
+                        }
+                        Event::Done => read_trace.event("pi.turn", "settled"),
+                        Event::Failed => read_trace.event("pi.response", "failed"),
+                        Event::Built => read_trace.event("pi.build", "verified"),
+                        Event::Render(_) => read_trace.event("pi.render", "materialized"),
+                        _ => {}
+                    }
                     let _ = tx.send(e);
                 }
             }
+            read_trace.event("pi.read", "closed");
             let _ = tx.send(Event::Unknown);
         });
+        trace.event("pi.session", "ready");
         Ok(Self {
             child,
             commands,
             events,
             sequence: 0,
+            trace,
         })
     }
 
     pub fn prompt(&mut self, prompt: &str) -> Result<(), ()> {
         self.sequence += 1;
-        self.write(
+        let result = self.write(
             json!({"id":format!("turn-{}", self.sequence), "type":"prompt", "message":prompt}),
-        )
+        );
+        self.trace.event(
+            "pi.prompt",
+            if result.is_ok() { "queued" } else { "rejected" },
+        );
+        result
     }
     pub fn cancel(&mut self) -> Result<(), ()> {
         self.sequence += 1;
-        self.write(json!({"id":format!("cancel-{}", self.sequence), "type":"abort"}))
+        let result = self.write(json!({"id":format!("cancel-{}", self.sequence), "type":"abort"}));
+        self.trace.event(
+            "pi.cancel",
+            if result.is_ok() { "queued" } else { "rejected" },
+        );
+        result
     }
     fn write(&mut self, record: Value) -> Result<(), ()> {
         self.commands.try_send(record).map_err(|_| ())
@@ -116,7 +149,14 @@ impl Bridge {
 impl Drop for Bridge {
     fn drop(&mut self) {
         let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.trace.event(
+            "pi.session",
+            if self.child.wait().is_ok() {
+                "reaped"
+            } else {
+                "reap_failed"
+            },
+        );
     }
 }
 

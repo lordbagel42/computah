@@ -141,6 +141,24 @@ Failure/cancellation never activates a candidate. Compiled authorized source
 runs with user privileges: **the tool allowlist is not an OS security sandbox**. Do not expose
 this local-owner self-edit capability to untrusted remote users or generated UI actions.
 
+## Local operational events
+
+The bridge writes content-free `events.jsonl` beside default Computah history (not beside
+an explicit history override). Records contain only service, generated process-local session
+correlation, code-owned operation/outcome categories and elapsed microseconds. Prompt/reply
+text, raw protocol, tool names/arguments, paths, credentials and errors are not recorded.
+Reader/writer/session events retain the same local correlation value. A queued cancel is
+not reported as completed cancellation; a settled turn is not reported as successful output.
+
+The application thread only tries a bounded128-record queue. A background writer rotates at
+512KiB to one previous file, creates files0600 on Unix and drops failures/overload without
+blocking chat. Process exit may lose buffered events; this is not a durable audit journal.
+Coverage includes Pi start/spawn failure, prompt/abort enqueue, attempt end/failure, materialized
+UI/verified build, settlement, pipe closure/failure and child reaping. UI/relaunch/storage/tool
+operation lifetimes are not fully instrumented. **No remote client relay or Axiom export is
+configured by this study.** Never copy a server ingest credential into the client. Supported
+authenticated client ingress and actual remote query proof remain separate work.
+
 ## Checks
 
 ```sh
