@@ -644,11 +644,15 @@ separate follow-on slices. No attachment or rich core fields are invented here.
 
 ## Durable transport timing (source support)
 
-Each new job receives an independent host-generated W3C carrier, committed with
-its inbox admission. Duplicate events and coalesced burst members reuse that
-job's carrier; later core submission, polling, ACK attempts, optional status,
-delivery and DEBUGSHARE upload retries retain it across restart. No message,
-channel, sender, job or receipt identifiers enter transport telemetry. The
+Each new job receives a host-generated W3C carrier as an actual child of its
+first receive span, committed with inbox admission. Duplicate events and
+coalesced burst members reuse that carrier: their ACKs link the later receives
+without replacing the first parent. Core submission, polling, ACK attempts,
+optional status, delivery and DEBUGSHARE upload retries restore the same carrier
+across restart. Legacy jobs with missing carriers stay independent roots; they
+are not retroactively attached to an ambient pump or neighboring message.
+No message, channel, sender, job or receipt identifiers enter transport spans or
+generic runtime logs; explicitly enabled private content records are separate. The
 separate opaque DEBUGSHARE UUID is an explicitly registered capture attribute.
 The authenticated report persists its real transport carrier and actual first
 capture span association before upload; a retry does not invent new report IDs.
@@ -694,8 +698,8 @@ not baggage, `tracestate`, identity, permissions or a DB path/root-ID selector.
 The authenticated backend client forwards its current trace context; broker HTTP
 and timing lookup spans inherit that context rather than starting an unrelated
 lookup root. The separate bearer token, frozen scope and final authorization
-still gate every lookup. This update is undergoing source publication/validation;
-it is not a claim of runtime adoption or live Axiom continuity.
+still gate every lookup. Source `b23930e` implements this correlation; its local
+parent/log checks are not a claim of runtime adoption or live Axiom continuity.
 
 Provision a **separate** socket directory owned by the Slack service user, mode
 2750, with a dedicated shared group that includes the core container's UID1000
