@@ -5,6 +5,19 @@
   with behavior or wire-contract changes.
 - Main only: no feature branches or PRs. Preserve others' local work; use isolated
   checkouts and transfer scoped files with their base revisions to the integrator.
+- Before closing a delivery thread, preserve its `Amp-Thread-ID` commit trailer
+  through integration and report the actual resulting default-branch commit URLs
+  to the worker and Space (not just the pre-integration SHA). Verify Amp links the
+  landed commits and the Space counts the thread as shipped; idle, a status message
+  or a `shipped` label is not shipment. If linkage is missing, use only supported
+  Amp mechanisms; report the exact gap rather than rewriting published history or
+  inventing a shipped setter. If PRs are explicitly authorized later, include the
+  thread URL in their descriptions and verify the merged PR linkage.
+- Keep source shipment, successful checks, deployment adoption and runtime/human
+  acceptance separate. Leave threads with unshipped work or assigned acceptance
+  and follow-ups open with an owner and next action. Under Raygen's standing rule,
+  archive completed threads after shipment verification and no pending follow-ups;
+  archive completed research/no-code work without calling it shipped.
 - One integration owner edits root manifests/lockfile and `packages/contracts`.
   Other packets request shared changes rather than duplicating schemas.
 - Run `pnpm format`, `pnpm check`, `pnpm typecheck` and `pnpm test` before commits.
