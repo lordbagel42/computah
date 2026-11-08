@@ -472,9 +472,16 @@ later updates and settled Axiom history reconcile gaps. Shutdown closes admissio
 and drains at most eight batches. Fixed outcome/count logs accompany delivery;
 `computah.logs.export` is excluded from this channel to avoid a logging feedback loop.
 
-This is source-supported, not yet a claim of enabled production collection or
-live acceptance. Native Rust/Effect providers not using this Node provider still
-arrive as settled Axiom history; native start/update delivery is not implemented.
+Initial live delivery enabled on backend and Slack at checked source `2477de6` on
+2026-11-08 (backend ready 10:01:36.356Z; Slack ready 10:02:39Z). The actual public
+stream captured five active observations of finite registry startup from 28.186
+to 32.186 seconds, then its measured end at 33,926.311794 ms, status `unset`, with
+a declared root/no parent. The later settled-history replacement retained that
+exact duration. Host lifecycle logs separately reported registry success at
+33,926 ms. This is real startup evidence, not an inserted span, an encompassing
+job, or proof of a private raw-OTLP identity join or human-message ancestry.
+Native Rust/Effect providers not using this Node provider still arrive as settled
+Axiom history; native start/update delivery is not implemented.
 The existing settled OTLP path is unchanged. Browser interaction tracing and
 full batch-to-source exporter causal links remain gaps. The optional edge Axiom
 export binding is still deployment-owner controlled, not implicitly enabled here.

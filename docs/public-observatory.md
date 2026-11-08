@@ -139,6 +139,36 @@ traffic displacing application activity.
 
 ## Evidence and remaining gaps
 
+- Checked source `2477de6` deployed through the preserved Alchemy state at
+  https://observe.raygen.dev, Worker version
+  `3ae23c35-8469-4f0d-8eb8-9babb9db26ff`, receipt
+  `280d2f39-c9f9-44df-a055-b6892c46a894`. Query/live/HMAC/DO bindings remained
+  unchanged; the optional edge Axiom emitter remains disabled. Missing/wrong
+  ingestion bearers returned 401; an authenticated empty batch returned accepted
+  zero, without fabricating telemetry. Both real history modes streamed with
+  no-store/no-transform; unsupported query parameters returned 400.
+- A 132-second independent production history audit received 55 frames/25 deltas,
+  one snapshot and five frames after cursor reconnect. Incremental IDs were
+  unique/ordered, the keyed map remained bounded, and actual public span/status/
+  envelope fields matched the positive schema. The captured source was labeled
+  `axiom-history`; this receipt does not itself prove active runtime delivery.
+  After host activation, real finite registry startup was observed active five
+  times, then ended at 33,926.311794 ms and reconciled with settled history at
+  that exact duration. No synthetic trace or model turn was inserted.
+- A subsequent 252-second independent runtime audit received 1,392 frames,
+  693 deltas and 698 `runtime-push` statuses; cursor reconnect delivered 77 more
+  frames without a snapshot reset or duplicate/out-of-order incremental IDs.
+  The public keyed state and positive span/status/envelope schema stayed bounded.
+  A second window captured seven active updates before a real operation ended
+  `error` at 7,400.491142 ms, plus its declared-present `computah.submit` child
+  observed four times before ending `ok` at 3,925.033646 ms. These are finite
+  success/failure delivery receipts, not a private source-identity join or proof
+  that a particular human message received its final reply.
+- The production Chromium view rendered an actual 59-operation trace with 58
+  declared parent routes. Narrow rendering had no page-level horizontal overflow;
+  the last remaining operation in its rolling truncated view was reachable by
+  internal scrolling and confirmed within the viewport. Production pause/resume,
+  selection/pin and follow release were exercised with real pointer input.
 - Exporter-noise investigation on 2026-11-08 found 1,217 `computah.logs.export`
   spans in a production 15-minute window. This operation records each nonempty
   structured-log batch; the logger does not enqueue export-result logs, and the
@@ -181,4 +211,5 @@ traffic displacing application activity.
   Interactive rows have eight-pixel gaps. lintapple checks initial/settings/demo/
   details at both widths; four contrast checks remain unresolved on partially
   clipped recent-trace carousel entries. No measured contrast failure remains,
-  but this is not a zero-findings claim or production visual acceptance.
+  but this is not a zero-findings claim. These lint limits remain distinct from
+  the inspected production desktop/narrow rendering and interaction checks.
