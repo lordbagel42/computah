@@ -1,0 +1,71 @@
+{
+  "description": "Synthetic current-state observations, not durable event replay. A reconnect starts a new sequence at zero. Unknown is not a terminal result.",
+  "events": [
+    {
+      "version": 1,
+      "submissionId": "synthetic-submission",
+      "sequence": 0,
+      "kind": "resync",
+      "observations": [
+        {
+          "version": 1,
+          "submissionId": "synthetic-submission",
+          "source": "interaction",
+          "workerLabel": null,
+          "phase": "delegating",
+          "text": "I am checking that."
+        }
+      ]
+    },
+    {
+      "version": 1,
+      "submissionId": "synthetic-submission",
+      "sequence": 1,
+      "kind": "observation",
+      "observation": {
+        "version": 1,
+        "submissionId": "synthetic-submission",
+        "source": "worker",
+        "workerLabel": "research",
+        "phase": "generating",
+        "text": "The first finding"
+      }
+    },
+    {
+      "version": 1,
+      "submissionId": "synthetic-submission",
+      "sequence": 2,
+      "kind": "result",
+      "submission": {
+        "id": "synthetic-submission",
+        "clientMutationId": "synthetic-mutation",
+        "outcome": "completed"
+      },
+      "messages": []
+    }
+  ],
+  "reconnect": {
+    "version": 1,
+    "submissionId": "synthetic-submission",
+    "sequence": 0,
+    "kind": "resync",
+    "observations": [
+      {
+        "version": 1,
+        "submissionId": "synthetic-submission",
+        "source": "interaction",
+        "workerLabel": null,
+        "phase": "delegating",
+        "text": "I am checking that."
+      },
+      {
+        "version": 1,
+        "submissionId": "synthetic-submission",
+        "source": "worker",
+        "workerLabel": "research",
+        "phase": "generating",
+        "text": "The first finding has supporting evidence."
+      }
+    ]
+  }
+}

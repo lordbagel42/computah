@@ -129,6 +129,63 @@ export const CancelResult = Schema.Struct({
 });
 export type CancelResult = typeof CancelResult.Type;
 
+const observationFields = {
+  version: WireVersion,
+  submissionId: Id,
+  phase: Schema.Literals([
+    "idle",
+    "generating",
+    "delegating",
+    "completed",
+    "failed",
+    "cancelled",
+  ]),
+  text: Schema.String,
+};
+/** Safe current text replacement; no reasoning, tool payload or durable cursor. */
+export const SubmissionObservation = Schema.Union([
+  Schema.Struct({
+    ...observationFields,
+    source: Schema.Literal("interaction"),
+    workerLabel: Schema.Null,
+  }),
+  Schema.Struct({
+    ...observationFields,
+    source: Schema.Literal("worker"),
+    workerLabel: Id,
+  }),
+]);
+export type SubmissionObservation = typeof SubmissionObservation.Type;
+const observationEventFields = {
+  version: WireVersion,
+  submissionId: Id,
+  /** Sequence is connection-local; reconnect starts with resync at zero. */
+  sequence: Revision,
+};
+export const SubmissionObservationEvent = Schema.Union([
+  Schema.Struct({
+    ...observationEventFields,
+    kind: Schema.Literal("resync"),
+    observations: Schema.Array(SubmissionObservation),
+  }),
+  Schema.Struct({
+    ...observationEventFields,
+    kind: Schema.Literal("observation"),
+    observation: SubmissionObservation,
+  }),
+  Schema.Struct({
+    ...observationEventFields,
+    kind: Schema.Literal("result"),
+    submission: Schema.Struct({
+      id: Id,
+      clientMutationId: Id,
+      outcome: Schema.Literals(["completed", "failed", "cancelled"]),
+    }),
+    messages: Schema.Array(Message),
+  }),
+]);
+export type SubmissionObservationEvent = typeof SubmissionObservationEvent.Type;
+
 const eventFields = {
   version: WireVersion,
   eventId: Id,

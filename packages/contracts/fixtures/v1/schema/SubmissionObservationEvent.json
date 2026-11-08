@@ -1,0 +1,407 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "enum": [1]
+        },
+        "submissionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["resync"]
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "number",
+                    "enum": [1]
+                  },
+                  "submissionId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "phase": {
+                    "type": "string",
+                    "enum": [
+                      "idle",
+                      "generating",
+                      "delegating",
+                      "completed",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["interaction"]
+                  },
+                  "workerLabel": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "version",
+                  "submissionId",
+                  "phase",
+                  "text",
+                  "source",
+                  "workerLabel"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "number",
+                    "enum": [1]
+                  },
+                  "submissionId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "phase": {
+                    "type": "string",
+                    "enum": [
+                      "idle",
+                      "generating",
+                      "delegating",
+                      "completed",
+                      "failed",
+                      "cancelled"
+                    ]
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": ["worker"]
+                  },
+                  "workerLabel": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "version",
+                  "submissionId",
+                  "phase",
+                  "text",
+                  "source",
+                  "workerLabel"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "version",
+        "submissionId",
+        "sequence",
+        "kind",
+        "observations"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "enum": [1]
+        },
+        "submissionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["observation"]
+        },
+        "observation": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "number",
+                  "enum": [1]
+                },
+                "submissionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "idle",
+                    "generating",
+                    "delegating",
+                    "completed",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": ["interaction"]
+                },
+                "workerLabel": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "version",
+                "submissionId",
+                "phase",
+                "text",
+                "source",
+                "workerLabel"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "number",
+                  "enum": [1]
+                },
+                "submissionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "phase": {
+                  "type": "string",
+                  "enum": [
+                    "idle",
+                    "generating",
+                    "delegating",
+                    "completed",
+                    "failed",
+                    "cancelled"
+                  ]
+                },
+                "text": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": ["worker"]
+                },
+                "workerLabel": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "version",
+                "submissionId",
+                "phase",
+                "text",
+                "source",
+                "workerLabel"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "submissionId",
+        "sequence",
+        "kind",
+        "observation"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "enum": [1]
+        },
+        "submissionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["result"]
+        },
+        "submission": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "clientMutationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "outcome": {
+              "type": "string",
+              "enum": ["completed", "failed", "cancelled"]
+            }
+          },
+          "required": ["id", "clientMutationId", "outcome"],
+          "additionalProperties": false
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "submissionId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "role": {
+                "type": "string",
+                "enum": ["user", "assistant", "system"]
+              },
+              "createdAt": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "blocks": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": ["text"]
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": ["id", "kind", "text"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": ["component"]
+                        },
+                        "component": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "componentVersion": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "props": {
+                          "type": "object"
+                        },
+                        "fallback": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "component",
+                        "componentVersion",
+                        "props",
+                        "fallback"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            },
+            "required": [
+              "id",
+              "submissionId",
+              "role",
+              "createdAt",
+              "revision",
+              "blocks"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "version",
+        "submissionId",
+        "sequence",
+        "kind",
+        "submission",
+        "messages"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {}
+}

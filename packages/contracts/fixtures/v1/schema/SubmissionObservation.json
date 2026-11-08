@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "enum": [1]
+        },
+        "submissionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "generating",
+            "delegating",
+            "completed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["interaction"]
+        },
+        "workerLabel": {
+          "type": "null"
+        }
+      },
+      "required": [
+        "version",
+        "submissionId",
+        "phase",
+        "text",
+        "source",
+        "workerLabel"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "enum": [1]
+        },
+        "submissionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "generating",
+            "delegating",
+            "completed",
+            "failed",
+            "cancelled"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["worker"]
+        },
+        "workerLabel": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "version",
+        "submissionId",
+        "phase",
+        "text",
+        "source",
+        "workerLabel"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {}
+}

@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { Schema } from "effect";
-import { applyEvent, Snapshot, StreamEvent } from "../src/index.js";
+import {
+  applyEvent,
+  Snapshot,
+  StreamEvent,
+  SubmissionObservationEvent,
+} from "../src/index.js";
 import { createMockSession } from "../src/mock.js";
 
 const viewer = {
@@ -234,6 +239,44 @@ test("portable snapshot fixture validates and rejects executable component props
   assert.deepEqual(state.messages[2]?.blocks, [
     { id: "b2", kind: "text", text: "Hello from the synthetic fixture." },
   ]);
+});
+
+test("observation fixtures preserve source identity and reject nonterminal results", async () => {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL("../fixtures/v1/observation.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const decode = Schema.decodeUnknownSync(SubmissionObservationEvent);
+  const events = fixture.events.map((event: unknown) => decode(event));
+  assert.deepEqual(
+    events.map((event: SubmissionObservationEvent) => event.kind),
+    ["resync", "observation", "result"],
+  );
+  const reconnect = decode(fixture.reconnect);
+  assert.equal(reconnect.kind, "resync");
+  assert.equal(reconnect.sequence, 0);
+  if (reconnect.kind !== "resync") assert.fail("Expected current replacements");
+  assert.equal(
+    reconnect.observations[1]?.text,
+    "The first finding has supporting evidence.",
+  );
+  const worker = fixture.events[1];
+  for (const observation of [
+    { ...worker.observation, workerLabel: null },
+    { ...worker.observation, source: "interaction" },
+  ])
+    assert.throws(() => decode({ ...worker, observation }));
+  const result = fixture.events[2];
+  for (const outcome of ["accepted", "streaming", "unknown"]) {
+    assert.throws(() =>
+      decode({
+        ...result,
+        submission: { ...result.submission, outcome },
+      }),
+    );
+  }
 });
 
 test("closing an idle subscription settles pending reads without abort or new events", {

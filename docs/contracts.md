@@ -42,6 +42,21 @@ connected, expired, error, unknown; no OAuth secrets or auth URLs are exposed.
 Account/browser-session handle schemas reserve nonidentifying references/status
 only; their lifecycle services and secret custody are [planned, not enabled](tools.md).
 
+## Additive native submission observation
+
+`SubmissionObservation` and `SubmissionObservationEvent` are separate from the
+revisioned `StreamEvent`/`AgentAdapter` contract above. The server transport is
+implemented at GET `/v1/submissions/:signedId/events`.
+
+Each connection starts with `resync` at sequence zero containing current safe
+observations. Later `observation` events replace a source's entire text. Sequence
+is connection-local, not a durable cursor or replay promise. Reconnect must read
+current native state again, not fabricate token deltas from a final answer.
+Interaction observations have `workerLabel:null`; Worker observations require a
+label derived from actual durable delegation. Text excludes reasoning and tool
+arguments/results. A final `result` carries authoritative messages/submission and
+only completed/failed/cancelled; unknown is not terminal confirmation.
+
 ## Fixtures and mock
 
 `createMockSession(viewer)` from `@computah/contracts/mock` binds a cloned synthetic
@@ -56,6 +71,9 @@ send/replay example. Broader table, schedule, signed-out, layout recovery and
 connection-state visual fixtures belong to later UI packets; do not pretend they
 are implemented. Tests cover mutation dedup/conflicts, two-user access denial,
 replay/resync, cancellation/unknown, terminal output and JSON validation.
+
+`fixtures/v1/observation.json` demonstrates current replacements and reconnect
+resync, not a live or replayed token stream.
 
 Regenerate JSON Schema with `pnpm --filter @computah/contracts schema` after
 editing the source. Commit the generated files with the source change. Breaking

@@ -5,17 +5,25 @@ import type {
   Message,
   Outcome,
   Submission,
+  SubmissionObservation,
+  SubmissionObservationEvent,
   Viewer,
   WireError,
 } from "@computah/contracts";
 import type {
   Cursor,
   EntryRecord,
+  LiveState,
   SubmissionId,
   SubmissionRecord,
 } from "@earendil-works/pi-durable";
 import { type Principal, principalKey, tokenHash } from "./config.js";
-import { CoreError, type CoreSession, type Scope } from "./core.js";
+import {
+  CoreError,
+  type CoreObservation,
+  type CoreSession,
+  type Scope,
+} from "./core.js";
 
 class HttpError extends Error {
   constructor(
@@ -68,6 +76,59 @@ function outcome(record: SubmissionRecord): Outcome {
       ? "cancelled"
       : "failed";
   return record.status === "placed" ? "streaming" : "accepted";
+}
+
+function projectObservation(
+  source: CoreObservation,
+  submissionId: string,
+): SubmissionObservation {
+  const { submission: record, view } = source;
+  const live = view.docs["pi.live"] as LiveState | undefined;
+  const active = record && live?.run?.inputs.includes(record.id);
+  const content = active ? live?.generation?.message?.content : undefined;
+  const final =
+    record?.status === "done" && record.type === "input"
+      ? view.entries.find((entry) => entry.id === record.answer)
+      : undefined;
+  const text = final
+    ? projectMessages([final], submissionId)
+        .flatMap((message) =>
+          message.blocks.flatMap((block) =>
+            block.kind === "text" ? [block.text] : [],
+          ),
+        )
+        .join("")
+    : (content
+        ?.filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("") ?? "");
+  const phase =
+    record?.status === "done"
+      ? "completed"
+      : record?.status === "unanswered"
+        ? (outcome(record) as "cancelled" | "failed")
+        : active && live?.tools?.some((tool) => tool.name === "Task")
+          ? "delegating"
+          : active
+            ? "generating"
+            : "idle";
+  return source.source === "interaction"
+    ? {
+        version: 1,
+        submissionId,
+        source: "interaction",
+        workerLabel: null,
+        phase,
+        text,
+      }
+    : {
+        version: 1,
+        submissionId,
+        source: "worker",
+        workerLabel: source.workerLabel as string,
+        phase,
+        text,
+      };
 }
 
 async function body(
@@ -204,7 +265,7 @@ export function createHttpServer(options: {
         } satisfies Submission & { version: 1 });
         return;
       }
-      const match = /^\/v1\/submissions\/([^/]+)(\/cancel)?$/.exec(
+      const match = /^\/v1\/submissions\/([^/]+)(\/cancel|\/events)?$/.exec(
         url.pathname,
       );
       if (match) {
@@ -216,7 +277,7 @@ export function createHttpServer(options: {
         )
           throw new HttpError(400, "invalid-request");
         const id = value as SubmissionId;
-        if (request.method === "POST" && match[2]) {
+        if (request.method === "POST" && match[2] === "/cancel") {
           permit("task.control");
           const result = await session.cancel(session.interactionId, id);
           const cancelled: CancelResult = {
@@ -229,6 +290,150 @@ export function createHttpServer(options: {
                   : "unknown",
           };
           reply(200, cancelled);
+          return;
+        }
+        if (request.method === "GET" && match[2] === "/events") {
+          permit("history.read");
+          const controller = new AbortController();
+          const disconnected = () => controller.abort();
+          response.once("close", disconnected);
+          try {
+            // Scope/membership validation may also await an in-flight cancellation cascade.
+            await session.result(
+              session.interactionId,
+              id,
+              false,
+              controller.signal,
+            );
+          } catch (error) {
+            response.removeListener("close", disconnected);
+            if (controller.signal.aborted) return;
+            throw error;
+          }
+          if (controller.signal.aborted || response.destroyed) {
+            response.removeListener("close", disconnected);
+            return;
+          }
+          response.writeHead(200, {
+            "content-type": "text/event-stream",
+            "cache-control": "no-store",
+            "x-accel-buffering": "no",
+            "x-content-type-options": "nosniff",
+          });
+          response.flushHeaders();
+          const heartbeat = setInterval(() => {
+            if (!response.destroyed && !response.writableNeedDrain)
+              response.write(": keepalive\n\n");
+          }, 15_000);
+          const iterator = session
+            .observe(id, controller.signal)
+            [Symbol.asyncIterator]();
+          let sequence = 0;
+          const send = async (event: SubmissionObservationEvent) => {
+            if (controller.signal.aborted) return;
+            permit("history.read");
+            if (
+              !response.write(
+                `id: ${event.sequence}\nevent: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`,
+              )
+            ) {
+              await new Promise<void>((resolve) => {
+                const done = () => {
+                  response.removeListener("drain", done);
+                  controller.signal.removeEventListener("abort", done);
+                  resolve();
+                };
+                response.once("drain", done);
+                controller.signal.addEventListener("abort", done, {
+                  once: true,
+                });
+                if (controller.signal.aborted) done();
+              });
+            }
+          };
+          const terminal = session
+            .result(session.interactionId, id, true, controller.signal)
+            .then((result) => ({ kind: "terminal" as const, result }));
+          // Always handle a disconnected wait, including when initial native attach fails.
+          void terminal.catch(() => {});
+          try {
+            let pending = iterator
+              .next()
+              .then((value) => ({ kind: "view" as const, value }));
+            let first = true;
+            const previous = new Map<string, string>();
+            while (!controller.signal.aborted) {
+              const event = await Promise.race([pending, terminal]);
+              if (event.kind === "terminal") {
+                if (first)
+                  await send({
+                    version: 1,
+                    submissionId: signedSubmission(id),
+                    sequence: sequence++,
+                    kind: "resync",
+                    observations: [],
+                  });
+                const mapped = submission(event.result.submission);
+                if (
+                  mapped.outcome !== "completed" &&
+                  mapped.outcome !== "failed" &&
+                  mapped.outcome !== "cancelled"
+                )
+                  throw new CoreError("runtime");
+                await send({
+                  version: 1,
+                  submissionId: mapped.id,
+                  sequence: sequence++,
+                  kind: "result",
+                  submission: { ...mapped, outcome: mapped.outcome },
+                  messages: projectMessages(event.result.entries, mapped.id),
+                });
+                break;
+              }
+              if (event.value.done) break;
+              const observations = event.value.value.map((item) =>
+                projectObservation(item, signedSubmission(id)),
+              );
+              if (first) {
+                await send({
+                  version: 1,
+                  submissionId: signedSubmission(id),
+                  sequence: sequence++,
+                  kind: "resync",
+                  observations,
+                });
+                first = false;
+              } else
+                for (const observation of observations) {
+                  const key = `${observation.source}:${observation.workerLabel ?? ""}`;
+                  const value = JSON.stringify(observation);
+                  if (previous.get(key) !== value)
+                    await send({
+                      version: 1,
+                      submissionId: signedSubmission(id),
+                      sequence: sequence++,
+                      kind: "observation",
+                      observation,
+                    });
+                }
+              for (const observation of observations)
+                previous.set(
+                  `${observation.source}:${observation.workerLabel ?? ""}`,
+                  JSON.stringify(observation),
+                );
+              pending = iterator
+                .next()
+                .then((value) => ({ kind: "view" as const, value }));
+            }
+          } catch {
+            // A broken native stream closes; reconnect reauthorizes and resnapshots.
+          } finally {
+            controller.abort();
+            clearInterval(heartbeat);
+            response.removeListener("close", disconnected);
+            await iterator.return?.();
+            response.end();
+          }
           return;
         }
         if (request.method === "GET" && !match[2]) {

@@ -1,8 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { rm } from "node:fs/promises";
+import type { SubmissionObservationEvent } from "@computah/contracts";
 import {
   createFauxCore,
   fauxAssistantMessage,
+  fauxText,
+  fauxThinking,
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 import type { PiProviderConfig } from "@rivet-dev/pi";
@@ -75,7 +78,7 @@ const provider: PiProviderConfig = {
               .filter((part) => part.type === "text")
               .map((part) => part.text)
               .join("")}`,
-            { stopReason: "length" },
+            { stopReason: text.includes("[length]") ? "length" : "stop" },
           )
         : tools.includes("Task")
           ? fauxAssistantMessage(
@@ -85,9 +88,23 @@ const provider: PiProviderConfig = {
               }),
               { stopReason: "toolUse" },
             )
-          : fauxAssistantMessage(`Result: ${text}`);
-    providerCore.setResponses([response]);
-    return providerCore.streamSimple(model, context, options);
+          : fauxAssistantMessage([
+              fauxThinking("private-reasoning-canary"),
+              fauxText(`Result: ${text}`),
+            ]);
+    const engine =
+      text.includes("[slow]") &&
+      (!tools.includes("Task") || latest?.role === "toolResult")
+        ? createFauxCore({
+            api: "computah-test",
+            provider: "computah-test",
+            models,
+            tokensPerSecond: 30,
+            tokenSize: { min: 1, max: 1 },
+          })
+        : providerCore;
+    engine.setResponses([response]);
+    return engine.streamSimple(model, context, options);
   },
 };
 const coreOptions = {
@@ -249,6 +266,9 @@ test("authenticated HTTP delegates through real actors, reuses the Worker, proje
       (await request(`/v1/submissions/${first.id}`, tokens[1])).status,
     ).toBe(403);
     expect(
+      (await request(`/v1/submissions/${first.id}/events`, tokens[1])).status,
+    ).toBe(403);
+    expect(
       (await request(`/v1/submissions/${first.id}/cancel`, tokens[1], "POST"))
         .status,
     ).toBe(403);
@@ -310,6 +330,203 @@ test("authenticated HTTP delegates through real actors, reuses the Worker, proje
     expect(
       JSON.stringify(await (await request("/v1/history", tokens[1])).json()),
     ).not.toContain("HTTP private canary-879");
+  } finally {
+    await closeHttp(server);
+  }
+});
+
+test("live Worker observations survive disconnect, result replay and active cancellation stops delegated work", async (context) => {
+  const { client } = await setupTest(context, core.registry);
+  const scope = { ...alice, agentId: "stream" };
+  grants.set(
+    key(scope),
+    new Set(["task.send", "history.read", "task.control"]),
+  );
+  const session = core.attach(client)(scope);
+  const bearer = randomBytes(32).toString("hex");
+  const config = readConfig({
+    COMPUTAH_MODE: "faux",
+    COMPUTAH_CONNECTION_SECRET: randomBytes(32).toString("hex"),
+    COMPUTAH_AUTH_JSON: JSON.stringify([
+      {
+        ...scope,
+        token: bearer,
+        capabilities: ["task.send", "history.read", "task.control"],
+      },
+    ]),
+  });
+  const server = createHttpServer({ ...config, bind: core.attach(client) });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("bind failed");
+  const base = `http://127.0.0.1:${address.port}`;
+  const request = (
+    path: string,
+    method = "GET",
+    body?: unknown,
+    signal?: AbortSignal,
+  ) =>
+    fetch(`${base}${path}`, {
+      method,
+      signal,
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        "content-type": "application/json",
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  const events = async function* (id: string, signal?: AbortSignal) {
+    const response = await request(
+      `/v1/submissions/${id}/events`,
+      "GET",
+      undefined,
+      signal,
+    );
+    expect(response.status).toBe(200);
+    let buffer = "";
+    if (!response.body) throw new Error("Missing SSE body");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        while (buffer.includes("\n\n")) {
+          const end = buffer.indexOf("\n\n");
+          const frame = buffer.slice(0, end);
+          buffer = buffer.slice(end + 2);
+          const data = frame
+            .split("\n")
+            .find((line) => line.startsWith("data: "));
+          if (data)
+            yield JSON.parse(data.slice(6)) as SubmissionObservationEvent;
+        }
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+  };
+  const admit = async (text: string, clientMutationId: string) =>
+    (await (
+      await request("/v1/submissions", "POST", { text, clientMutationId })
+    ).json()) as { id: string };
+  try {
+    const text =
+      "[slow][length] observe alpha-749 and omega-951 until complete";
+    const first = await admit(text, "stream-first");
+    const disconnected = new AbortController();
+    let sawPartial = false;
+    for await (const frame of events(first.id, disconnected.signal)) {
+      const observations =
+        frame.kind === "resync"
+          ? frame.observations
+          : frame.kind === "observation"
+            ? [frame.observation]
+            : [];
+      if (
+        observations.some(
+          (item: { source: string; phase: string; text: string }) =>
+            item.source === "worker" &&
+            item.phase === "generating" &&
+            item.text.length > 0 &&
+            item.text.length < `Result: Work: ${text}`.length,
+        )
+      ) {
+        sawPartial = true;
+        disconnected.abort();
+        break;
+      }
+      if (frame.kind === "result") break;
+    }
+    expect(sawPartial).toBe(true);
+    const replay: SubmissionObservationEvent[] = [];
+    for await (const frame of events(first.id)) replay.push(frame);
+    expect(replay[0]).toMatchObject({ kind: "resync", sequence: 0 });
+    expect(
+      replay.some(
+        (frame) =>
+          frame.kind === "observation" &&
+          frame.observation.source === "interaction" &&
+          frame.observation.phase === "generating" &&
+          frame.observation.text.length > 0,
+      ),
+    ).toBe(true);
+    const terminal = replay.filter((frame) => frame.kind === "result");
+    expect(JSON.stringify(replay)).not.toContain("private-reasoning-canary");
+    expect(terminal).toHaveLength(1);
+    expect(terminal[0].submission.outcome).toBe("completed");
+    expect(terminal[0].messages[0].blocks[0]).toMatchObject({
+      kind: "text",
+      text: `Delegated: Result: Work: ${text}`,
+    });
+    expect(await admit(text, "stream-first")).toEqual(first);
+    const completed: SubmissionObservationEvent[] = [];
+    for await (const frame of events(first.id)) completed.push(frame);
+    expect(completed.at(-1)).toEqual({
+      ...terminal[0],
+      sequence: completed.at(-1)?.sequence,
+    });
+
+    const second = await admit(
+      "[slow] cancel this active Worker before it completes a very long answer",
+      "stream-cancel",
+    );
+    for await (const frame of events(second.id)) {
+      const observations =
+        frame.kind === "resync"
+          ? frame.observations
+          : frame.kind === "observation"
+            ? [frame.observation]
+            : [];
+      if (
+        observations.some(
+          (item: { source: string; text: string }) =>
+            item.source === "worker" && item.text.length > 0,
+        )
+      )
+        break;
+      if (frame.kind === "result")
+        throw new Error("Worker finished before cancellation");
+    }
+    const cancelled = await (
+      await request(`/v1/submissions/${second.id}/cancel`, "POST")
+    ).json();
+    expect(cancelled.status).toBe("cancelled");
+    const stopped = (await session.history(session.workerId())).items;
+    await new Promise((done) => setTimeout(done, 1200));
+    expect((await session.history(session.workerId())).items).toEqual(stopped);
+    const cancelledFrames: SubmissionObservationEvent[] = [];
+    for await (const frame of events(second.id)) cancelledFrames.push(frame);
+    expect(cancelledFrames.at(-1)).toMatchObject({
+      kind: "result",
+      submission: { outcome: "cancelled" },
+      messages: [],
+    });
+    expect(
+      (
+        await (
+          await request(`/v1/submissions/${second.id}/cancel`, "POST")
+        ).json()
+      ).status,
+    ).toBe("cancelled");
+    const follow = await admit(
+      "Continue after cancellation-417",
+      "stream-follow",
+    );
+    const result = await (
+      await request(`/v1/submissions/${follow.id}?wait=true`)
+    ).json();
+    expect(result.submission.outcome).toBe("completed");
+    expect(JSON.stringify(result.messages)).toContain(
+      "Continue after cancellation-417",
+    );
+    expect(
+      (await session.history(session.workerId())).items.slice(
+        0,
+        stopped.length,
+      ),
+    ).toEqual(stopped);
   } finally {
     await closeHttp(server);
   }

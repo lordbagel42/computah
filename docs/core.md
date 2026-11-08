@@ -2,7 +2,8 @@
 
 Status: core and authenticated HTTP entry implemented and locally checked;
 deployment belongs to the deployment owner. `apps/server/src/main.ts` is runnable,
-with a deliberately small REST transport, not yet a full streaming `AgentAdapter`.
+with REST admission/results and native text-only SSE observation, not yet a full
+shared streaming `AgentAdapter`.
 It imports Effect 4.1.2, RivetKit 3.0.6, `@rivet-dev/pi` 0.5.6 and
 Earendil Pi Durable/AI/schema/Chord/telemetry 1.5.0. Node >=22.19 is required;
 the local checks used Node 26.12.1 and TypeScript 7.0.2.
@@ -30,10 +31,13 @@ The session exposes:
 - `wait(resourceId, submissionId, signal?)`: native settled submission record.
 - `result(resourceId, submissionId, wait?, signal?)`: native status and exact
   final answer entry, rechecking history authority before returning it.
+- `observe(submissionId, signal)`: private native Interaction and durably linked
+  Worker views; the HTTP layer projects safe text/state, never these raw objects.
 - `history(resourceId, cursor?, signal?)`: up to 100 **raw durable entries** per
   page. Continue using Pi's returned cursor; a page is not the complete history.
-- `cancel(resourceId, submissionId)`: native `aborted | already_placed | settled`.
-  `already_placed` does **not** confirm cancellation of a running turn.
+- `cancel(resourceId, submissionId)`: cascade cancellation into linked Workers,
+  waiting for native runs to settle. Returns `aborted | already_placed | settled`;
+  `already_placed` does **not** confirm cancellation.
 - `compact(resourceId)`: await native Pi compaction and return its terminal task.
 - `sleep(resourceId)`: request Rivet actor sleep; next access reopens it.
 
@@ -66,18 +70,47 @@ Native Pi compaction remains enabled by default. `compact()` appends a
 `pi.compaction` summary/head for active context; it does not replace or delete
 original entries. Raw `history()` is distinct from active model context.
 
+Cancellation records the active native run inputs and linked Task admissions in
+a Pi transaction before scheduling a background `computah.cancel` task. It fences
+new dispatches for those inputs, aborts the Interaction run, then tombstones each
+linked Worker receipt and aborts/waits its native active run (or withdraws queued
+input). A delayed/replayed Worker admission cannot pass a cancellation tombstone.
+Only a settled aborted/withdrawn native submission becomes public `cancelled`;
+the public terminal result also waits for its cascade. Transient cancellation
+RPC failures commit a native sleeping retry instead of a permanently faulted
+task; retries repeat idempotent stops/tombstones. Already completed answers remain
+available. Pi can coalesce several same-scope
+inputs into one native run: cancelling that run cancels its coalesced inputs.
+No cross-scope cancellation occurs. A disconnected observer does not cancel work.
+This durable execution is not a new reminder/calendar scheduler. Native task
+phases/checkpoints exist; this packet does not add scheduling or question/approval
+tools, signals/steering, or task progress notifications to external adapters.
+
+### Default personality
+
+`src/personality.ts` supplies role-specific defaults on every actor wake via
+`Conversation.configure({instructions})`, including existing conversations.
+Changing only root creation options would leave existing scopes on old prompts.
+The voice is adapted from public `lordbagel42/agent` source at
+[`4ca93fb`](https://github.com/lordbagel42/agent/tree/4ca93fb3973f2106013f90cc50bedd4943ff00a9)
+(`src/runtime/personality.ts` and `src/runtime/prompt.ts`): warm, balanced, subtly
+playful Interaction prose, lowercase conversational voice, faithful casing for
+deliverables. Workers remain task-focused. No June identity, private memory,
+authority, tools or model configuration is imported. Tests check provider-visible
+instructions/tool inventory and synthetic deliverables, not real-model tone.
+
 ## Shared-VPS tenancy and authority
 
 All gateway reads, admissions and controls compare **all three** identity fields
 before resolving an actor. Current grants are checked outside prompts on each
 operation and again at actor admission/Task dispatch. Capabilities are:
 
-| Capability      | Effect                                                       |
-| --------------- | ------------------------------------------------------------ |
-| `history.read`  | Read/wait on this scope's histories/results                  |
-| `task.send`     | Admit work/delegate within this scope                        |
-| `task.control`  | Cancel this scope's queued submission                        |
-| `core.maintain` | Compact/sleep this scope's actors; intended owner-only grant |
+| Capability      | Effect                                                             |
+| --------------- | ------------------------------------------------------------------ |
+| `history.read`  | Read/wait on this scope's histories/results                        |
+| `task.send`     | Admit work/delegate within this scope                              |
+| `task.control`  | Cancel this scope's queued or active submission and linked Workers |
+| `core.maintain` | Compact/sleep this scope's actors; intended owner-only grant       |
 
 The owner may receive the broader maintenance grant. It is **not** cross-user
 history authority. No one receives ambient host shell or shared-code writes:
@@ -122,9 +155,9 @@ Configuration (secrets belong in private operator env files, never Git/state):
 The selected deployment provider is **`openai-codex`**, not the newer `openai`
 OAuth flow. Pi AI 1.5.0's published provider is named "OpenAI Codex (legacy)",
 uses `openai-codex-responses`, and its pinned catalog includes `gpt-6.1-sol`.
-The selected reversible deployment default is
-`COMPUTAH_MODEL=openai-codex/gpt-6.1-sol`; the executable still requires explicit
-real-mode model configuration. Catalog membership is not entitlement. The owner performs official
+The model is not yet selected: set `COMPUTAH_MODEL=openai-codex/<catalog-model>`
+to the owner's chosen supported model; catalog membership is not entitlement.
+`gpt-6.1-sol` is a verified catalog example, not a chosen default. The owner performs official
 `pi-ai login openai-codex` privately using pinned Pi AI 1.5.0, in the private
 provider directory (the CLI writes `auth.json` in its current directory).
 No laptop/other-app auth is discovered or copied. Account entitlement remains
@@ -144,10 +177,9 @@ The executable captures `PORT` then removes it from the child-service environmen
 the exercised native child startup otherwise bound that same port, producing
 `EADDRINUSE`. Public ingress still binds the captured port on `0.0.0.0`. It opens
 only after `registry.startAndWait()` succeeds. SIGTERM/SIGINT stop admissions,
-allow HTTP requests up to five seconds to finish, close remaining HTTP connections,
 drain Rivet, dispose clients, and explicitly exit: programmatic Rivet shutdown
-does not own Node process lifetime. Reserve the native drain grace period in
-addition to that bounded HTTP drain when configuring container termination.
+does not own Node process lifetime. Allow the native drain grace period when
+configuring container termination; a running long-poll may add up to25 seconds.
 
 ### Minimal HTTP API
 
@@ -160,21 +192,36 @@ Every `/v1` request needs `Authorization: Bearer <configured-token>`.
 | `POST /v1/submissions`              | Strict `{text,clientMutationId}` →202 signed `id`; retries reuse it, conflicting text→409                     |
 | `GET /v1/submissions/:id`           | Status and projected final answer;202 pending,200 terminal                                                    |
 | `GET /v1/submissions/:id?wait=true` | Wait up to25s; timeout returns current status, does not cancel work                                           |
+| `GET /v1/submissions/:id/events`    | Authenticated SSE: resync, live text/state replacements, authoritative terminal result                        |
 | `POST /v1/submissions/:id/cancel`   | Truthful cancellation result; `already_placed`→`unknown`, settled→`too-late`                                  |
 | `GET /v1/history?cursor=...`        | Paged original user/final assistant text and signed next cursor                                               |
 
 All scope comes from server configuration. Public submission/cursor handles are
 HMAC-bound to exact scope and purpose; another user's token cannot use them.
-No endpoint exposes Worker IDs, raw Pi records, instructions, tool calls,
+No endpoint exposes raw Worker actor IDs, raw Pi records, instructions, tool calls,
 reasoning, compaction summaries, internal tokens or model errors. Output text is
 still model-authored untrusted content, not a guarantee against prompt leakage.
-The only public projection is original user text/final assistant text. Errors
+The public projection is original user/final assistant text and live assistant
+text/state with a linked Worker label. Thinking, tool arguments and tool results
+are not streamed. Errors
 have fixed safe categories and random correlation IDs, without SDK stacks.
 
 This REST surface reuses shared wire types but does not claim shared snapshot
 revision/cursor/event semantics: message revision1 is a static projection, history
-has nullable submission IDs, and subscribe/resync/event journal remain separate.
+has nullable submission IDs, and the shared durable event journal remains separate.
 One scoped primary conversation is supported. No browser CORS/login UI is added.
+
+SSE starts with `resync` sequence0 and current full observation replacements,
+then changed `observation` frames. Sequence numbers are connection-local, not
+durable replay cursors; `Last-Event-ID` does not request replay. Reconnect starts
+fresh, reauthenticates and resnapshots. Native `conversation.watch`/`pi.view` Chord
+deltas supply actual in-progress model text, not simulated completed-text chunks.
+Native gaps trigger a full rewatch. Slow clients receive coalesced replacements
+with socket backpressure rather than an unbounded delta journal. A terminal
+`result` contains the same exact final answer as REST, even if the observation
+attach races completion, and closes the stream. Stop/length final text is retained.
+Broken native observation closes the connection; reconnect or REST result polling
+recovers the authoritative result. This is not shared AgentAdapter completion.
 
 ## Validation and limitations
 
@@ -193,14 +240,17 @@ model replaced by pi-ai's deterministic in-process faux provider. It checks:
   connections denied; revoked grants denied; no model-visible shell/file tools.
 - Actual authenticated HTTP Task/result/follow-up, duplicate/conflicting sends,
   missing/invalid bearer rejection, body-supplied scope rejection, cross-user
-  result/control handle denial and safe message projection, including terminal
-  length-limited assistant answers.
+  result/control handle denial and safe message projection.
+- Native live Worker and Interaction text before completion, observer disconnect
+  and fresh resync, terminal answer preservation/reopen, active Worker cascade
+  cancellation, stable stopped Worker history and subsequent same-Worker follow-up.
 
-Checks passed locally on 2026-11-07. This is **not** a mock actor/storage test,
+Checks passed locally on 2026-11-08. This is **not** a mock actor/storage test,
 but also not a real model/provider or production compatibility claim. It has not
 tested abrupt process/engine death during a pending tool, cross-machine recovery,
+fault-injected cancellation RPC retry/recovery or a forced queued-placement race,
 real provider compaction quality, agentOS execution, external side effects,
-deployment or browser streaming. Native SDK transaction
+deployment or a browser client. Native SDK transaction
 naming warnings and expected auth-denial warnings appear in tests.
 
 A separate temporary executable check passed authenticated faux Task/result,
@@ -208,19 +258,14 @@ SIGTERM exit, exact public history after process restart, reuse of the previous
 signed result handle and follow-up; real-mode official ModelRuntime/authPath
 bootstrap also passed without credentials. The selected Codex catalog is checked
 at startup, not invented dynamically. No actual OAuth refresh or real provider
-generation has been exercised in this orb. The deployment owner separately
-reported a real official legacy Codex canary on nest-bagel returning the exact
-synthetic requested text with `stopReason: stop`, followed by real protected HTTP
-requests/follow-up and Docker restart preserving exact history and the old signed
-handle. A separate private, in-container scoped history check confirmed three
-actual Task calls and three primary Worker user/assistant reply pairs. Only
-aggregate counts were emitted; no entries, secrets or inspector were exposed. See
-`operations.md` for the observed revision/image and recovery limits.
+generation has been exercised here: owner login and an authenticated live request
+are the remaining live milestone, not a reason to block protected bootstrap.
 
 The shared wire contract is owned by `packages/contracts`; core IDs and raw Pi
 entries are server-only. The full adapter still needs atomic snapshots, contiguous
 revisions, event replay/subscribe and reconnect semantics.
-Cancelling an Interaction does not yet cancel an independently running Worker.
+Cancellation now reaches Workers durably linked to the active Interaction run;
+it does not cancel unrelated historical work or claim external-effect rollback.
 No Slack/Gmail/memory/DEBUGSHARE, UI files, cloud provisioning or production writes
 are part of this packet. See `contracts.md` for the separately owned wire seam.
 

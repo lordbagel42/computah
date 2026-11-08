@@ -10,6 +10,8 @@ import {
   Snapshot,
   StreamEvent,
   Submission,
+  SubmissionObservation,
+  SubmissionObservationEvent,
   Viewer,
   WireError,
 } from "../src/index.js";
@@ -24,6 +26,8 @@ const schemas = {
   CancelRequest,
   CancelResult,
   StreamEvent,
+  SubmissionObservation,
+  SubmissionObservationEvent,
   WireError,
 };
 const directory = new URL("../fixtures/v1/schema/", import.meta.url);

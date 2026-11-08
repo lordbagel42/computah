@@ -1,0 +1,34 @@
+name: Quality
+
+on:
+  workflow_call:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic:
+    name: Deterministic behavior
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.0.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm typecheck
+      - name: Typecheck quality harness
+        run: pnpm exec tsc --ignoreConfig --noEmit --strict --skipLibCheck --allowImportingTsExtensions --target es2023 --module nodenext scripts/quality/*.ts
+      # Actual Rivet/Pi SQLite runtime, deterministic in-process model only.
+      # Failure, cancellation and timeout remain failures, never soft passes.
+      - run: pnpm test
+      - run: node --import tsx --test scripts/quality/*.test.ts
