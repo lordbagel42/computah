@@ -18,7 +18,10 @@ import {
 export {
   type RuntimeLogEvent,
   type RuntimeLogFields,
+  type RuntimeMetricName,
+  type RuntimeMetricSample,
   runtimeLog,
+  runtimeMetric,
   startRuntimeLogging,
 } from "./logs.js";
 

@@ -47,7 +47,7 @@ application code should use the singleton, not create competing pipelines.
 
 The separately authorized `runtimeMetric(sample: RuntimeMetricSample)` emits
 one `analytics.sample` log through **the same queue and exporter**, not a meter
-provider. The integration owner additionally re-exports `runtimeMetric`,
+provider. The public observability entry point also re-exports `runtimeMetric`,
 `RuntimeMetricName` and `RuntimeMetricSample`. An isolated instance exposes the
 equivalent `metric(sample)` method. Generic `runtimeLog` cannot emit analytics
 samples or bypass the stricter schema.
@@ -200,10 +200,10 @@ synthetic instance option. This is not evidence that the serving host's protecte
 `COMPUTAH_AXIOM_INGEST_TOKEN` has permission for the new dataset; that credential
 was not available in this orb. Activation owner must verify its dataset grant.
 
-This packet does not modify entry points/index/manifests or deploy anything.
-Shared bootstrap/re-exports, conversion of current executable runtime reports
-to safe categories, protected host config and real-runtime logs remain integration
-owner work. Existing trace activation is independent. No claim of exhaustive
+Shared bootstrap/re-exports and automatic fixed-category HTTP, operation, model
+and lifecycle logging are integrated. Protected host adoption and independently
+queried real-runtime records remain separate deployment/verification work.
+Existing trace activation is independent. No claim of exhaustive
 repository coverage, static-byte logging, analytics/cost export or host metrics
 is made for running services by this source packet;
 [observability](observability.md) records broader trace coverage gaps.
