@@ -1,0 +1,95 @@
+{
+  "catalog": "computah.native@1",
+  "message": "Illustrative native interface, not live recommendations.",
+  "cards": [
+    {
+      "root": "table",
+      "elements": {
+        "table": {
+          "type": "Table",
+          "props": {
+            "title": "Two ways to spend an afternoon",
+            "columns": ["Plan", "Time"],
+            "rows": [["Walk", "45 minutes"], ["Museum", "2 hours"]]
+          }
+        }
+      }
+    },
+    {
+      "root": "example",
+      "elements": {
+        "example": {
+          "type": "Card",
+          "props": {},
+          "children": ["name", "rule", "action"]
+        },
+        "name": { "type": "Text", "props": { "text": { "$state": "/label" } } },
+        "rule": { "type": "Divider", "props": { "thickness": 1 } },
+        "action": {
+          "type": "Button",
+          "props": { "label": "Plan a walk" },
+          "on": {
+            "press": {
+              "action": "chat.send",
+              "params": { "message": "Help me plan a quiet walk." }
+            }
+          }
+        }
+      },
+      "state": { "label": "An illustrative custom card" }
+    },
+    {
+      "root": "restaurant",
+      "elements": {
+        "restaurant": {
+          "type": "Restaurant",
+          "props": {
+            "name": "Illustrative Garden Cafe",
+            "description": "A fictional example, not a verified recommendation.",
+            "timezone": "Etc/UTC"
+          }
+        }
+      }
+    }
+  ],
+  "app": {
+    "theme": {
+      "background": "#111214",
+      "surface": "#1c1e22",
+      "text": "#ededee",
+      "muted": "#a6a8b0",
+      "gap": 16,
+      "padding": 24,
+      "radius": 12
+    },
+    "spec": {
+      "root": "workspace",
+      "elements": {
+        "workspace": {
+          "type": "Row",
+          "props": { "style": { "gap": 0, "padding": 0 } },
+          "children": ["sidebar", "main"]
+        },
+        "sidebar": {
+          "type": "Sidebar",
+          "props": { "text": "Computah", "style": { "width": 196, "grow": 0 } }
+        },
+        "main": {
+          "type": "Column",
+          "props": {},
+          "children": ["header", "divider", "transcript", "composer"]
+        },
+        "header": {
+          "type": "Header",
+          "props": { "text": "Your conversation" }
+        },
+        "divider": {
+          "type": "Divider",
+          "props": { "thickness": 1, "style": { "fill": "#6b6f7b" } }
+        },
+        "transcript": { "type": "Transcript", "props": {} },
+        "composer": { "type": "Composer", "props": {} }
+      }
+    }
+  }
+}

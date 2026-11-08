@@ -1,20 +1,23 @@
-# Native experiment design
+# Native chat design
 
-Operate-mode proof, not the faithful June design. Black desktop canvas; native Rune text
-and geometry, no DOM or webview. Inter is Rune's bundled fallback. The capsule composer
-provides a visible request placeholder and a keyboard-submit path. Host controls expose
-button roles/focus/disabled state; generated tables expose grid/row/header/cell semantics.
+Operate surface: Rune text and geometry, no DOM/webview. Neutral charcoal background
+#111214, surface #1c1e22, foreground #ededee, muted #a6a8b0; 16pt gap, 24pt padding,
+12pt radius. Rune's bundled sans fallback; 15pt conversation body, 16pt section heading,
+24pt app title. Muted copy remains readable against both surfaces.
 
-Document tokens: background #000000, surface #191919, foreground #f5f5f5, muted #b5b5b5,
-16 pt gap, 24 pt padding, 16 pt radius. Default type is 15 pt body and 20 pt heading;
-the registry/source, rather than a separate styling engine, owns component typography.
-The recovery shell uses stable neutral tokens independent of a potentially broken theme.
+Default layout: 196pt sidebar, saved conversations and New conversation; flexible main
+column with compact header, independently scrolling transcript and multiline input. User
+bubbles align right, assistant prose and custom cards left. Send becomes Stop while busy.
+No mode selector. Content wraps within available width; tables have native cell semantics.
 
-Composition is data-only and removable. Generate creates a proposal, Apply mounts it,
-Restore returns the embedded default without modifying disk. Unknown registry versions
-produce visible inert fallback. Restaurant mock content is explicitly synthetic; missing
-hours remain unknown. No imitation of the separately recovered v6 presence was added.
+json-render catalog Specs and per-node styles use the same native renderer in chat/app.
+Validated changes swap the document automatically; conversation stays intact. No approval gate.
+Installed named fonts inherit through native subtrees; no licensed assets are bundled.
+Recovery strip uses stable neutral tokens outside that document and survives blank mounts.
+Restore resets the app, Undo reverses one layout action, blank mounts remain recoverable.
+The local owner can implement missing native capabilities through scoped source tools and
+fixed verification/build/relaunch. Progress remains responsive; generated UI stays inert data.
 
-Native rendering and runtime input checks substitute for web-specific lintapple/HTML
-detectors; those tools do not evaluate Rune. OS-level screen reader and IME tests remain
-laptop gates, not claims established by the headless accessibility tree.
+Native screenshots and accessibility snapshots are the relevant visual/interaction checks;
+web lintapple/DOM detectors do not evaluate Rune. OS accessibility was exercised on the Mac;
+VoiceOver reading order, native IME and full keyboard/clipboard coverage remain unverified.

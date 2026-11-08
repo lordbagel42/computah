@@ -1,18 +1,17 @@
 {
   "events": [
     { "t": 0.2, "type": "move", "key": "reload" },
-    { "t": 0.4, "type": "move", "key": "apply" },
+    { "t": 0.4, "type": "move", "key": "restore" },
     { "t": 0.6, "type": "tap", "key": "prompt" },
     { "t": 0.8, "type": "type", "text": "make a table" },
     { "t": 1.8, "type": "tap", "key": "generate" },
-    { "t": 2.4, "type": "tap", "key": "apply" },
+    { "t": 2.4, "type": "move", "key": "restore" },
     { "t": 3.8, "type": "move", "key": "reload" },
     { "t": 4.0, "type": "tap", "key": "restore" },
     { "t": 4.8, "type": "tap", "key": "prompt" },
     { "t": 5.0, "type": "type", "text": "empty" },
     { "t": 5.8, "type": "tap", "key": "generate" },
-    { "t": 6.4, "type": "tap", "key": "apply" },
-    { "t": 7.5, "type": "move", "key": "cancel" },
+    { "t": 7.5, "type": "move", "key": "restore" },
     { "t": 8.0, "type": "tap", "key": "restore" }
   ]
 }

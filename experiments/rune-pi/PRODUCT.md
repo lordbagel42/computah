@@ -1,11 +1,18 @@
-# Rune local playground
+# Computah · native chat
 
-Confirmed brief: a generic native Rune frontend for the owner's laptop, running local Pi
-coding agent with no backend dependency. Entire document/style/component registry must be
-modifiable, including removal of all content. A deterministic credential-free path is required.
-This is not the faithful Figma UI; its planning lives in the separate UI lane.
+The owner wants a usable end-to-end native chat app, not a renderer demo or separate UI
+editing mode. One conversation handles questions, inline generated cards, and whole-app
+customization equally. Real supported local Pi authentication, no backend dependency.
+Product and agent identity: Computah. Older June/Figma material is design provenance only.
 
-Mode: Operate. Assumptions: desktop window, keyboard and pointer, local developer audience.
-Direction: restrained AMOLED black, high-contrast conversation, capsule composer. The useful
-signature is Generate → Apply → blank mount → Restore; recovery must outlive customization.
-No invented product claims, Tasks, Goals, presence animation, or simulated provider success.
+Surface: Operate. Desktop keyboard/pointer, restrained dark neutral canvas, clear hierarchy,
+readable assistant prose, right-aligned user messages, saved-chat sidebar and multiline input.
+Cards are part of the transcript. Validated requested app changes activate automatically;
+independent Restore and Undo protect recovery even when all app content is removed. Local
+chats/layout persist. Actual json-render0.22 defines all generative UI, materialized to Rune.
+
+No fabricated tool execution or provider success. The local owner agent has scoped UI source
+tools and a fixed build/state-preserving relaunch path, not a general shell or OS sandbox.
+Card actions remain host-only follow-up prompts, never code execution. No faithful Figma/
+presence or durable-core product claim. The separate product adapters use the durable core;
+this local self-edit experiment must not create another product agent brain.

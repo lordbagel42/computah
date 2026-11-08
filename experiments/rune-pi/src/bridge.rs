@@ -6,6 +6,9 @@ use std::sync::{Arc, Mutex, mpsc};
 
 pub enum Event {
     Text(String),
+    Tool(String),
+    Render(String),
+    Built,
     AttemptStart,
     AttemptEnd { text: String, failed: bool },
     Done,
@@ -22,16 +25,29 @@ pub struct Bridge {
 
 impl Bridge {
     pub fn start() -> Result<Self, ()> {
+        let root = crate::relaunch::root();
+        let prompt = std::fs::read_to_string(root.join("prompt.txt"))
+            .unwrap_or_else(|_| include_str!("../prompt.txt").into());
         let mut child = Command::new("pi")
+            .current_dir(&root)
+            .env("COMPUTAH_PROJECT_ROOT", &root)
+            .arg("--extension")
+            .arg(root.join("scripts/self-tools.ts"))
             .args([
                 "--mode",
                 "rpc",
                 "--no-session",
-                "--no-tools",
+                "--no-builtin-tools",
                 "--no-extensions",
                 "--no-skills",
                 "--no-prompt-templates",
                 "--no-themes",
+                "--no-mcp",
+                "--no-context-files",
+                "--thinking",
+                "low",
+                "--system-prompt",
+                &prompt,
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -106,6 +122,19 @@ impl Drop for Bridge {
 
 pub fn decode(v: &Value) -> Option<Event> {
     match v["type"].as_str()? {
+        "tool_execution_start" | "tool_execution_update" => {
+            v["toolName"].as_str().map(|name| Event::Tool(name.into()))
+        }
+        "tool_execution_end" if v["isError"] != true => {
+            let details = &v["result"]["details"];
+            if details["computah_build"] == true {
+                Some(Event::Built)
+            } else {
+                details
+                    .get("computah_reply")
+                    .map(|reply| Event::Render(reply.to_string()))
+            }
+        }
         "message_start" if v["message"]["role"] == "assistant" => Some(Event::AttemptStart),
         "message_end" if v["message"]["role"] == "assistant" => {
             let text = v["message"]["content"]

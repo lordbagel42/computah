@@ -1,0 +1,13 @@
+{
+  "name": "computah-native-ui",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "test": "node --test scripts/ui-catalog.test.mjs"
+  },
+  "dependencies": {
+    "@json-render/core": "0.22.0",
+    "zod": "4.6.7"
+  }
+}
