@@ -1,129 +1,158 @@
 ---
 
 name: Computah Observatory
-description: A continuous public trace stage
+description: Every retained public span as light on a black horizon
 colors:
-ground: "#101312"
-surface: "#171b19"
-line: "#343d37"
-text: "#eff2e9"
-muted: "#a6b2a9"
-timing: "#bef5ce"
-error: "#ffb0a3"
-warning: "#ead099"
+ground: "#000000"
+ink: "#f4f4f5"
+ink-2: "#b4b4bc"
+ink-3: "#8e8e98"
+line: "rgba(255,255,255,0.09)"
+line-2: "rgba(255,255,255,0.17)"
+error: "#ff5c6c"
+service-backend: "#b69cff"
+service-bus: "#5ad8ff"
+service-slack: "#6cf5b0"
+service-native: "#ff8fd8"
+service-dashboard: "#ffd36e"
+service-rune-pi: "#9cb4ff"
+service-observatory: "#c8c8d0"
 typography:
-display:
+trace-title:
 fontFamily: 'Geist, "Helvetica Neue", Arial, sans-serif'
-fontSize: "clamp(28px, 4.2vw, 64px)"
-fontWeight: 450
-lineHeight: 1.12
+fontSize: "72px (96px ≥1600px, 56px ≤1100px, 40px ≤700px)"
+fontWeight: 340
+lineHeight: 1
 letterSpacing: "-0.04em"
+page-heading:
+fontSize: "32px (26px ≤700px)"
+fontWeight: 500
 body:
 fontFamily: 'Geist, "Helvetica Neue", Arial, sans-serif'
 fontSize: "14px"
-metadata:
-fontSize: "12px"
+ramp: "11 · 12 · 13 · 14 · 15 · 17 · 22 · 26 px"
 measurements:
-fontFamily: "ui-monospace, monospace"
-fontSize: "12px"
+fontFamily: '"Geist Mono", ui-monospace, monospace'
+fontSize: "11–12px, tabular numerals"
 rounded:
-control: "6px"
-bar: "2px"
+control: "999px"
+select: "10px"
+card: "14px"
+panel: "16px"
+row: "10px"
+bar: "3px"
 spacing:
-tight: "8px"
-group: "16px"
-stage: "32px"
-components:
-control:
-rounded: "{rounded.control}"
-padding: "10px 15px"
-selected-action:
-backgroundColor: "#24342a"
-textColor: "{colors.timing}"
+gutter: "clamp(16px, 3.2vw, 56px)"
+label-track: "300px (360px ≥1600px, stacked ≤700px)"
+row-gap: "8px"
+indent: "14px per declared depth (10px ≤700px), capped at 6"
+motion:
+ease: "cubic-bezier(0.16, 1, 0.3, 1)"
+horizon-scan: "1500ms ease-out-cubic on each snapshot"
+stage-reveal: "1100ms scan line; bars clip in with 700ms × x-position delay"
+row-arrival: "620ms, 26ms stagger during reveal"
+bar-update: "850ms linear width/left"
+arrival-flare: "1400ms expanding ring, once per first receipt"
+handover: "320ms close, 640ms open with 6px blur"
 ---
 
 # Computah Observatory design system
 
 ## Overview
 
-One large continuous timing stage owns this surface. The visual mechanism is
-actual work arriving, extending, ending and handing over to another trace.
-Flat graphite, warm white and pale mint fit low-ambient-light viewing. No
-decorative metrics, glass, halos, fake topologies or production simulations.
-This replacement is explicitly authorized; it is not incumbent dashboard polish.
+The window is the spectacle. A full-bleed canvas horizon draws every retained
+public span as a point of light at its real start time, one lane per service.
+The trace the stage follows is pulled out of that field into a large title and
+a tree-ordered waterfall. True black, hairline rules, white type; color only
+encodes service, red only encodes error. No metric cards, sidebars, glass or
+invented activity. This replaces the earlier graphite/mint stage.
 
 ## Colors
 
-Mint carries measured timing and selection; coral denotes named errors. Amber
-denotes missing or unavailable evidence. Status is also written in text.
-Parent routes are subdued green, supplied links dashed warm-white. The field's
-vertical marks measure time rather than simulating an ornamental background.
+Ground is pure `#000` everywhere for AMOLED panels. Hierarchy comes from white
+at three steps (`ink` 19:1, `ink-2` ≈10:1, `ink-3` ≈6:1 on black) and two
+hairline weights. Each known service owns one emission hue; unknown services
+(the synthetic demo) take a deterministic hue from the same set. Red `error`
+marks error status in bars, horizon rings, summary counts and facts. There is
+no warning hue: stale, paused and unconfigured states use white text with a
+hollow or dashed dot, and missing parents use a dashed `ink-2` node, so no
+state color can be mistaken for a service. Live state is white, never a hue.
 
 ## Typography
 
-Geist Variable remains self-hosted with its existing license. The operation
-title, not a promotional headline, receives the largest type (34px on mobile).
-Controls and span names are 14px; metadata is 12px. Monospace is restricted to
-opaque IDs, duration measurements and the ruler. No external font requests.
+Geist Variable and Geist Mono Variable are self-hosted (OFL, `fonts/`). The
+followed operation name is the largest type; its namespace (up to the last
+`/` or `.`) is dimmed so the operation itself reads first. Mono is limited to
+measurements, the ruler, the horizon axis, freshness and opaque IDs.
 
 ## Layout
 
-Main margins are 4vw, maximum content width 1920px. A compact masthead carries
-source state, fetched age and pause. The full-width stage puts identity/follow
-above the timing field. Recent traces form a horizontal strip below the stage;
-the inspector and feed controls are secondary native disclosures.
-
-Desktop rows have a 240px label track (290px above 1600px), fluid timing
-track and eight-pixel gaps between interactive rows. The field scrolls vertically
-at 530px. At 700px and below, margins become
-20px, labels stack above full-width timing tracks, the ruler has three visible
-ticks, and disclosures stack. Mobile draws no SVG causal routes; textual parent
-and cross-trace link navigation remains in span details. There is no huge fixed
-left label rail or page-level horizontal overflow.
-
-Bars share a linear axis, from earliest observed start to observed/estimated
-extent plus small headroom. Three-pixel minimum markers are disclosed. Rows are
-chronological, not a guessed hierarchy. Only declared present endpoints connect.
+A 64px hairline bar holds wordmark, source state, pause and the Controls
+disclosure (filters, exporter diagnostics, demo). The horizon spans the whole
+viewport (`clamp(300px, 54vh, 620px)`, 230px on mobile) with a 156px lane-label
+gutter on desktop and inline label chips on mobile. The stage is centered up to
+1760px: title, phase line, summary chips, follow control, then the field. A
+selected operation opens a 300–380px inspector beside the field at ≥1100px and
+below it otherwise. Recent traces run in a horizontally scrolling strip. At
+700px and below, labels stack above full-width timing tracks and odd ruler
+ticks are hidden. Above 700px each operation is one line: name, then a muted
+service/status that truncates first. No page-level horizontal overflow.
 
 ## Elevation & Depth
 
-Flat surfaces and hairline rules establish hierarchy. No shadows. The
-relationship geometry is a functional layer, not decorative illustration.
-
-## Shapes
-
-The stage is square; controls have 6px corners and bars 2px corners. Small
-circles mark source state and recently observed open endpoints, never progress.
+Flat. Elevation is one hairline border (controls panel, cards, tooltip); no
+shadows except the glow on observed-active bar heads. Additive (`lighter`)
+canvas compositing makes dense clusters bloom honestly.
 
 ## Components
 
-- Keyed timing rows: arrival animates once over 650ms; updates preserve the DOM
-  and animate bar geometry over 850ms. Buttons keep named status/service text.
-- Handover: following holds a trace at least three seconds. When all observed
-  lifecycles are ended and a candidate arrives, it lingers another 2.4 seconds,
-  clips closed over 320ms, then opens over 600ms with a small translate/blur.
-  No unobserved trace completion is claimed. Reduced motion removes all motion.
-- Pin: selecting a trace/operation stops automatic replacement. Follow newest
-  releases it. A pin leaving the bounded window is explicitly unavailable.
-- Native details: selected operation facts, opaque IDs, declared parents/links;
-  fixed-mode exporter diagnostics, service/status filters, explicit static demo.
-- Focus: mint 2px outline, 4px offset. Arrow keys/Home/End move among rows.
-- Freshness: Axiom history always says ingestion delayed. Runtime-push status
-  does not overwrite history availability. An open span ages into unconfirmed
-  after 15 seconds. Stale/unconfirmed, paused, hidden and disconnected clocks
-  show observedAt minus start, not a projected extra 15 seconds. Only fresh
-  confirmed runtime spans show provisional wall-clock elapsed; expiry never
-  supplies an end.
+- **Horizon:** x is start time from the earliest retained in-window start to
+  now (or the last running moment once paused, hidden or disconnected; the
+  example's end in demo). Within a lane, y is a hash of the opaque trace ID, so
+  each trace reads as one thread. Faint curves are declared retained parent
+  edges. Mark alpha rises with recency. Focus (hover, card hover or following)
+  draws that trace on top with white cores, its parent curves and a column
+  over its extent. Errors also differ by shape (ring). Open spans get a head:
+  pulsing and filled only while runtime-confirmed active, a hollow ring when
+  unconfirmed. When runtime push is not fresh, a faint band labelled "no newer
+  spans retained" spans the gap between the newest retained start and now;
+  its cause (idle time, ingestion delay, a pause) is not claimed. A span that
+  began before the visible window gets a left-pointing cue at the edge instead
+  of a start dot; its tooltip carries the date when it is not today.
+- **Scan reveal:** each snapshot sweeps a white line across the horizon,
+  igniting marks as it passes; each new stage trace sweeps its track while bars
+  clip in by start position. First receipt of a span after the snapshot flares
+  once.
+- **Tree waterfall:** rows are a depth-first walk of declared present parents;
+  missing or out-of-window parents stay roots in chronological order with a
+  dashed node. Indentation stops at depth 6; deeper rows state their depth.
+  The ruler uses whole 1/2/5×10ⁿ steps. SVG elbows are measured from layout
+  offsets (not animated positions) and rebuilt only when geometry changes. Hover or selection
+  brightens the ancestry path. Dashed arcs are declared same-trace links.
+  Measures ride inside each bar (after, before or above it) so they move with
+  the 850ms bar transition. Active bars shimmer with a glowing white head.
+- **Follow ("Following latest work"):** keeps the current trace while it stays
+  observed-active, otherwise prefers the largest observed-active trace, then
+  the newest trace with more than one span, then the newest. Hold, linger and handover timings
+  are unchanged (3s hold, 2.4s linger after observed ends, 320ms close).
+  Pinning stops replacement; a pinned trace leaving the window is labelled.
+- **Inspector:** name, service chip, start, offset in trace, recorded duration,
+  status, lifecycle, observed time, relationship buttons and opaque IDs. Close
+  or Escape returns focus to the row.
+- Focus: 2px white outline, 3px offset. Arrow keys/Home/End move among rows.
+
+## Motion and performance
+
+All motion sits under `prefers-reduced-motion: no-preference`; reduced motion
+draws the horizon statically per update with no scan, flare, pulse, shimmer or
+handover. The canvas loop runs at frame rate only during the scan, arrival
+flares, observed-active spans or a domain shift; idle drift redraws about
+seven times per second, and paused, hidden or disconnected views stop drawing.
 
 ## Do's and Don'ts
 
-Show only supplied topology, honest freshness, byte/count-neutral truncation and
-bounded observations. Do not invent entities or infer causal edges from timing.
-Do not equate stream transport with instantaneous source observations. No
-browser telemetry/export coverage or live deployment is claimed by this packet.
-
-Local desktop/narrow Chromium, touch-emulated Chromium and fixture-stream
-interaction evidence were collected. Integration owns the independent finish
-review and combined runtime/telemetry proof. The design launcher/detector could
-not run because its signed download could not be verified. No sidecar was added
-outside the explicitly owned file boundary; no shipping raster assets exist.
+Draw only supplied spans, timing, status and declared relationships. Never
+infer edges from timing, never extend an unconfirmed clock, never label history
+as live. Keep color semantic. The synthetic demo stays explicit and labelled.
+Local previews used a proxy of the public production stream; active-state
+captures used a clearly local synthetic fixture and are not production.

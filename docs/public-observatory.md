@@ -205,11 +205,23 @@ traffic displacing application activity.
   Visitor disconnect signal is forwarded but actual network-disconnect export
   proof is not established. Optional edge ingest binding remains disabled; no live
   edge Axiom ingestion claim. See [observability](observability.md) for other gaps.
-- The continuous-stage finish review approved local desktop/narrow captures.
-  Browser checks cover keyed updates/removals, mode isolation, reconnect instance
+- The earlier graphite continuous-stage finish review approved local
+  desktop/narrow captures. Browser checks cover keyed updates/removals, mode isolation, reconnect instance
   retention, pin/follow, stale-clock freezing and mobile internal scrolling.
   Interactive rows have eight-pixel gaps. lintapple checks initial/settings/demo/
   details at both widths; four contrast checks remain unresolved on partially
   clipped recent-trace carousel entries. No measured contrast failure remains,
   but this is not a zero-findings claim. These lint limits remain distinct from
   the inspected production desktop/narrow rendering and interaction checks.
+- The AMOLED horizon redesign (client-only: `public/` plus a self-hosted OFL
+  Geist Mono) keeps the stream state machine, labels and wire contract
+  unchanged. It adds a canvas horizon of every retained span by start time and
+  service, a tree waterfall from declared parents, and an operation inspector.
+  Local checks used a proxy of the public production stream; active/provisional
+  states were checked only with a local synthetic fixture, not production.
+  lintapple (initial, paused, pinned, inspector, controls at 390/1440) leaves
+  only unresolved contrast measurements over canvas/scroll-clipped cards,
+  intentional card-name truncation and a pure-black root false positive. An
+  independent design review and code review were addressed. Reduced motion
+  runs no CSS animations and no canvas loop. This is not a zero-findings claim
+  or production visual acceptance of the redesign.

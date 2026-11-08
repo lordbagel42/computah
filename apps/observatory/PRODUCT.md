@@ -27,8 +27,11 @@ server byte limits may truncate earlier. IDs are opaque. Only projected names,
 services, timing, status, optional lifecycle/observation time, parents and links
 are rendered; never attributes, resources or content.
 
-The stage follows new active/latest traces unless pinned. Ended observations
-linger before a close/open handover. A visitor may pin a trace or operation,
+A full-bleed horizon draws every retained span at its start time by service;
+touching a mark pins its trace. Unless pinned, the stage keeps an observed-active
+trace while it stays active, else follows the largest observed-active trace,
+else the newest multi-span trace, else the newest. Ended
+observations linger before a close/open handover. A visitor may pin a trace or operation,
 return to follow, pause, filter, inspect relationships, include exporter
 diagnostics, or explicitly enter the static synthetic demo. Demo is neither
 the default nor an unavailable-source fallback. Mode switches clear old data.
@@ -44,10 +47,10 @@ the last observed elapsed time. Unconfirmed spans are never inferred ended.
 
 ## Brand commitments
 
-The brief pins a striking futuristic, dark, Geist-inspired public observatory.
-Actual topology and timing must own the visual signature, not invented metrics.
-The replacement direction is one continuous full-width stage, simple colors and
-authored motion, not a permanent sidebar or metric-card dashboard.
+The owner asked for a true-black AMOLED observatory people would share because
+it is unusually good. Actual spans, topology and timing own the visual
+signature (the horizon and the tree), not invented metrics. Color only encodes
+service and error; no permanent sidebar or metric-card dashboard.
 
 ## Accessibility
 

@@ -1,35 +1,37 @@
 # Public observatory surface brief
 
-Mode: Operate, with an experiential continuous trace stage. Replacement of the
-incumbent dashboard is explicitly requested. Code-led; unattended execution.
+Mode: Operate, with an experiential first viewport. Raygen explicitly requested
+an AMOLED rebuild of the public page that people would share because it is
+unusually good, while keeping real trace inspection. Code-led; unattended.
 
 ## Direction contract
 
-THESIS: Watch work take shape, then make room for the next trace. One large
-timing stage replaces the permanent left index and dashboard scaffolding.
+THESIS: The window itself is the spectacle. Every retained public span is a
+point of light on one full-bleed time horizon; the selected trace is pulled out
+of it into a legible tree. Refuses metric cards, sidebars and invented motion.
 
-OWN-WORLD: Graphite, warm-white and pale mint; coral only for errors. Geist,
-large operation names, measured time marks, hairline causal routes. Visitors
-watch at a desk in low ambient light; dark fields keep the moving work legible.
+OWN-WORLD: True #000 ground, hairline white rules, white type. Color only means
+service: each service owns one emission hue (violet, cyan, green, pink, gold,
+periwinkle); red only means error. Additive light where marks overlap. Geist for
+words, Geist Mono for measurements, IDs and the time axis.
 
-STORY: Establish source truth first. Follow incoming active/latest traces,
-pin one to investigate, then return to follow. History is never called instant.
+STORY: See how much work passed through, notice where it clusters, touch any
+mark, read that trace's real topology and timing, return to following newest.
+Source state and ingestion delay stay written, never implied by glow.
 
-FIRST VIEWPORT: Compact identity/source line, a large trace title and follow
-control, then full-width timing rows. Recent traces run horizontally below, not
-in a left rail. Filters and span facts are secondary disclosure surfaces.
+FIRST VIEWPORT: Hairline bar with wordmark, source state, pause and controls.
+A compact heading/notice over a 300px horizon spanning the viewport with lane
+labels, a drifting time axis and the now line. Below, the following trace's
+huge title, follow control and first tree rows.
 
-FORM: Brief-pinned futuristic continuous instrument. Signature interaction:
-"handover" holds a completed trace briefly, closes its field, and opens the
-next one. Keyed rows enter once; active bars extend without entrance replay.
-The concept-seed launcher was attempted but checksum verification failed;
-no generated seed or alternate concepts are claimed.
+FORM: Instrument horizon plus waterfall (option 1 of 1; launcher unavailable,
+no seed key). Signature: scan reveal; a light line sweeps the horizon on first
+snapshot and each new stage trace, igniting real marks as it passes.
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
 
 ## Verification boundary
 
-Local fixture stream is visual/interaction evidence only. Integration owns live
-source, server contract, sanitizer and telemetry proofs. No synthetic production
-data. Demo is explicit and static. Finish review is handed to the integrator;
-this packet cannot launch a separate reviewer. No shipping raster assets.
+Local previews proxy the public production stream or use a clearly local
+synthetic fixture for active-work states; fixture captures are never presented
+as production. Live acceptance uses the deployed Worker. No shipping rasters.
