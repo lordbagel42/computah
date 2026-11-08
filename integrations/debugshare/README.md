@@ -16,6 +16,17 @@ span's trace/span IDs. Older reports without these fields remain valid. Capture
 spans carry the internal queryable `computah.debugshare.id`; the public observatory
 projection excludes that attribute and remaps trace/span identities.
 
+The report's **Axiom traces** section opens recorded capture and Slack transport
+trace IDs in the private `bagel-w3ue` Axiom organization / `computah-prod-traces`
+dataset. Matching IDs share one link; distinct IDs get separate links. These are
+the diagnostic command's traces, not guessed correlations to an earlier reported
+conversation. The links select the exact validated nonzero trace ID and a bounded
+window one day before/after report time. Widen Axiom's time range for delayed
+capture; retention may remove old spans. Click a trace ID in the results to open
+the native waterfall. Missing correlations remain explicit for legacy reports.
+This is an authenticated Axiom deep link, not an embedded trace viewer or a query
+proxy: no Axiom credentials or trace bodies are shipped to the browser/app.
+
 ## Hosting and setup
 
 Deploy these files through Executor appManagement.create/deploy, using exactly
@@ -69,6 +80,8 @@ Install the exact package dependencies in this directory without changing the
 root workspace lockfile. Typecheck `index.ts`, `schema.ts`, `ui/main.tsx` and
 `ui/assets.d.ts` with TypeScript strict, NodeNext, ES2022 and react-jsx. Root
 formatter/linter cover this source; root tests cover Slack durable capture.
+Run `pnpm exec tsx --test scripts/test-debugshare-traces.test.ts` from the repository
+root for exact query/time-window construction and invalid-ID rejection.
 Verify deployed tools and the actual authenticated page separately. A successful
 deploy or tool call is not browser-render evidence or live Slack capture proof.
 
@@ -79,6 +92,9 @@ Authenticated synthetic import, exact UUID lookup, immutable retry/conflict,
 revision-CAS state changes and retention across app redeployment were exercised.
 Anonymous HTTP access returned 403 without reports. The UI was rendered against
 the actual browser SDK with synthetic responses; this is not signed-in hosted
-browser acceptance. Live Slack-to-hosted ingestion still needs the generated
-webhook secret provisioned privately into the runtime and a genuine new command.
-Source-local SQLite capture is independent of that upload setup.
+browser acceptance. Genuine new-format Slack-to-hosted capture was verified for
+`computah_bug_sezwk4oezhoi4y3lqmgtto2v` at 2026-11-08T10:21:56.893Z on source
+`855a7c0`: exact stored capture trace/span matched Axiom, with successful upload,
+delivery and finalization. No historical IDs were rewritten. Source-local SQLite
+capture remains independent of that upload setup. Axiom-link UI rendering and
+hosted adoption are verified separately from this capture receipt.

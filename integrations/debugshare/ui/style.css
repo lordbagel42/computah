@@ -259,10 +259,37 @@ dd {
 }
 .source,
 .evidence,
+.traces,
 .resolution {
   background: #111;
   border-radius: 24px;
   padding: 24px;
+}
+.trace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.trace-actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid #484848;
+  border-radius: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.trace-actions a:hover {
+  background: #242424;
+}
+.traces p {
+  color: #b0b0b0;
+  margin-bottom: 12px;
+}
+.traces p:last-child {
+  margin-bottom: 0;
 }
 dl {
   margin: 0 0 20px;
@@ -430,6 +457,7 @@ summary {
   }
   .source,
   .evidence,
+  .traces,
   .resolution {
     padding: 20px;
     border-radius: 20px;

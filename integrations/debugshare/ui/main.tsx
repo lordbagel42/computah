@@ -9,6 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { getIssue, listIssues, updateIssue } from "../index.js";
 import { Detail, Summary, statuses } from "../schema.js";
+import { axiomTraceUrl } from "./axiom.js";
 import "./style.css";
 
 const client = createAppClient();
@@ -173,6 +174,14 @@ function IssueView({ id }: { id: string }) {
   const { issue, report, events } = snapshot;
   const source = report.source;
   const slack = `slack://channel?team=${encodeURIComponent(source.team)}&id=${encodeURIComponent(source.channel)}`;
+  const captureTrace = axiomTraceUrl(
+    report.capture?.traceId,
+    report.requestedAt,
+  );
+  const transportTrace = axiomTraceUrl(
+    report.transport?.traceId,
+    report.requestedAt,
+  );
   return (
     <article className="detail">
       {error && (
@@ -190,6 +199,52 @@ function IssueView({ id }: { id: string }) {
         </div>
         <Badge status={issue.status} />
       </header>
+      <section className="traces" aria-labelledby="traces-title">
+        <h2 id="traces-title">Axiom traces</h2>
+        {captureTrace || transportTrace ? (
+          <>
+            <div className="trace-actions">
+              {captureTrace && (
+                <a
+                  href={captureTrace}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {captureTrace === transportTrace
+                    ? "Open capture & Slack transport trace in Axiom"
+                    : "Open capture trace in Axiom"}
+                </a>
+              )}
+              {transportTrace && transportTrace !== captureTrace && (
+                <a
+                  href={transportTrace}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open Slack transport trace in Axiom
+                </a>
+              )}
+            </div>
+            <p>
+              These traces follow the DEBUGSHARE command, not the earlier
+              conversation being reported. Axiom sign-in and dataset access are
+              required. Click a trace ID in Axiom’s results to open its
+              waterfall.
+            </p>
+            <p>
+              The query covers one day before and after the report time. Widen
+              Axiom’s time range if capture was delayed; missing spans may also
+              have expired from retention.
+            </p>
+          </>
+        ) : (
+          <p>
+            No valid trace correlation was retained in this report. Older
+            reports remain available; trace IDs are not reconstructed from their
+            timestamp or issue ID.
+          </p>
+        )}
+      </section>
       <section className="source" aria-labelledby="source-title">
         <h2 id="source-title">Conversation pointer</h2>
         <dl>

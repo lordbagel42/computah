@@ -290,6 +290,13 @@ open/investigating/blocked/resolved state. Local restart/outbox tests are not a
 claim of deployed capture or production credential setup. Amp/Space handoff and
 automatic repair remain unimplemented.
 
+The authenticated tracker exposes recorded capture/transport trace IDs as Axiom
+links, coalescing identical traces. They open an exact-ID query in the private
+trace dataset, not a public proxy or an inferred trace of the earlier conversation.
+Axiom authenticates the viewer separately. The bounded ±1-day report-time window
+can be widened for delayed capture; legacy reports without correlation show an
+explicit missing state. See the [tracker](../integrations/debugshare/README.md).
+
 ### Amp issue links
 
 The project-local `.amp/plugins/computah-bugs.ts` registers Amp's supported
