@@ -9,13 +9,19 @@ back to itself. A remote Docker context is not configured.
 
 ## Release ownership
 
-`computah-reconcile.timer` polls public GitHub main every minute. The installed
-root-owned updater takes `/run/lock/computah-deploy.lock`, selects a full commit,
-archives it into an immutable release directory, builds a Docker image once and
-applies that exact image ID using real Alchemy plan/apply. It never runs PR code
-or needs a GitHub deployment secret. Trusted main is privileged deployment code;
-repository write access is deployment authority. This is a supervised pull-based
-delivery path, not a GitHub Actions runner exposed to arbitrary workflows.
+GitHub Actions is the normal delivery owner: the main-only `Deploy / nest-bagel`
+job requests its exact commit through pinned SSH and validates the returned
+healthy receipt. Hosted Actions does not run on a self-hosted runner. The previous
+`computah-reconcile.timer` is disabled and inactive after verified handover.
+
+The independently installed root-owned updater takes
+`/run/lock/computah-deploy.lock`, archives the trusted full commit into an immutable
+release directory, builds a Docker image once and applies that exact image ID
+using real Alchemy plan/apply. It never runs PR code. Trusted main is privileged
+deployment code; repository write access is deployment authority. The no-argument
+pull-based updater remains available for explicitly authorized recovery, not a
+second normal delivery owner. The selected gateway's root authority is documented
+below; dedicated credentials do not make it a restricted deployment account.
 
 The updater itself is installed separately and does not self-replace from main.
 To update it, review the diff and explicitly install the new script/unit. The
@@ -98,10 +104,10 @@ receipt. A busy/held request is not green success.
 
 Success requires `ready:true` plus a running container with the exact image and
 revision label, followed by a fresh matching receipt. It is not merely build or
-Alchemy command success. Keep the timer enabled until an actual hosted Actions
-run succeeds end to end, then disable it with
-`systemctl disable --now computah-reconcile.timer`; do not run two normal delivery
-owners after handover. The installed updater and Docker supervision remain.
+Alchemy command success. Hosted handover is complete: the deployment owner
+verified the exact run, host receipt/image/health and then disabled the timer.
+Do not re-enable it alongside normal Actions delivery. The installed updater and
+Docker supervision remain; see the observed handover evidence below.
 Superseded pending Actions runs may be cancelled, never labelled deployed. One
 push checks its head SHA; intermediate commits in a multi-commit push do not each
 get a separate deployment job. No automatic cross-version storage rollback.
@@ -139,12 +145,14 @@ enterprise-install guard and unresolved delivery semantics.
 
 After the tested source and server entry point are on main, install the provided
 script at the path above and the two units in `/etc/systemd/system`, then run
-`systemctl daemon-reload` and `systemctl enable --now computah-reconcile.timer`.
+`systemctl daemon-reload`. Normal delivery uses the configured main-only Actions
+workflow; leave the recovery timer disabled. Starting the recovery service or
+re-enabling its timer requires an explicit operator recovery decision.
 Both env files must already exist. Their format is Docker env-file syntax, not
 shell scripts: one `NAME=value` per line, no `export` or shell expansion.
 
-Create the data directory **only for a new installation**, before enabling the
-timer: `test -e /var/lib/computah/data || install -d -o 1000 -g 1000 -m 0700 /var/lib/computah/data`.
+Create the data directory **only for a new installation**, before the first
+reconciliation: `test -e /var/lib/computah/data || install -d -o 1000 -g 1000 -m 0700 /var/lib/computah/data`.
 The updater refuses missing data or a directory inaccessible to UID 1000; it
 does not let Docker create a root-owned replacement. Never recursively chown an
 existing store to make a failed activation pass; inspect and recover it first.
@@ -159,7 +167,7 @@ Useful non-secret checks on nest-bagel:
 
 ```sh
 sudo systemctl status computah-reconcile.timer --no-pager
-sudo systemctl start computah-reconcile.service
+sudo systemctl is-enabled computah-reconcile.timer
 sudo cat /var/lib/computah/active.json
 curl --fail http://127.0.0.1:8787/healthz
 sudo docker inspect computah-backend --format '{{.State.Status}} {{.Image}}'
@@ -211,8 +219,10 @@ supervision. Test restart recovery with the same `/data` and connection secret;
 verify authenticated history and a follow-up, not only HTTP health. Health and
 artifact receipts do not establish live model behavior or pending-task recovery.
 
-Pause the timer and stop the container before any offline backup of the complete
-data directory, or use a runtime-supported consistent backup. Preserve provider
+Set HOLD to refuse new deployment requests, wait for any active reconciliation
+to release the shared lock, and stop the container before any offline backup of
+the complete data directory, or use a runtime-supported consistent backup.
+Keep the recovery timer disabled. Preserve provider
 store/connection secrets separately with equally restricted access. Copying live
 SQLite files blindly is not a backup. No backup restore or data deletion is
 performed automatically. Newer Pi schemas may refuse older runtimes; forward-fix
@@ -255,3 +265,31 @@ real follow-up after rollout preserved earlier public history and the old signed
 handle and recalled prior context. Installed updater, units and chat client
 byte-matched published source. This does not establish host-reboot or backup
 restore recovery. Slack activation is separate; see [its setup guide](slack.md).
+
+## Observed Actions handover
+
+On 2026-11-08, the push-triggered [Deploy run 42428509279](https://github.com/lordbagel42/computah/actions/runs/42428509279)
+and [deployment job 128571953697](https://github.com/lordbagel42/computah/actions/runs/42428509279/job/128571953697)
+succeeded for exact main revision
+`b4a74ffc5b0effb40e71428b2795838e31b39e93`. The deployment owner matched the
+host request log and healthy receipt to the running Docker revision label and
+immutable image, with health reporting `ready:true` in real mode. An independent
+owner-authenticated check extracted only the normalized hosted-job receipt in
+memory; all three fields exactly matched the host evidence, without dumping or
+storing raw logs:
+
+```json
+{
+  "revision": "b4a74ffc5b0effb40e71428b2795838e31b39e93",
+  "image": "sha256:d52f6d77210438fd817b222d4d643fbd05fc3004ffb40f00124297a721e0e8f3",
+  "observedHealthyAt": "2026-11-08T00:10:54.862Z"
+}
+```
+
+Only after those checks, the authorized deployment owner disabled the timer:
+`computah-reconcile.timer` is inactive/disabled and its service is inactive with
+successful result. Docker remains enabled/active and the backend restart policy
+is `unless-stopped`. The existing root-owned updater and shared lock remain in
+use. This is completed hosted delivery and handover evidence, not a new Slack
+roundtrip, inspector activation, host-reboot or backup-restore claim. The gateway
+still authenticates onward as root, not the restricted direct account.
