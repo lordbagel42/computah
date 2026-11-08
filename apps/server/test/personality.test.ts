@@ -27,13 +27,22 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
       maxTokens: 4096,
     },
   ];
+  models.push(
+    { ...models[0], id: "interaction-next", name: "interaction-next" },
+    { ...models[0], id: "execution-test", name: "execution-test" },
+  );
   const faux = createFauxCore({
     api: "computah-personality-test",
     provider: "computah-personality-test",
     models,
     tokensPerSecond: 0,
   });
-  const observed: { system: string; tools: string[]; text: string }[] = [];
+  const observed: {
+    system: string;
+    tools: string[];
+    text: string;
+    model: string;
+  }[] = [];
   const deliverable = "HTTP API: Keep MixedCase and Computah.";
   const provider: PiProviderConfig = {
     api: "computah-personality-test",
@@ -57,7 +66,7 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
         (message) => message.role === "user",
       );
       const text = user ? textOf(user.content) : "";
-      observed.push({ system, tools: [...tools], text });
+      observed.push({ system, tools: [...tools], text, model: model.id });
       const last = messages.messages.at(-1);
       faux.setResponses([
         last?.role === "toolResult"
@@ -72,13 +81,14 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
       return faux.streamSimple(model, messages, options);
     },
   };
-  const core = createCore({
+  const options: Parameters<typeof createCore>[0] = {
     connectionSecret: randomBytes(32).toString("hex"),
     authorize: () => true,
     model: "computah-personality-test/voice-test",
     providers: { "computah-personality-test": provider },
     apiKeys: { "computah-personality-test": "synthetic-not-a-credential" },
-  });
+  };
+  const core = createCore(options);
   try {
     const { client } = await setupTest(context, core.registry);
     const gateway = core.attach(client)({
@@ -97,6 +107,13 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
         true,
       );
       expect(JSON.stringify(result)).toContain(deliverable);
+      if (id === "initial") {
+        // Simulate an upgraded host reopening existing roots, retaining originals.
+        options.model = "computah-personality-test/interaction-next";
+        options.workerModel = "computah-personality-test/execution-test";
+        await gateway.sleep(gateway.interactionId);
+        await gateway.sleep(gateway.workerId());
+      }
     }
     const interaction = observed.filter((request) =>
       request.tools.includes("Task"),
@@ -105,6 +122,11 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
     expect(interaction.length).toBeGreaterThanOrEqual(4);
     expect(worker).toHaveLength(2);
     for (const request of interaction) {
+      expect(request.model).toBe(
+        request.text.includes("previous heading")
+          ? "interaction-next"
+          : "voice-test",
+      );
       expect(request.system).toContain(interactionInstructions);
       expect(request.system).toContain("Use lowercase for your own");
       expect(request.system).toContain(
@@ -113,6 +135,11 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
       expect(request.tools).toEqual(["Task"]);
     }
     for (const request of worker) {
+      expect(request.model).toBe(
+        request.text.includes("previous heading")
+          ? "execution-test"
+          : "voice-test",
+      );
       expect(request.system).toContain(workerInstructions);
       expect(request.system).not.toContain(interactionInstructions);
       expect(request.system).toContain(

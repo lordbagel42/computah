@@ -4,6 +4,7 @@ import { createClient } from "rivetkit/client";
 import { principalKey, readConfig } from "./config.js";
 import { createCore } from "./core.js";
 import { closeHttp, createHttpServer } from "./http.js";
+import { priorityModels } from "./model-policy.js";
 import { smokeProvider } from "./smoke-model.js";
 
 async function main() {
@@ -24,14 +25,6 @@ async function main() {
   if (models) {
     for (const [provider, key] of Object.entries(config.apiKeys ?? {}))
       await models.setRuntimeApiKey(provider, key);
-    const slash = config.model.indexOf("/");
-    if (
-      !models.getModel(
-        config.model.slice(0, slash),
-        config.model.slice(slash + 1),
-      )
-    )
-      throw new Error("COMPUTAH_MODEL is not in the pinned provider catalog");
   }
   const byScope = new Map(
     [...config.principals.values()].map((principal) => [
@@ -45,7 +38,13 @@ async function main() {
       byScope.get(principalKey(scope))?.capabilities.includes(capability) ??
       false,
     model: config.model,
-    models,
+    workerModel: config.workerModel,
+    thinkingLevel: config.mode === "real" ? "high" : undefined,
+    models: models
+      ? priorityModels(models, (diagnostic) => {
+          console.info(`computah.model ${JSON.stringify(diagnostic)}`);
+        })
+      : undefined,
     apiKeys:
       config.mode === "faux"
         ? { "computah-smoke": "explicit-smoke" }

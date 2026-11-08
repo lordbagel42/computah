@@ -123,6 +123,9 @@ export interface CoreOptions {
     capability: Capability,
   ): boolean | Promise<boolean>;
   model: NonNullable<PiOptions["model"]>;
+  /** Defaults to model for explicitly injected local/test configurations. */
+  workerModel?: NonNullable<PiOptions["model"]>;
+  thinkingLevel?: PiOptions["thinkingLevel"];
   providers?: PiOptions["providers"];
   apiKeys?: PiOptions["apiKeys"];
   models?: PiOptions["models"];
@@ -283,6 +286,7 @@ export function createCore(options: CoreOptions) {
 
   const common = {
     model: options.model,
+    thinkingLevel: options.thinkingLevel,
     providers: options.providers,
     apiKeys: options.apiKeys,
     models: options.models,
@@ -449,20 +453,33 @@ export function createCore(options: CoreOptions) {
       await common.onWake(c);
       const root = await c.pi.root(BACKGROUND_CONTEXT);
       await root.configure(
-        { instructions: interactionInstructions },
+        {
+          instructions: interactionInstructions,
+          model: modelRef(options.model),
+          ...(options.thinkingLevel
+            ? { thinkingLevel: options.thinkingLevel }
+            : {}),
+        },
         BACKGROUND_CONTEXT,
       );
     },
   });
   const worker = pi({
     ...common,
+    model: options.workerModel ?? options.model,
     registry: createRegistry(),
     onBeforeConnect: guard("worker"),
     onWake: async (c) => {
       await common.onWake(c);
       const root = await c.pi.root(BACKGROUND_CONTEXT);
       await root.configure(
-        { instructions: workerInstructions },
+        {
+          instructions: workerInstructions,
+          model: modelRef(options.workerModel ?? options.model),
+          ...(options.thinkingLevel
+            ? { thinkingLevel: options.thinkingLevel }
+            : {}),
+        },
         BACKGROUND_CONTEXT,
       );
     },
@@ -873,3 +890,9 @@ export function createCore(options: CoreOptions) {
 export type CoreSession = ReturnType<
   ReturnType<ReturnType<typeof createCore>["attach"]>
 >;
+
+function modelRef(value: string) {
+  const slash = value.indexOf("/");
+  if (slash < 1 || slash === value.length - 1) throw new CoreError("invalid");
+  return { provider: value.slice(0, slash), modelId: value.slice(slash + 1) };
+}

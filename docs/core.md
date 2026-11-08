@@ -147,17 +147,23 @@ Configuration (secrets belong in private operator env files, never Git/state):
 | `COMPUTAH_CONNECTION_SECRET` | Stable server-only random secret, at least 32 bytes; also signs scoped public handles                                                                     |
 | `COMPUTAH_AUTH_JSON`         | Secret nonempty array of `{token,tenantId,userId,agentId,capabilities,displayName?}`; tokens at least 32 characters and unique; duplicate scopes rejected |
 | `COMPUTAH_MODE`              | `real` (default), or explicit `faux`; no automatic faux fallback                                                                                          |
-| `COMPUTAH_MODEL`             | Required in real mode: selected supported `provider/model`                                                                                                |
+| `COMPUTAH_INTERACTION_MODEL` | Optional real-mode role setting; defaults to and accepts only `openai-codex/gpt-6.1-terra`                                                                  |
+| `COMPUTAH_WORKER_MODEL`      | Optional real-mode role setting; defaults to and accepts only `openai-codex/gpt-6.1-sol`                                                                    |
 | `COMPUTAH_PI_AUTH_FILE`      | Explicit absolute private writable Pi `auth.json`, selected deployment path `/data/provider/auth.json`                                                    |
 | `COMPUTAH_PROVIDER_API_KEY`  | Optional explicit selected-provider key; native provider environment authentication remains supported                                                     |
 | `PORT`                       | Public HTTP port, default 3000                                                                                                                            |
 
 The selected deployment provider is **`openai-codex`**, not the newer `openai`
 OAuth flow. Pi AI 1.5.0's published provider is named "OpenAI Codex (legacy)",
-uses `openai-codex-responses`, and its pinned catalog includes `gpt-6.1-sol`.
-The model is not yet selected: set `COMPUTAH_MODEL=openai-codex/<catalog-model>`
-to the owner's chosen supported model; catalog membership is not entitlement.
-`gpt-6.1-sol` is a verified catalog example, not a chosen default. The owner performs official
+uses `openai-codex-responses`, and its pinned catalog includes both selected roles.
+Remove obsolete `COMPUTAH_MODEL` before the authorized backend/Slack resumption;
+real mode rejects it. Both roles use high reasoning, and the official Models
+boundary forces outgoing priority/high after caller payload transforms, including
+generation, compaction and replay. Raw provider-returned tiers are logged safely;
+requesting priority does not guarantee priority execution. See [model policy](model-policy.md)
+for exact configuration, diagnostics and checkpoint/drain limitations. No silent
+standard-tier or model fallback is selected. Catalog membership is not entitlement.
+The owner performs official
 `pi-ai login openai-codex` privately using pinned Pi AI 1.5.0, in the private
 provider directory (the CLI writes `auth.json` in its current directory).
 No laptop/other-app auth is discovered or copied. Account entitlement remains

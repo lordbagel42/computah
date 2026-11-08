@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Capability, Scope } from "./core.js";
+import { interactionModel, workerModel } from "./model-policy.js";
 
 export type Principal = Scope & {
   tokenHash: string;
@@ -69,10 +70,22 @@ export function readConfig(env: NodeJS.ProcessEnv) {
     principals.set(principal.tokenHash, principal);
     scopes.add(principalKey(principal));
   }
+  if (mode === "real" && env.COMPUTAH_MODEL)
+    throw new Error(
+      "COMPUTAH_MODEL is obsolete; use COMPUTAH_INTERACTION_MODEL and COMPUTAH_WORKER_MODEL",
+    );
+  if (
+    mode === "real" &&
+    ((env.COMPUTAH_INTERACTION_MODEL &&
+      env.COMPUTAH_INTERACTION_MODEL !== interactionModel) ||
+      (env.COMPUTAH_WORKER_MODEL && env.COMPUTAH_WORKER_MODEL !== workerModel))
+  )
+    throw new Error(
+      "COMPUTAH_MODEL role configuration must select the supported Terra/Sol pair",
+    );
   const model =
-    mode === "faux" ? "computah-smoke/deterministic" : env.COMPUTAH_MODEL;
-  if (!model || !/^[^/]+\/.+$/.test(model))
-    throw new Error("COMPUTAH_MODEL=provider/model is required in real mode");
+    mode === "faux" ? "computah-smoke/deterministic" : interactionModel;
+  const executionModel = mode === "faux" ? model : workerModel;
   const port = Number(env.PORT ?? "3000");
   if (!Number.isInteger(port) || port < 0 || port > 65535)
     throw new Error("PORT must be an integer between 0 and 65535");
@@ -88,6 +101,7 @@ export function readConfig(env: NodeJS.ProcessEnv) {
     secret,
     principals,
     model,
+    workerModel: executionModel,
     port,
     authFile,
     apiKeys: key ? { [provider]: key } : undefined,

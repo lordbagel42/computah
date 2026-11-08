@@ -7,8 +7,13 @@ Interaction and Workers to discover on demand; it is not a giant system prompt.
 ## Golden-path milestones
 
 The durable Task/Worker and stream/cancel/personality cut is published at
-`4b89424`. Production backend and Slack are paused under the mandatory Fast-only
-HOLD; implementation evidence is not authorization to resume model execution.
+`4b89424`; the model-free bus is published at `1fa66e1` and separately deployed.
+The owner now explicitly authorizes backend and Slack resumption with supported
+Fast requests on every provider boundary, Terra Interaction and Sol execution.
+Outgoing priority enforcement is distinct from the actual provider-returned tier:
+do not silently select standard mode or claim a remote no-downgrade guarantee.
+The earlier operational HOLD is superseded for this scoped tested rollout;
+source authorization is not evidence that resumption has actually completed.
 The next product exits, in order:
 
 1. Deliver the [external message actor and Durable Streams API](bus.md):
@@ -16,7 +21,7 @@ The next product exits, in order:
    reconnect, idempotency, audience denial and restart proof. This is the sole
    immediate focus. Bus-only operation must not construct a provider runtime or
    wake existing Interaction checkpoints. Separate bus-only host activation is
-   explicitly authorized, preserving the backend/Slack pause.
+   complete and remains isolated from the separately authorized agent resumption.
 2. After the bus is delivered, resume tenant-scoped Composio/Gmail onboarding,
    verified mailbox, effectively
    full historical email indexing/private retrieval and continued updates, plus

@@ -55,7 +55,14 @@ Launch contract: Node >=22.19, production tsx start script, bind `PORT`, expose
 `GET /healthz` only after real registry startup. `COMPUTAH_AUTH_JSON` is a secret
 array of token-to-tenant/user/agent/capability bindings; `COMPUTAH_CONNECTION_SECRET`
 is stable server-only key material. `COMPUTAH_MODE` defaults to `real` with required
-`COMPUTAH_MODEL=provider/model` and native provider environment credentials;
+native provider credentials. Remove legacy `COMPUTAH_MODEL`; role settings default
+to `COMPUTAH_INTERACTION_MODEL=openai-codex/gpt-6.1-terra` and
+`COMPUTAH_WORKER_MODEL=openai-codex/gpt-6.1-sol`. Generation and compaction requests
+force supported priority and high reasoning after caller payload transforms.
+This enforces outgoing requests, not a provider no-downgrade guarantee; report
+actual raw tiers and errors without silently changing models or selecting standard.
+Preserve auth, signing keys and native data during the authorized scoped resume;
+stored in-flight checkpoint models are not rewritten. See [model policy](model-policy.md).
 `faux` is an explicit smoke mode, never a silent fallback. No values belong in Git
 or messages. Authenticate into configured bindings, check current grants per call
 and project safe results rather than exposing raw Pi entries.
