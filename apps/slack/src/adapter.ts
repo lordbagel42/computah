@@ -558,10 +558,13 @@ export class SlackAdapter {
         .prepare("INSERT INTO receipt_origins(event,thread) VALUES (?,?)")
         .run(id, event.thread_ts ?? null);
       if (!batch) {
-        // Mint once with admission, never inherit a caller/receive/batch root.
-        const carrier = createTraceCarrier("slack.job", [
+        // Persist one child of the actual receive. Retries and burst inputs keep
+        // this first parent; absent legacy context still starts an honest root.
+        const carrier = createTraceCarrier(
+          "slack.job",
+          [],
           currentTraceHeaders(),
-        ]);
+        );
         this.db
           .prepare(
             "INSERT INTO job_timing(job,traceparent,received,sender_ts) VALUES(?,?,?,?)",

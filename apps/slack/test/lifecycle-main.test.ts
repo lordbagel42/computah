@@ -46,6 +46,7 @@ const modules={
 registerHooks({resolve(s,c,next){if(modules[s])return {url:'data:text/javascript,'+encodeURIComponent(modules[s]),shortCircuit:true};return next(s,c);}});
 const spans=[];
 const logs=[];
+const coreHeaders=[];
 let calls=0;
 let observations=0;
 globalThis.fetch=async(u,o)=>{
@@ -57,6 +58,7 @@ globalThis.fetch=async(u,o)=>{
    return new Response('{}');
  }
  if(url.hostname!=='127.0.0.1'||o.headers.authorization!=='Bearer synthetic-core-secret-not-a-real-credential'||!/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/.test(o.headers.traceparent??''))throw new Error('Wrong core identity/trace');
+ if(url.pathname.startsWith('/v1/submissions'))coreHeaders.push({path:url.pathname,carrier:o.headers.traceparent});
  if(url.pathname==='/v1/viewer')return Response.json({viewer:{tenantId:'tenant',userId:'owner',agentId:'private',capabilities:['task.send','history.read','task.control']}});
  if(url.pathname==='/v1/submissions'){
    if(++calls!==1||JSON.parse(o.body).text.startsWith('stop'))throw new Error('Stop created model work');
@@ -83,6 +85,13 @@ process.on('exit',()=>{
  if(status&&child('computah.slack.core',status)&&child('computah.slack.api',status))console.log('synthetic.progress.trace.correct');
  const wait=spans.find(s=>s.name==='computah.slack.wait'&&attr(s,'outcome')===(process.env.TEST_CANCEL==='denied'?'denied':process.env.TEST_CANCEL==='unknown'?'error':'cancelled'));
  const root=spans.find(s=>s.name==='computah.slack.job'&&s.traceId===wait?.traceId&&s.spanId===wait?.parentSpanId);
+ if(root&&spans.some(s=>s.name==='computah.slack.receive'&&s.traceId===root.traceId&&s.spanId===root.parentSpanId))console.log('synthetic.ingress.trace.correct');
+ if(coreHeaders.length&&coreHeaders.every(h=>{
+   const [,traceId,spanId]=h.carrier.split('-');
+   const client=spans.find(s=>s.traceId===traceId&&s.spanId===spanId&&s.name==='computah.slack.core');
+   const phase=h.path==='/v1/submissions'?'submit':h.path.endsWith('/events')?'status':'wait';
+   return client&&spans.some(s=>s.traceId===traceId&&s.spanId===client.parentSpanId&&s.name==='computah.slack.'+phase);
+ }))console.log('synthetic.wire.trace.correct');
  if(wait&&root&&child('computah.slack.core',wait))console.log('synthetic.cancel.trace.correct');
  if(logs.join('').includes(process.env.TEST_CANCEL==='denied'?'denied':process.env.TEST_CANCEL==='unknown'?'error':'cancelled'))console.log('synthetic.outcome.log.correct');
  if(process.env.TEST_CARDS==='denied'||process.env.TEST_CARDS==='error'){
@@ -178,6 +187,8 @@ test("executable uses actual observation phases and scoped stop transport with s
           "cancel.correct",
           "progress.trace.correct",
           "cancel.trace.correct",
+          "ingress.trace.correct",
+          "wire.trace.correct",
           "outcome.log.correct",
           ...(cards ? ["stream.start.correct"] : []),
           ...(cards === "success"
