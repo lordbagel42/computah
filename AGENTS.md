@@ -3,8 +3,18 @@
 - Read `docs/index.md` and the relevant subsystem spec before changing behavior.
 - Preserve implemented/planned distinctions. Update applicable docs and fixtures
   with behavior or wire-contract changes.
-- Main only: no feature branches or PRs. Preserve others' local work; use isolated
-  checkouts and transfer scoped files with their base revisions to the integrator.
+- Main only: no feature branches or PRs. Independently implement, test, rebase
+  before pushing, and ship under actual existing authorization. Preserve others'
+  work; no file reservations, ownership permission gates, generic overlap pings,
+  repeated progress/report relays between workers, main landing freezes or
+  integration queues. This supersedes prior file-ownership coordination guidance,
+  including in `docs/development.md`.
+- Message another thread only for a demonstrated blocking conflict or an
+  indispensable API/data/deployment/security handoff, not theoretical shared files
+  or ordinary rebases. Consolidate necessary handoff once and request completion
+  replies rather than polling. Keep shared-host and protected-secret mutations
+  serialized, and preserve genuine human approval/security boundaries. This does
+  not permit skipping tests, overriding direct human instructions or force pushes.
 - Before closing a delivery thread, preserve its `Amp-Thread-ID` commit trailer
   through integration and report the actual resulting default-branch commit URLs
   to the worker and Space (not just the pre-integration SHA). Verify Amp links the
@@ -18,8 +28,6 @@
   and follow-ups open with an owner and next action. Under Raygen's standing rule,
   archive completed threads after shipment verification and no pending follow-ups;
   archive completed research/no-code work without calling it shipped.
-- One integration owner edits root manifests/lockfile and `packages/contracts`.
-  Other packets request shared changes rather than duplicating schemas.
 - Run `pnpm format`, `pnpm check`, `pnpm typecheck` and `pnpm test` before commits.
   Commits should be small and explain what changed and why.
 - Runtime tracing is mandatory for all new or changed executable behavior: cover
