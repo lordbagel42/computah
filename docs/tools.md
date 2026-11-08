@@ -6,6 +6,53 @@ explicit principal grants; key presence alone is not activation. Browser,
 Executor and Composio/Gmail remain separate integrations. Safe DTOs/fixtures
 contain no real accounts, tokens or provider setup.
 
+## Operational data discovery
+
+**Source-supported, locally tested; runtime query activation and live acceptance
+are separate.** The backend executable installs `operations_discover({})` and
+`message_timing({requestId})` directly on Interaction, and appends practical
+usage/access instructions to its actual persona on every wake, including existing
+conversations. Workers do not select a different conversation's diagnostic target.
+
+`operations_discover` explains the source, configuration state, grant boundary,
+phase definitions and missing coverage. `message_timing({requestId:"previous"})`
+resolves the completed input/reply immediately preceding the current run, not
+the diagnostics request's own model call. An exact previously returned durable
+request ID can select an older completed exchange in the same conversation.
+Results contain the host-resolved receipt/submission/answer/actor identities,
+admission and execution trace IDs, linked Worker roots, omitted-link counts,
+and individual measured spans. Missing roots or pre-index historical messages
+return unavailable; no time-proximity matching or historical reconstruction.
+
+Authority is the private Pi binding plus an explicit `operations.read` grant in
+`COMPUTAH_AUTH_JSON`, rechecked before query and disclosure. Runtime uses only
+`COMPUTAH_AXIOM_QUERY_TOKEN`, privately provisioned as Query-only access to
+`computah-prod-traces`. Key presence does not grant a principal access. Never
+extract Amp MCP credentials or reuse ingest/management credentials. Dataset
+scoping alone is not tenant isolation: tool arguments cannot select arbitrary
+APL, dataset, time range, trace IDs or foreign actors. Incoming `traceparent` is
+correlation, not authority to query its entire trace; upstream Slack/bus timing
+requires a separately host-verified durable receipt linkage.
+
+The fixed query uses Axiom's US East edge `/v1/query/_apl?format=tabular`, bounded
+to at most 24 hours from the earliest recorded admission (with a one-minute lead),
+201 scanned result rows / 200 returned spans, 256 KiB response and 10 seconds.
+Only projected identifiers, span/phase/task/service names, start timestamps and
+explicit `duration / 1ms` are returned. Aligned tabular columns are validated;
+`status.isPartial`, row truncation and a capped time range remain explicit.
+No retries are automatic. Read tools are replay-safe; the selected durable target
+is memoized by the Pi tool task, while query evidence can change as late spans
+arrive. Abort cancels the query fetch/body, and HTTP/parse failures return bounded
+categories without provider bodies, headers or credentials.
+
+Admission is a host commit clock, **not sender-to-ingress delay**. Model lifetime
+is through terminal stream result, **not TTFT**. Slack Web API lifetime is not
+platform delivery confirmation. Nested phases overlap: never add them as reply
+wall-clock. Missing sender creation, receive, queue and delivered timestamps stay
+unavailable rather than zero. Best-effort export can lose spans; an empty query
+does not prove no work occurred. Separate Slack/bus durable timing instrumentation
+and scoped query credential provisioning are not implied by this source packet.
+
 ## First-class Worker capabilities
 
 Agent-browser and Tavily are explicit native integration requirements alongside

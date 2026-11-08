@@ -52,8 +52,10 @@ categories and content-free spans; it is not a second durable workflow engine.
 
 ## Interaction → Task → Worker
 
-Each Interaction is keyed by tenant/user/agent. Its only registered tool is
-`Task({ worker, text })`. Workers optionally receive the native
+Each Interaction is keyed by tenant/user/agent. Its task tool is
+`Task({ worker, text })`. The executable also installs the read-only
+[operational discovery and message timing tools](tools.md#operational-data-discovery),
+with explicit `operations.read` authorization. Workers optionally receive the native
 [Tavily web tools](tavily.md), only when the protected key and this principal's
 explicit `web.search` / `web.extract` grants are present. Task reads its trusted
 session binding, checks current task authority and addresses the Worker by the
@@ -67,6 +69,23 @@ hash and submission ID in the **same Pi commit** as admission, so concurrent
 Rivet actions cannot race an in-memory check-then-submit. This does not provide
 exactly-once external effects. Tavily tools use unsafe replay and no automatic
 HTTP retries because interrupted requests may already consume provider credits.
+
+New admissions also atomically append an identifier-only predecessor link and
+host admission timestamp to the receipt. Identical retries do not advance this
+chain or rewrite the timestamp. The timing tool bounds traversal to 256 receipts,
+finds the earliest current-run input, and selects the newest completed input
+before it. Current coalesced inputs and newer queued messages cannot become the
+diagnostic target. An explicit older durable request ID is also supported; it
+must belong to this actor and precede the active run. Legacy/unindexed inputs
+and lookup limits return unavailable, not fabricated historical timing.
+
+The tool checkpoints its selected target. Pi's submission carrier identifies the
+admission trace; the final answer's `byTaskId` and task carrier identify actual
+execution, including non-leading coalesced inputs that share another admission's
+run. Existing durable delegation records resolve up to 20 linked Workers through
+their own receipts, with omitted links counted explicitly. Private actor,
+conversation, receipt, input and answer identifiers are available to the authorized
+runtime tool, not exported as new Axiom attributes or public wire fields.
 
 Dispatch uses submit/wait/history, not the adapter's ten-minute `prompt` helper.
 Native Pi compaction remains enabled by default. `compact()` appends a

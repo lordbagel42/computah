@@ -53,6 +53,7 @@ async function main() {
     tavily: process.env.COMPUTAH_TAVILY_API_KEY
       ? { apiKey: process.env.COMPUTAH_TAVILY_API_KEY }
       : undefined,
+    operations: { queryToken: process.env.COMPUTAH_AXIOM_QUERY_TOKEN },
     models: models
       ? priorityModels(models, (diagnostic) => {
           console.info(`computah.model ${JSON.stringify(diagnostic)}`);

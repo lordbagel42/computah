@@ -17,6 +17,7 @@ import {
   type SubmissionId,
   type SubmissionRecord,
   type TaskId,
+  type Tx,
 } from "@earendil-works/pi-durable";
 import { obj, str } from "@earendil-works/pi-schema";
 import {
@@ -28,6 +29,12 @@ import {
 import { Effect } from "effect";
 import { type Client, setup } from "rivetkit";
 import { createClient } from "rivetkit/client";
+import {
+  createOperations,
+  createOperationsExtension,
+  type OperationalTarget,
+  operationalInstructions,
+} from "./operations.js";
 import { interactionInstructions, workerInstructions } from "./personality.js";
 import { createTavily, createTavilyExtension } from "./tavily.js";
 
@@ -44,7 +51,8 @@ export type Capability =
   | "task.control"
   | "core.maintain"
   | "web.search"
-  | "web.extract";
+  | "web.extract"
+  | "operations.read";
 
 export class CoreError extends Error {
   constructor(readonly code: "denied" | "invalid" | "conflict" | "runtime") {
@@ -62,7 +70,16 @@ const Binding = defineDoc<{ scope: Scope | null }>({
 
 // Conflict receipts and Pi admission commit atomically; this is not a second transcript.
 const Receipt = defineDocFamily<
-  { hash: string; submissionId: SubmissionId | null; cancelled?: boolean },
+  {
+    hash: string;
+    submissionId: SubmissionId | null;
+    cancelled?: boolean;
+    operation?: {
+      sequence: number;
+      admittedAt: number;
+      previousRequestId: string | null;
+    };
+  },
   null
 >({
   kind: "computah.receipt",
@@ -72,6 +89,61 @@ const Receipt = defineDocFamily<
   initial: () => ({ hash: "", submissionId: null }),
   checkpointWhen: () => false,
 });
+
+const Operations = defineDoc<{
+  sequence: number;
+  tailRequestId: string | null;
+}>({
+  kind: "computah.operations",
+  version: 1,
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  initial: () => ({ sequence: 0, tailRequestId: null }),
+  checkpointWhen: () => false,
+});
+
+function carrierTrace(carrier?: Record<string, string>): string | null {
+  const match = /^00-([a-f0-9]{32})-([a-f0-9]{16})-[a-f0-9]{2}$/.exec(
+    carrier?.traceparent ?? "",
+  );
+  return match && !/^0+$/.test(match[1]) && !/^0+$/.test(match[2])
+    ? match[1]
+    : null;
+}
+
+async function operationalTarget(
+  tx: Tx,
+  record: SubmissionRecord,
+  actorId: string,
+): Promise<OperationalTarget> {
+  const receipt = record.requestId
+    ? await tx.doc(Receipt, record.requestId, null)
+    : null;
+  const answer =
+    record.type === "input" && record.status === "done"
+      ? await tx.entry(record.answer)
+      : undefined;
+  const task = answer?.byTaskId ? await tx.task(answer.byTaskId) : undefined;
+  return {
+    requestId: record.requestId ?? "",
+    submissionId: record.id,
+    actorId,
+    conversationId: record.conversationId,
+    status: record.status,
+    entryId: record.entry ?? null,
+    answerId:
+      record.type === "input" && record.status === "done"
+        ? record.answer
+        : null,
+    admittedAt: receipt?.operation
+      ? new Date(receipt.operation.admittedAt).toISOString()
+      : null,
+    traceId: carrierTrace(record.trace),
+    executionTraceId: carrierTrace(task?.trace),
+    workerLinksOmitted: 0,
+  };
+}
 
 type Delegation = {
   worker: string;
@@ -135,6 +207,8 @@ export interface CoreOptions {
   apiKeys?: PiOptions["apiKeys"];
   /** Host-only credential/test transport. Never model or ingress input. */
   tavily?: { apiKey: string; fetch?: typeof fetch };
+  /** Separate dataset-scoped read credential; never reuse an ingest/MCP token. */
+  operations?: { queryToken?: string; fetch?: typeof fetch };
   models?: PiOptions["models"];
   settings?: PiOptions["settings"];
 }
@@ -303,6 +377,111 @@ export function createCore(options: CoreOptions) {
   const workerTools = createRegistry();
   if (options.tavily) workerTools.install(tavilyExtension);
 
+  if (options.operations) {
+    const operations = createOperations({
+      ...options.operations,
+      authorize: options.authorize,
+    });
+    interactionTools.install(
+      createOperationsExtension({
+        client: operations,
+        scope: async (api, context) =>
+          (await api.snapshot(Binding, context))?.scope ?? null,
+        target: async (requestId, api, context) => {
+          const binding = await api.snapshot(Binding, context);
+          if (!binding?.scope) throw new CoreError("denied");
+          const targetScope = binding.scope;
+          await permit(binding.scope, "operations.read");
+          const memo = await api.memo("computah.operations.target.v1", context);
+          if (memo) return memo as OperationalTarget[];
+          const selected = await api.commit(async (tx) => {
+            const live = await tx.doc(LiveDoc, api.conversationId);
+            const index = await tx.doc(Operations, api.conversationId);
+            const inputs = live.run?.inputs ?? [];
+            if (!inputs.length) return null;
+            const nodes: {
+              requestId: string;
+              sequence: number;
+              submissionId: SubmissionId | null;
+            }[] = [];
+            let cursor = index.tailRequestId;
+            for (let count = 0; cursor && count < 256; count++) {
+              const receipt = await tx.doc(Receipt, cursor, null);
+              if (!receipt.operation) break;
+              nodes.push({
+                requestId: cursor,
+                sequence: receipt.operation.sequence,
+                submissionId: receipt.submissionId,
+              });
+              cursor = receipt.operation.previousRequestId;
+            }
+            const active = nodes.filter(
+              (node) =>
+                node.submissionId !== null &&
+                inputs.includes(node.submissionId),
+            );
+            if (active.length !== inputs.length) return null;
+            const boundary = Math.min(...active.map((node) => node.sequence));
+            const candidates =
+              requestId === "previous"
+                ? nodes
+                : [
+                    {
+                      requestId,
+                      sequence:
+                        (await tx.doc(Receipt, requestId, null)).operation
+                          ?.sequence ?? Infinity,
+                    },
+                  ];
+            for (const node of candidates) {
+              if (node.sequence >= boundary) continue;
+              const record = await tx.submissionByRequest(
+                api.conversationId,
+                node.requestId,
+              );
+              if (record?.type === "input" && record.status === "done") {
+                const links = Object.values(
+                  (await tx.doc(Delegations, api.conversationId)).calls,
+                ).filter((link) => link.inputs.includes(record.id));
+                return {
+                  target: await operationalTarget(
+                    tx,
+                    record,
+                    interactionId(targetScope),
+                  ),
+                  links: links.map((link) => ({
+                    worker: link.worker,
+                    requestId: link.requestId,
+                  })),
+                };
+              }
+            }
+            return null;
+          }, context);
+          if (!selected) return [];
+          const targets = [selected.target];
+          for (const link of selected.links.slice(0, 20)) {
+            const target = await handle(
+              controlClient(),
+              "worker",
+              [...scopeKey(binding.scope), link.worker],
+              context.abortSignal,
+            ).operationContext(link.requestId);
+            if (target) targets.push(target);
+          }
+          targets[0].workerLinksOmitted =
+            selected.links.length - (targets.length - 1);
+          await permit(binding.scope, "operations.read");
+          return (await api.memo(
+            "computah.operations.target.v1",
+            targets,
+            context,
+          )) as OperationalTarget[];
+        },
+      }),
+    );
+  }
+
   const common = {
     model: options.model,
     thinkingLevel: options.thinkingLevel,
@@ -356,6 +535,7 @@ export function createCore(options: CoreOptions) {
               : { conflict: true as const };
           }
           if (receipt.cancelled) return { cancelled: true as const };
+          const operations = await tx.doc(Operations, root.id);
           const id = await root.submit(tx, {
             type: "input",
             content: text,
@@ -364,8 +544,37 @@ export function createCore(options: CoreOptions) {
           });
           receipt.hash = hash;
           receipt.submissionId = id;
+          receipt.operation = {
+            sequence: operations.sequence + 1,
+            admittedAt: Date.now(),
+            previousRequestId: operations.tailRequestId,
+          };
+          operations.sequence++;
+          operations.tailRequestId = requestId;
           return { submissionId: id };
         }, BACKGROUND_CONTEXT);
+      },
+      operationContext: async (
+        c: { key: string[]; pi: Harness },
+        requestId: string,
+      ) => {
+        await permit(scopeOf(c.key), "operations.read");
+        const root = await c.pi.root(BACKGROUND_CONTEXT);
+        const target = await root.commit(async (tx) => {
+          const record = await tx.submissionByRequest(root.id, requestId);
+          return record
+            ? operationalTarget(
+                tx,
+                record,
+                JSON.stringify([
+                  c.key.length === 4 ? "worker" : "interaction",
+                  ...c.key,
+                ]),
+              )
+            : null;
+        }, BACKGROUND_CONTEXT);
+        await permit(scopeOf(c.key), "operations.read");
+        return target;
       },
       delegations: async (c: { pi: Harness }, submissionId: SubmissionId) => {
         const root = await c.pi.root(BACKGROUND_CONTEXT);
@@ -466,7 +675,7 @@ export function createCore(options: CoreOptions) {
   };
   const interaction = pi({
     ...common,
-    documents: [Delegations],
+    documents: [Delegations, Operations],
     registry: interactionTools,
     onBeforeConnect: guard("interaction"),
     onWake: async (c) => {
@@ -474,7 +683,9 @@ export function createCore(options: CoreOptions) {
       const root = await c.pi.root(BACKGROUND_CONTEXT);
       await root.configure(
         {
-          instructions: interactionInstructions,
+          instructions: options.operations
+            ? `${interactionInstructions}\n\n${operationalInstructions}`
+            : interactionInstructions,
           model: modelRef(options.model),
           ...(options.thinkingLevel
             ? { thinkingLevel: options.thinkingLevel }
