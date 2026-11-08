@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import type { SubmissionObservationEvent } from "@computah/contracts";
@@ -12,7 +12,7 @@ import {
 import type { PiProviderConfig } from "@rivet-dev/pi";
 import { setupTest } from "rivetkit/test";
 import { afterAll, expect, test } from "vitest";
-import { readConfig } from "../src/config.js";
+import { principalKey, readConfig, tokenHash } from "../src/config.js";
 import { type Capability, createCore, type Scope } from "../src/core.js";
 import { closeHttp, createHttpServer } from "../src/http.js";
 import type { SentinelDecision, SentinelInput } from "../src/sentinel.js";
@@ -402,6 +402,166 @@ test("authenticated HTTP delegates through real actors, reuses the Worker, proje
     expect(
       JSON.stringify(await (await request("/v1/history")).json()),
     ).not.toContain("must not be admitted");
+  } finally {
+    await closeHttp(server);
+  }
+});
+
+test("operator HTTP reads existing scoped actors, redacts evidence and rechecks grants and cursors", async (context) => {
+  const { client } = await setupTest(context, core.registry);
+  const scope = { ...alice, agentId: "operator" };
+  const empty = { ...scope, userId: "never-created" };
+  for (const owner of [scope, empty])
+    grants.set(
+      key(owner),
+      new Set(["task.send", "history.read", "operator.read"]),
+    );
+  const tokens = [
+    randomBytes(32).toString("hex"),
+    randomBytes(32).toString("hex"),
+  ];
+  const config = readConfig({
+    COMPUTAH_MODE: "faux",
+    COMPUTAH_CONNECTION_SECRET: randomBytes(32).toString("hex"),
+    COMPUTAH_PROVIDER_API_KEY: "operator-configured-secret-canary",
+    COMPUTAH_OPERATOR_PRIVILEGED_URL_PREFIXES: JSON.stringify([
+      "https://private-browser.invalid/",
+    ]),
+    COMPUTAH_AUTH_JSON: JSON.stringify(
+      [scope, empty].map((owner, index) => ({
+        ...owner,
+        token: tokens[index],
+        capabilities: ["history.read", "operator.read"],
+      })),
+    ),
+  });
+  const gateway = core.attach(client)(scope);
+  const absent = core.attach(client)(empty);
+  expect(await absent.operatorHistory(absent.interactionId)).toBeNull();
+  expect(await absent.operatorHistory(absent.interactionId)).toBeNull();
+  await expect(gateway.operatorHistory(absent.interactionId)).rejects.toThrow();
+  let revokeBeforeRelease = false;
+  const server = createHttpServer({
+    ...config,
+    bind: (owner) => {
+      const session = core.attach(client)(owner);
+      return {
+        ...session,
+        operatorHistory: async (...args) => {
+          const page = await session.operatorHistory(...args);
+          if (revokeBeforeRelease)
+            config.principals.delete(tokenHash(tokens[0]));
+          return page;
+        },
+      };
+    },
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("bind failed");
+  const base = `http://127.0.0.1:${address.port}`;
+  const request = (path: string, index = 0) =>
+    fetch(`${base}${path}`, {
+      headers: { authorization: `Bearer ${tokens[index]}` },
+    });
+  try {
+    expect((await fetch(`${base}/v1/operator/snapshot`)).status).toBe(401);
+    expect(
+      (await (await request("/v1/operator/snapshot", 1)).json()).interaction
+        .availability,
+    ).toBe("missing");
+    const admitted = await gateway.submit(
+      gateway.interactionId,
+      "Operator canary operator-configured-secret-canary https://private-browser.invalid/session?private=yes",
+      "operator-first",
+    );
+    await gateway.wait(gateway.interactionId, admitted.submissionId);
+    const snapshot = await (await request("/v1/operator/snapshot")).json();
+    expect(snapshot.interaction.availability).toBe("present");
+    expect(snapshot.tasks).toHaveLength(1);
+    expect(snapshot.tasks[0].status).toBe("result-recorded");
+    expect(snapshot.workers[0].id).toBe(gateway.workerId());
+    expect(snapshot.workers[0].availability).toBe("present");
+    const projected = JSON.stringify(snapshot);
+    expect(projected).toContain("Operator canary");
+    expect(projected).toContain("[redacted]");
+    expect(projected).toContain("[redacted URL]");
+    expect(projected).not.toContain("operator-configured-secret-canary");
+    expect(projected).not.toContain("private-browser.invalid");
+    expect(projected).not.toContain("private-reasoning-canary");
+    const worker = client.worker.get(
+      [scope.tenantId, scope.userId, scope.agentId, "primary"],
+      {
+        params: {
+          token: createHmac("sha256", coreOptions.connectionSecret)
+            .update(
+              JSON.stringify([
+                "worker",
+                scope.tenantId,
+                scope.userId,
+                scope.agentId,
+                "primary",
+              ]),
+            )
+            .digest("hex"),
+        },
+      },
+    );
+    const root = await worker.harness.root();
+    const first = await worker.conversation.entries(
+      root.id,
+      { order: "ascending" },
+      1,
+    );
+    expect(first.next).toBeDefined();
+    const seal = (purpose: string) => {
+      const data = Buffer.from(
+        JSON.stringify({
+          role: "worker",
+          label: "primary",
+          cursor: first.next,
+        }),
+      ).toString("base64url");
+      return `${data}.${createHmac("sha256", config.secret)
+        .update(JSON.stringify([principalKey(scope), purpose, data]))
+        .digest("base64url")}`;
+    };
+    const cursor = seal("operator-history");
+    const page = await (
+      await request(`/v1/operator/history?cursor=${encodeURIComponent(cursor)}`)
+    ).json();
+    expect(page.actorId).toBe(gateway.workerId());
+    expect(page.messages[0].role).toBe("assistant");
+    expect(
+      (
+        await request(
+          `/v1/operator/history?cursor=${encodeURIComponent(cursor)}`,
+          1,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await request(
+          `/v1/operator/history?cursor=${encodeURIComponent(seal("history"))}`,
+        )
+      ).status,
+    ).toBe(403);
+    expect((await request("/v1/operator/snapshot?actor=foreign")).status).toBe(
+      400,
+    );
+    const principal = config.principals.get(tokenHash(tokens[0]));
+    if (!principal) throw new Error("principal missing");
+    principal.capabilities = ["history.read"];
+    expect((await request("/v1/operator/snapshot")).status).toBe(403);
+    principal.capabilities.push("operator.read");
+    grants.get(key(scope))?.delete("operator.read");
+    expect((await request("/v1/operator/snapshot")).status).toBe(403);
+    grants.get(key(scope))?.add("operator.read");
+    revokeBeforeRelease = true;
+    const revoked = await request("/v1/operator/snapshot");
+    expect(revoked.status).toBe(403);
+    expect(await revoked.text()).not.toContain("Operator canary");
   } finally {
     await closeHttp(server);
   }

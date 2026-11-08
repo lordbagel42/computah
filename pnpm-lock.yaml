@@ -126,6 +126,13 @@ importers:
         version: 7.0.2
 
   apps/dashboard:
+    dependencies:
+      '@computah/observability':
+        specifier: workspace:*
+        version: link:../../packages/observability
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
     devDependencies:
       '@types/node':
         specifier: 24.10.0
@@ -148,6 +155,8 @@ importers:
       zod:
         specifier: 4.6.7
         version: 4.6.7
+
+  apps/observatory: {}
 
   apps/server:
     dependencies:

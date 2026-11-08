@@ -1,6 +1,11 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import {
+  currentTraceHeaders,
+  runtimeLog,
+  traceOperation,
+} from "@computah/observability";
 
 /** @param {NodeJS.ProcessEnv} env */
 export function readDashboardConfig(env) {
@@ -36,6 +41,9 @@ export function readDashboardConfig(env) {
   const port = Number(env.PORT ?? "8790");
   if (!Number.isInteger(port) || port < 0 || port > 65535)
     throw new Error("Invalid dashboard port");
+  const host = env.COMPUTAH_DASHBOARD_HOST ?? "127.0.0.1";
+  if (!["127.0.0.1", "::1", "0.0.0.0"].includes(host))
+    throw new Error("Invalid dashboard listener host");
   return {
     origin: origin.origin,
     core: core.origin,
@@ -43,6 +51,7 @@ export function readDashboardConfig(env) {
     coreToken,
     secure: origin.protocol === "https:",
     port,
+    host,
   };
 }
 
@@ -199,10 +208,44 @@ export function createDashboardServer(config) {
         );
         const cursor = url.searchParams.get("cursor");
         if (cursor) upstream.searchParams.set("cursor", cursor);
-        const result = await fetch(upstream, {
-          headers: { Authorization: `Bearer ${config.coreToken}` },
-          redirect: "error",
-          signal: AbortSignal.timeout(20_000),
+        const result = await traceOperation("dashboard.core", async (span) => {
+          const started = performance.now();
+          try {
+            const result = await fetch(upstream, {
+              headers: {
+                Authorization: `Bearer ${config.coreToken}`,
+                ...currentTraceHeaders(),
+              },
+              redirect: "error",
+              signal: AbortSignal.timeout(20_000),
+            });
+            span.setAttribute("http.response.status_code", result.status);
+            const outcome = result.ok
+              ? "success"
+              : result.status === 403
+                ? "denied"
+                : "error";
+            span.setAttribute("outcome", outcome);
+            runtimeLog("dashboard.core", {
+              operation: "dashboard.core",
+              outcome,
+              status_code: result.status,
+              duration_ms: performance.now() - started,
+            });
+            return result;
+          } catch (error) {
+            runtimeLog(
+              "dashboard.core",
+              {
+                operation: "dashboard.core",
+                outcome: "error",
+                reason: "transport",
+                duration_ms: performance.now() - started,
+              },
+              "error",
+            );
+            throw error;
+          }
         });
         if (!result.ok) {
           reply(result.status === 403 ? 403 : 502, {

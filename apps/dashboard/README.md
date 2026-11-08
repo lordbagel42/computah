@@ -7,28 +7,37 @@ model, registry, actor database, SQL inspector or general-purpose proxy.
 
 ## Run and integration
 
-Node >=22.19, no runtime dependencies or browser build. From the workspace:
-`pnpm --filter @computah/dashboard start`. The gateway listens on `PORT` (8790
-default); `/healthz` reports only gateway readiness, not core/model readiness.
+Node >=22.19 with the frozen workspace install; no browser build. The shared
+`@computah/observability` package and existing `tsx` loader provide the canonical
+content-free telemetry path, not another exporter. From the workspace run
+`pnpm --filter @computah/dashboard start`, or
+`node --import tsx apps/dashboard/src/main.mjs` from the repository root.
+The gateway listens on loopback by default, `PORT` 8790; `/healthz` reports only
+gateway readiness, not core/model readiness.
 Use `apps/dashboard/Dockerfile` with the repository root as its build context.
 It runs as the unprivileged Node user and needs no data volume. A read-only root
-filesystem is suitable. SIGTERM closes HTTP connections. No runtime install is
-required in the image.
+filesystem is suitable. SIGTERM closes HTTP connections and drains telemetry.
+The Docker build installs the pinned workspace dependencies, like the core image;
+it is not a standalone copy of two dependency-free folders.
 
 Supply secrets using deployment-owned protected env files, not command arguments,
 checked-in files, URLs, browser localStorage or Alchemy plaintext state:
 
-| Environment                     | Meaning                                                                                                                             |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `COMPUTAH_DASHBOARD_ORIGIN`     | Exact public HTTPS origin, no path, credentials or query. TLS terminator must preserve this Host. No forwarded headers are trusted. |
-| `COMPUTAH_DASHBOARD_CORE_URL`   | Fixed core origin, HTTPS except loopback HTTP. Container localhost is not the host or another container.                            |
-| `COMPUTAH_DASHBOARD_CORE_TOKEN` | Server-only, separately provisioned token with explicit operator/history read authority for one trusted product scope.              |
-| `COMPUTAH_DASHBOARD_PASSWORD`   | Separate operator login secret, at least 32 characters, never the core bearer.                                                      |
-| `PORT`                          | Gateway listener port.                                                                                                              |
+| Environment                     | Meaning                                                                                                                                |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `COMPUTAH_DASHBOARD_ORIGIN`     | Exact public HTTPS origin, no path, credentials or query. TLS terminator must preserve this Host. No forwarded headers are trusted.    |
+| `COMPUTAH_DASHBOARD_CORE_URL`   | Fixed core origin, HTTPS except loopback HTTP. Container localhost is not the host or another container.                               |
+| `COMPUTAH_DASHBOARD_CORE_TOKEN` | Server-only, separately provisioned token with explicit operator/history read authority for one trusted product scope.                 |
+| `COMPUTAH_DASHBOARD_PASSWORD`   | Separate operator login secret, at least 32 characters, never the core bearer.                                                         |
+| `COMPUTAH_DASHBOARD_HOST`       | Listener `127.0.0.1` (default), `::1`, or explicit `0.0.0.0` inside an isolated container. Never use a wildcard host-network listener. |
+| `PORT`                          | Gateway listener port.                                                                                                                 |
 
-HTTP browser origins are accepted **only** for localhost/127.0.0.1/[::1] local
-development. A private wt0/VPN address does not get an HTTP exception. Deployment
-must provide TLS and verified owner-only network policy; forwarding means a
+HTTP browser origins are accepted **only** for localhost/127.0.0.1/[::1]. This also
+supports owner-authenticated SSH local forwarding to a host-loopback BFF: use the
+exact browser origin `http://127.0.0.1:8790` at both ends and keep the remote port
+loopback-only. That access path uses SSH encryption/authorization, not public HTTP.
+A private wt0/VPN address does not get an HTTP exception. Any non-loopback browser
+access needs TLS and verified owner-only network policy; forwarding means a
 private bind alone is insufficient. The deployment owner controls host/Alchemy,
 network design and activation. Never publish the engine or start a second core.
 
@@ -38,6 +47,21 @@ belongs to the canonical core. Browser requests use `/api/snapshot` and
 `/api/history`. It cannot submit, cancel, compact, sleep, select arbitrary actors,
 switch tenants or access engine/provider/admin APIs. Core HTTP grants are
 token-specific; `core.maintain` is not cross-user history or operator authority.
+The configured principal needs **both** `operator.read` and `history.read` in core
+standing grants and the authenticated binding. Existing owner credentials may be
+held server-side; do not rotate them or add a duplicate scope binding just for
+this BFF. The browser gets only the distinct dashboard session credential.
+Core `operatorHistory` uses Rivet's existing-only `.get`, never `getOrCreate`.
+Core and HTTP recheck grants/current bearer before releasing each bounded result;
+continuations are scope- and purpose-bound, not arbitrary actor selectors.
+
+Configure known privileged browser/provider URL prefixes as a protected JSON array
+in `COMPUTAH_OPERATOR_PRIVILEGED_URL_PREFIXES` on the core. Configured bootstrap
+bearers, connection/provider/search/ingest credentials and native engine token and
+endpoint are redacted by the core projection. This is known-value redaction, not
+arbitrary-secret DLP. Shared telemetry records fixed operation names/status/duration
+and trace correlation only: no histories, URLs, cursors, principal/actor IDs or
+credentials. The BFF sends trace correlation only to its fixed configured core.
 
 `POST /session` exchanges the operator password for a random, hashed-server-side,
 HttpOnly SameSite=Strict cookie. Production uses Secure and `__Host-` prefix.

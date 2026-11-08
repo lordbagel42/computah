@@ -1,39 +1,35 @@
 # Dashboard verification receipt
 
-## Publication readiness against current main
+## Runtime integration
 
-Rechecked against `49fda8502ad3a8c6d0c29f79e63e7d66677f2751` in an
-isolated source checkout. The unchanged dashboard packet plus integration-owned
-operator contract exports/schema fixtures and additive `operator.ts`/tests passed
-`pnpm format`, `pnpm check`, `pnpm typecheck` and the full `pnpm test` suite.
-The check preserved current main's bus contracts/tests and existing core files;
-it did not replace them with the older contract packet. A frozen install passed
-the lockfile supply-chain policy check. Dashboard runtime dependencies remain zero;
-integration owns the nine-line development importer, with no dashboard-induced
-resolved-package changes.
+The previously unwired core/config/HTTP seams are now implemented: scoped
+`operatorHistory` uses existing-only Rivet `.get`, `operator.read` is an explicit
+configured capability, and the two authenticated operator GET routes bind the
+canonical projection to the current principal. Core and HTTP recheck both grants
+before release; revoked/replaced bearer bindings cannot release an in-flight read.
+Known configured secrets/privileged URL prefixes and engine token/endpoint are
+redacted. There is no raw-history fallback, second registry or creating lookup.
 
-Source can publish independently of activation. At this baseline the missing
-runtime seams are specifically:
+The actual Rivet/Pi HTTP regression test covers repeated missing reads, foreign
+actor denial, Task/Worker joins, final text and known-secret/URL redaction,
+correct Worker pagination, foreign/purpose-confused cursors, missing grants,
+standing-grant revocation and bearer removal during an actual actor read.
+Oracle inspected the installed Rivet3.0.6 lookup and Effect4.1.2 error semantics
+and found no source-supported authorization/no-create blocker.
 
-- Core history resolution still uses `getOrCreate`. The operator needs a scoped,
-  existing-only read returning a history page or `null`, not actor creation.
-  Preserve current authorization and actor binding/token checks; recheck grants
-  before reads and release. Existing actors may still wake/resume.
-- Core capability/config validation does not include `operator.read`. Operator
-  access requires that explicit standing grant **and** `history.read`, not a
-  general maintenance grant or browser-selected identity.
-- HTTP does not mount `GET /v1/operator/snapshot` or
-  `GET /v1/operator/history`. Bind the additive projection to the authenticated
-  principal's session/viewer, current bearer/grants, purpose-separated scoped
-  cursor sealing/opening, mode and configured secret/privileged-URL redaction.
-  Only one bounded opaque cursor is accepted; missing actors remain explicit.
+An isolated local registry with the explicit deterministic smoke provider admitted
+two requests through the real submit/poll HTTP path. The operator HTTP → actual
+BFF → Chromium path displayed four Interaction messages, two recorded Task calls
+and one reused persistent Worker with four messages. This is **actor-backed**,
+not fixture-fed UI, but still **faux-model**, not live-provider production proof.
+Keyboard selection/focus, refresh, narrow ordering/overflow and sign-out clearing
+were exercised. The fixed chrome was not redesigned.
 
-Those core/config/HTTP files stay with their canonical owner. No fallback to raw
-`/v1/history`, parallel registry, inspector tokens or fabricated evidence is
-appropriate. The additive projection tests use synthetic callbacks; passing the
-existing actual-actor suite does not verify these unwired operator routes.
-Actor-backed gateway/browser checks, Docker validation and private TLS/access
-activation remain separate; no host or access-policy changes were made.
+The BFF uses the shared observability bootstrap and fixed core tracing path,
+not a custom exporter. Host launch defaults to loopback and supports owner SSH
+forwarding; Docker explicitly uses an isolated container wildcard listener with
+the pinned workspace dependencies. Deployment/consumed-revision and remote trace
+and log-query receipts must be recorded separately, not inferred from local tests.
 
 ## Implemented and locally checked
 
@@ -41,11 +37,10 @@ The source is a runnable Node gateway and browser evidence view. It consumes
 integration-owned `OperatorSnapshot` and `OperatorHistoryPage` Effect-derived
 types, not a parallel dashboard schema. No generated panels are introduced.
 
-- `pnpm format`, `pnpm check`, `pnpm typecheck`, `pnpm test` passed in this orb
-  after local adoption of the canonical operator/observation contract packet.
-  This includes existing actual Rivet/Pi SQLite tests, but **not** new dashboard
-  actor-projection runtime proof: canonical routes are separately owned.
-- `node --test apps/dashboard/test/*.test.mjs` passed public HTTP boundary checks:
+- Initial source-only `pnpm format`, `pnpm check`, `pnpm typecheck`, `pnpm test`
+  passed after adopting the canonical contract packet. Those earlier checks did
+  not establish runtime wiring; the actor-backed checks above are separate.
+- `node --import tsx --test apps/dashboard/test/*.test.mjs` passed public HTTP boundary checks:
   unauthenticated/cross-origin denial, hashed opaque cookie login, only fixed
   GET routes with bounded cursor, no token in static/login responses, logout
   invalidation, HTTPS/host-cookie policy and safe upstream failure responses.
@@ -72,9 +67,9 @@ types, not a parallel dashboard schema. No generated panels are introduced.
 
 ## Not established by these checks
 
-Canonical operator runtime routes, real current actor data through this dashboard,
-private production deployment, owner acceptance and native click-through remain
-separate integration/activation work. No raw history/SQL/engine inspector was used.
+Live-provider production actor data through this dashboard, private production
+deployment, owner acceptance and native click-through remain separate activation
+receipts. No raw history/SQL/engine inspector was used.
 No real credentials or private histories are included in synthetic captures.
 
 Docker CLI exists, but the orb has no Docker daemon (`/var/run/docker.sock`
@@ -82,6 +77,8 @@ absent), so the supplied unprivileged Dockerfile has not been built/run here.
 The equivalent source gateway did run under the orb service supervisor.
 
 The deployment owner must configure trusted operator grants, protected env-file
-paths, deliberate gateway/core loopback-or-TLS networking, exact-origin TLS and
-owner-only VPN/device policy. No production public/VPN listener was activated.
+paths and deliberate gateway/core loopback-or-TLS networking. Owner-authenticated
+SSH local forwarding to a loopback-only BFF is supported; non-loopback access still
+requires exact-origin TLS and verified owner-only VPN/device policy. No public/VPN
+listener is authorized by these checks.
 Eight-hour in-memory sessions deliberately reset on gateway replacement.

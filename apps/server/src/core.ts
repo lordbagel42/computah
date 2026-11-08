@@ -60,6 +60,7 @@ export type CoreObservation = {
 export type Capability =
   | "task.send"
   | "history.read"
+  | "operator.read"
   | "task.control"
   | "core.maintain"
   | "web.search"
@@ -1080,6 +1081,7 @@ export function createCore(options: CoreOptions) {
         id: string,
         capability: Capability,
         signal?: AbortSignal,
+        existingOnly = false,
       ) => {
         let parts: unknown;
         try {
@@ -1101,6 +1103,11 @@ export function createCore(options: CoreOptions) {
         if (key.slice(0, 3).some((part, i) => part !== ownedKey[i]))
           throw new CoreError("denied");
         await permit(scope, capability);
+        if (existingOnly)
+          return client[role as "interaction" | "worker"].get(key, {
+            params: { token: token(role, key) },
+            signal,
+          });
         return handle(client, role as "interaction" | "worker", key, signal);
       };
       const run = <T>(operation: string, body: () => Promise<T>) =>
@@ -1365,6 +1372,36 @@ export function createCore(options: CoreOptions) {
             await Promise.allSettled(stops.map((stop) => stop()));
           }
         },
+        operatorHistory: (id: string, cursor?: Cursor, signal?: AbortSignal) =>
+          run("operator.history", async () => {
+            await permit(scope, "history.read");
+            const actor = await resolve(id, "operator.read", signal, true);
+            try {
+              const root = await actor.harness.root();
+              const page = await actor.conversation.entries(
+                root.id,
+                { order: "ascending" },
+                100,
+                cursor,
+              );
+              await permit(scope, "history.read");
+              await permit(scope, "operator.read");
+              return page;
+            } catch (error) {
+              await permit(scope, "history.read");
+              await permit(scope, "operator.read");
+              if (
+                error &&
+                typeof error === "object" &&
+                "group" in error &&
+                error.group === "actor" &&
+                "code" in error &&
+                error.code === "not_found"
+              )
+                return null;
+              throw error;
+            }
+          }),
         history: (id: string, cursor?: Cursor, signal?: AbortSignal) =>
           run("history", async () => {
             const actor = await resolve(id, "history.read", signal);

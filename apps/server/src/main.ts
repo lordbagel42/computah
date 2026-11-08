@@ -120,6 +120,14 @@ async function main() {
     });
     http = createHttpServer({
       ...config,
+      operatorRedactValues: [
+        ...config.operatorRedactValues,
+        ...(runtime.token ? [runtime.token] : []),
+      ],
+      privilegedUrlPrefixes: [
+        ...config.privilegedUrlPrefixes,
+        runtime.endpoint,
+      ].filter((value): value is string => Boolean(value)),
       bind: core.attach(client),
       revision: process.env.COMPUTAH_REVISION,
       ready: () => !stopping,

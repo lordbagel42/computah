@@ -24,6 +24,7 @@ import {
   type CoreSession,
   type Scope,
 } from "./core.js";
+import { createOperatorProjection } from "./operator.js";
 
 class HttpError extends Error {
   constructor(
@@ -161,6 +162,8 @@ export function createHttpServer(options: {
   secret: string;
   principals: Map<string, Principal>;
   bind(scope: Scope): CoreSession;
+  operatorRedactValues?: readonly string[];
+  privilegedUrlPrefixes?: readonly string[];
 }) {
   const sign = (principal: Principal, purpose: string, data: string) =>
     createHmac("sha256", options.secret)
@@ -235,6 +238,66 @@ export function createHttpServer(options: {
         clientMutationId: record.requestId?.replace(/^input:/, "") ?? "unknown",
         outcome: outcome(record),
       });
+      if (
+        request.method === "GET" &&
+        ["/v1/operator/snapshot", "/v1/operator/history"].includes(url.pathname)
+      ) {
+        const authorize = async () => {
+          if (
+            !bearer ||
+            options.principals.get(tokenHash(bearer)) !== principal
+          )
+            throw new HttpError(403, "forbidden");
+          permit("operator.read");
+          permit("history.read");
+          if (options.ready && !options.ready())
+            throw new HttpError(503, "unavailable");
+        };
+        await authorize();
+        const cursor = url.searchParams.get("cursor") ?? undefined;
+        if (
+          [...url.searchParams.keys()].some((key) => key !== "cursor") ||
+          url.searchParams.getAll("cursor").length > 1 ||
+          (cursor !== undefined && (!cursor || cursor.length > 4096)) ||
+          (url.pathname === "/v1/operator/history" && !cursor)
+        )
+          throw new HttpError(400, "invalid-request");
+        const projection = createOperatorProjection({
+          mode: options.mode,
+          viewer: {
+            tenantId: principal.tenantId,
+            userId: principal.userId,
+            agentId: principal.agentId,
+            displayName: principal.displayName,
+            capabilities: [...principal.capabilities],
+          },
+          session,
+          readExisting: session.operatorHistory,
+          authorize,
+          redactValues: [
+            options.secret,
+            bearer as string,
+            ...(options.operatorRedactValues ?? []),
+          ],
+          privilegedUrlPrefixes: options.privilegedUrlPrefixes ?? [],
+          seal: (value) => seal(principal, "operator-history", value),
+          open: (value) => open(principal, "operator-history", value),
+        });
+        const controller = new AbortController();
+        const closed = () => controller.abort();
+        response.once("close", closed);
+        try {
+          const value =
+            url.pathname === "/v1/operator/snapshot"
+              ? await projection.snapshot(cursor, controller.signal)
+              : await projection.history(cursor as string, controller.signal);
+          await authorize();
+          reply(200, value);
+        } finally {
+          response.off("close", closed);
+        }
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/v1/viewer") {
         const viewer: Viewer = {
           tenantId: principal.tenantId,

@@ -128,6 +128,7 @@ test("production requires TLS and issues secure host-only cookie; no raw upstrea
     COMPUTAH_DASHBOARD_PASSWORD: password,
     COMPUTAH_DASHBOARD_CORE_TOKEN: coreToken,
   });
+  assert.equal(config.host, "127.0.0.1");
   const dashboard = createDashboardServer(config);
   const local = await listen(dashboard);
   t.after(() => {

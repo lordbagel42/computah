@@ -35,6 +35,9 @@ The session exposes:
   Worker views; the HTTP layer projects safe text/state, never these raw objects.
 - `history(resourceId, cursor?, signal?)`: up to 100 **raw durable entries** per
   page. Continue using Pi's returned cursor; a page is not the complete history.
+- `operatorHistory(resourceId, cursor?, signal?)`: existing-only lookup returning
+  a page or `null`, never creating a missing actor. Requires current `operator.read`
+  and `history.read` before reads and release. Existing actors can wake/resume.
 - `cancel(resourceId, submissionId)`: cascade cancellation into linked Workers,
   waiting for native runs to settle. Returns `aborted | already_placed | settled`;
   `already_placed` does **not** confirm cancellation.
@@ -133,6 +136,7 @@ operation and again at actor admission/Task dispatch. Capabilities are:
 | Capability      | Effect                                                                        |
 | --------------- | ----------------------------------------------------------------------------- |
 | `history.read`  | Read/wait on this scope's histories/results                                   |
+| `operator.read` | Inspect existing actors in this scope; also requires `history.read`           |
 | `task.send`     | Admit work/delegate within this scope                                         |
 | `task.control`  | Cancel this scope's queued or active submission and linked Workers            |
 | `core.maintain` | Compact/sleep this scope's actors; intended owner-only grant                  |
@@ -223,26 +227,38 @@ configuring container termination; a running long-poll may add up to25 seconds.
 
 Every `/v1` request needs `Authorization: Bearer <configured-token>`.
 
-| Request                             | Response                                                                                                                              |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /healthz`                      | Unauthenticated `{ready,mode,revision?}` after registry startup;503 while stopping; **not** provider authentication/entitlement proof |
-| `GET /v1/viewer`                    | Trusted viewer binding and fixed `conversationId:"primary"`                                                                           |
-| `POST /v1/submissions`              | Strict `{text,clientMutationId}` →202 signed `id`; retries reuse it, conflicting text→409                                             |
-| `GET /v1/submissions/:id`           | Status and projected final answer;202 pending,200 terminal                                                                            |
-| `GET /v1/submissions/:id?wait=true` | Wait up to25s; timeout returns current status, does not cancel work                                                                   |
-| `GET /v1/submissions/:id/events`    | Authenticated SSE: resync, live text/state replacements, authoritative terminal result                                                |
-| `POST /v1/submissions/:id/cancel`   | Truthful cancellation result; `already_placed`→`unknown`, settled→`too-late`                                                          |
-| `GET /v1/history?cursor=...`        | Paged original user/final assistant text and signed next cursor                                                                       |
+| Request                                | Response                                                                                                                              |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /healthz`                         | Unauthenticated `{ready,mode,revision?}` after registry startup;503 while stopping; **not** provider authentication/entitlement proof |
+| `GET /v1/viewer`                       | Trusted viewer binding and fixed `conversationId:"primary"`                                                                           |
+| `POST /v1/submissions`                 | Strict `{text,clientMutationId}` →202 signed `id`; retries reuse it, conflicting text→409                                             |
+| `GET /v1/submissions/:id`              | Status and projected final answer;202 pending,200 terminal                                                                            |
+| `GET /v1/submissions/:id?wait=true`    | Wait up to25s; timeout returns current status, does not cancel work                                                                   |
+| `GET /v1/submissions/:id/events`       | Authenticated SSE: resync, live text/state replacements, authoritative terminal result                                                |
+| `POST /v1/submissions/:id/cancel`      | Truthful cancellation result; `already_placed`→`unknown`, settled→`too-late`                                                          |
+| `GET /v1/history?cursor=...`           | Paged original user/final assistant text and signed next cursor                                                                       |
+| `GET /v1/operator/snapshot?cursor=...` | Operator-only Interaction → recorded Task → Worker safe projection; existing-only actors, explicit missing evidence                   |
+| `GET /v1/operator/history?cursor=...`  | Operator-only page for the actor selected by a signed, scope/purpose-bound continuation                                               |
 
 All scope comes from server configuration. Public submission/cursor handles are
 HMAC-bound to exact scope and purpose; another user's token cannot use them.
-No endpoint exposes raw Worker actor IDs, raw Pi records, instructions, tool calls,
+The ordinary product endpoints do not expose raw Worker actor IDs, raw Pi records, instructions, tool calls,
 reasoning, compaction summaries, internal tokens or model errors. Output text is
 still model-authored untrusted content, not a guarantee against prompt leakage.
 The public projection is original user/final assistant text and live assistant
 text/state with a linked Worker label. Thinking, tool arguments and tool results
 are not streamed. Errors
 have fixed safe categories and random correlation IDs, without SDK stacks.
+
+The two operator endpoints additionally expose scoped resource/Task identifiers
+and recorded delegation relationships, only with both current `operator.read` and
+`history.read` grants. Browser identity/actor inputs are not accepted. Current
+bearer binding and grants are rechecked before release. Responses are bounded,
+non-atomic evidence, not lifecycle or completion truth. Known configured credential
+values and protected `COMPUTAH_OPERATOR_PRIVILEGED_URL_PREFIXES` JSON-array URL
+prefixes are redacted; native engine endpoint/token are included by the host.
+This is not arbitrary-secret DLP. The web gateway/session and owner SSH-loopback
+access contract are in [the dashboard guide](../apps/dashboard/README.md).
 
 This REST surface reuses shared wire types but does not claim shared snapshot
 revision/cursor/event semantics: message revision1 is a static projection, history

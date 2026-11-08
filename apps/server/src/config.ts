@@ -14,6 +14,7 @@ export const principalKey = (scope: Scope) =>
 const capabilities: Capability[] = [
   "task.send",
   "history.read",
+  "operator.read",
   "task.control",
   "core.maintain",
   "web.search",
@@ -147,6 +148,26 @@ export function readConfig(env: NodeJS.ProcessEnv) {
     throw new Error(
       "COMPUTAH_PI_AUTH_FILE must be an absolute private writable path",
     );
+  let privilegedUrlPrefixes: string[];
+  try {
+    const input: unknown = JSON.parse(
+      env.COMPUTAH_OPERATOR_PRIVILEGED_URL_PREFIXES ?? "[]",
+    );
+    if (
+      !Array.isArray(input) ||
+      input.length > 64 ||
+      !input.every(
+        (value) =>
+          typeof value === "string" &&
+          value.length <= 2048 &&
+          ["http:", "https:", "ws:", "wss:"].includes(new URL(value).protocol),
+      )
+    )
+      throw new Error();
+    privilegedUrlPrefixes = input;
+  } catch {
+    throw new Error("Invalid COMPUTAH_OPERATOR_PRIVILEGED_URL_PREFIXES");
+  }
   return {
     mode: mode as "real" | "faux",
     secret,
@@ -157,5 +178,15 @@ export function readConfig(env: NodeJS.ProcessEnv) {
     port,
     authFile,
     apiKeys: key ? { [provider]: key } : undefined,
+    operatorRedactValues: [
+      secret,
+      ...input.map((binding) => binding.token as string),
+      key,
+      env.COMPUTAH_TAVILY_API_KEY,
+      env.COMPUTAH_AXIOM_INGEST_TOKEN,
+      env.AXIOM_TOKEN,
+      env.AXIOM_API_TOKEN,
+    ].filter((value): value is string => Boolean(value)),
+    privilegedUrlPrefixes,
   };
 }

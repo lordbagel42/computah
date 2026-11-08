@@ -3,9 +3,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/main.mjs",
-    "test": "node --test test/*.test.mjs",
+    "start": "node --import tsx src/main.mjs",
+    "test": "node --import tsx --test test/*.test.mjs",
     "typecheck": "tsc --ignoreConfig --noEmit --allowJs --checkJs --strict --skipLibCheck --types node --target es2023 --module nodenext src/*.mjs public/app.js"
+  },
+  "dependencies": {
+    "@computah/observability": "workspace:*",
+    "tsx": "4.23.15"
   },
   "devDependencies": {
     "@types/node": "24.10.0",
