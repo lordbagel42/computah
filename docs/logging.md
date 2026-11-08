@@ -103,6 +103,53 @@ application was already sending for that operation. DEBUGSHARE remains a separat
 explicit capture. Local exporter tests are not live ingestion or exhaustive
 coverage; the [coverage ledger](observability.md) records adoption/proof separately.
 
+## Slack reply latency observation hook
+
+The dedicated `runtimeSlackReplyLatency(sample)` helper is source-supported at
+`398f13b`, with Slack detector source adoption at `5fc4180`. Process adoption
+and live ingestion remain separate proof.
+Its contract uses the existing bounded logger/exporter, not a content record or
+new telemetry pipeline. Generic `runtimeLog` cannot manufacture this event or
+bypass the dedicated validation. The return value is a **boolean local queue
+admission result**, not an export, Slack delivery or monitor acknowledgment.
+
+The OTLP body is fixed `slack.reply_latency`. The closed input-to-attribute map is:
+
+| Input           | OTLP attribute                | Contract                                            |
+| --------------- | ----------------------------- | --------------------------------------------------- |
+| `messageId`     | `slack.message_id`            | Opaque source SHA256 receipt identifier             |
+| `phase`         | `slack.reply.phase`           | `overdue` or `confirmed`                            |
+| `receivedAtMs`  | `slack.reply.received_at_ms`  | Host receipt epoch-ms clock                         |
+| `observedAtMs`  | `slack.reply.observed_at_ms`  | Observation epoch-ms clock, at least receipt time   |
+| `confirmedAtMs` | `slack.reply.confirmed_at_ms` | Required only for `confirmed`; absent for `overdue` |
+| `elapsedMs`     | `slack.reply.elapsed_ms`      | Phase-specific elapsed milliseconds                 |
+| `thresholdMs`   | `slack.reply.threshold_ms`    | Exactly `5000`                                      |
+
+All clocks and durations must be nonnegative safe integers, including epoch zero.
+A confirmed observation requires received ≤ confirmed ≤ observed and elapsed =
+confirmed − received; it can be at or below 5000ms. An overdue observation requires
+elapsed = observed − received **strictly greater than 5000ms**, with no confirmed
+clock. Unknown keys, invalid SHA256 identifiers, phases or thresholds reject the
+sample. The existing `log.id`, service, revision and emission-time trace/span
+metadata remain; missing active trace context is not fabricated. No message text,
+notification payload or private content is accepted.
+
+The Slack source owns eligibility, durable receipt state and once-per-kind
+observations. Stable receipt identifier + phase supports monitor deduplication;
+the generated `log.id` is not that stable key. Local queue admission is not an
+atomic remote export with SQLite, and drops/crashes can lose telemetry. This is
+not exactly-once delivery or an authoritative per-receipt terminal-state stream.
+
+The monitor contract is historical: count explicit overdue observations and
+confirmed observations whose elapsed time is strictly greater than 5000ms.
+An overdue record means no confirmed answer at that observation, not pending
+forever. Window expiry is not an answer or recovery. Failure/denial/cancellation
+closures remain separate durable source outcomes, never successful answers;
+ambiguous delivery remains unknown. The two phases alone cannot reconstruct a
+current-pending cohort, particularly for multiple receipts sharing a job trace.
+Such a view would require an explicit per-receipt closure projection, not an
+inference from trace correlation or absent records.
+
 ## Analytics observation hook
 
 The separately authorized `runtimeMetric(sample: RuntimeMetricSample)` emits

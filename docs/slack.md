@@ -644,6 +644,53 @@ separate follow-on slices. No attachment or rich core fields are invented here.
 
 ## Durable transport timing (source support)
 
+### Actual-answer latency observations (source support)
+
+The receive-to-answer measurement contract covers newly admitted eligible human
+WORK receipts, including every input in a burst/batch. Migration excludes
+historical receipts. Its clock starts at the host
+Socket Mode callback, not Slack sender time, dequeue or model start. Ignored
+bot/system/unbound traffic and control-only stop/DEBUGSHARE requests are excluded.
+Confirmation follows the actual awaited assistant-answer post, not submission
+or model completion. Only that answer fulfills the successful-answer cohort;
+ACKs, progress, phase cards, status, control and diagnostic posts do not.
+Meaningful terminal failure/denial/cancellation closes source receipt state
+separately, never as a successful answer or forever-pending work. Ambiguous
+delivery remains unconfirmed and is not reposted; API acceptance does not prove
+human-client rendering.
+
+Source `5fc4180` adds an independent 250ms bounded deadline pump that observes
+eligible unanswered receipts while a core request is awaited. A breach is
+strictly **>5000ms**: 5000 is not a breach, 5001 is.
+This polling interval is not a guaranteed exact deadline under event-loop stalls.
+Source state/outbox owns durable once-per-kind observations across restart, with
+stable (message hash, phase) keys and at most 128 outbox items processed per tick.
+The shared [positive-only logging hook](logging.md#slack-reply-latency-observation-hook)
+records opaque receipt identity, phase and consistent clocks through the existing
+bounded exporter. That helper is source-supported at `398f13b`; process adoption
+and live ingestion remain separate acceptance steps. This contract is not
+evidence that collection is active. Auxiliary SQL failures fail open for delivery
+but can degrade or lose measurement evidence; telemetry is not a complete audit.
+
+Local sanitized-export fixtures cover epoch zero, 5000/5001ms, each batched
+receipt, reopen, pending core waits, ambiguous posts, separate typed terminal
+outcomes, excluded controls, storage faults and bounded draining. They assert
+135 latency records and exact restored durable job trace/span correlation.
+The executable fixture also verifies deadline export during an awaited HTTP
+core request. This is local intercepted export, not live Axiom or Slack-client
+acceptance, and it does not establish a repaired response latency.
+
+The monitor consumes explicit historical overdue/late-confirmed observations,
+deduplicated by receipt + phase. It does not infer current pending work from
+missing records or reconstruct batch receipt closures from a shared job trace.
+An overdue fact describes its observation time; window expiry is not recovery.
+Once-only unanswered incidents can age out of the monitor window without an
+answer; periodic re-observation is not part of this contract.
+Current-pending monitoring would require an explicit per-receipt closure
+projection. These measurements identify delay, not its cause or a latency repair.
+
+### Persisted transport and phase timing
+
 Each new job receives a host-generated W3C carrier as an actual child of its
 first receive span, committed with inbox admission. Duplicate events and
 coalesced burst members reuse that carrier: their ACKs link the later receives
