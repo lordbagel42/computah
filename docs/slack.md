@@ -390,12 +390,64 @@ unrequested thread, send fake typing messages or use unsupported user-token sock
 Native threaded status is locally exercised, not yet visually/live verified in
 the owner's actual client. Broader scopes do not remove this protocol constraint.
 
-Output is one bounded plain-text section, no mrkdwn/mentions or unfurls. Answers
-over 2800 characters include an explicit shortened-output notice; no attachment
-or private-history link is generated. json-render is selected for future rich
+Output is bounded Slack mrkdwn text, with the same accessible top-level `text`
+used for the visible message (no overriding plain-text block). Interaction and
+Worker instructions require real newline-separated list items and blank lines
+between paragraphs; the Slack reply protocol also specifies correct JSON newline
+encoding and Slack's dialect rather than Markdown headings/tables/links. JSON
+decoding preserves newlines; the host does not guess where inline bullets should
+split or turn literal backslash-n sequences into whitespace. Code indentation,
+literal escapes, URL case and query strings are preserved. Only Slack's three
+control characters (`&`, `<`, `>`) are entity-escaped at dispatch; model-supplied
+mention/channel/broadcast and angle-bracket link syntax stays literal. Automatic
+mention parsing and unfurls stay disabled. Use bare URLs, not labeled Markdown
+links. Slack itself owns rendering and link detection, not a local HTML emulator.
+Answers over 2800 characters retain a roughly 2700-character prefix, discard a
+partial trailing backtick delimiter and close an open triple-backtick code fence
+before the explicit shortened-output notice. This is not a general Markdown
+parser or lossless long-answer delivery. No attachment or private-history link
+is generated. json-render is selected for future rich
 messages: shared semantic catalog → explicit `@json-render/chat`/Chat SDK Slack
 projection → validated Block Kit budgets. No native controls or arbitrary props
 are treated as executable Slack UI; the text-only REST does not supply rich specs.
+
+### Presentation parity checklist (2026-11-08)
+
+Compared with Mastra `@mastra/core@1.82.0`, commit
+`6e8dfcb83facb0861ebefa4fee384429a113acf4`, and the
+[current Channels docs](https://mastra.ai/docs/channels). This is a source/local
+proof checklist, not a claim of complete parity or deployed Slack-client proof.
+The [pinned demo](https://github.com/mastra-ai/mastra/blob/6e8dfcb83facb0861ebefa4fee384429a113acf4/examples/agent/src/mastra/agents/slack-agent.ts)
+asks for Slack-formatted concise answers; its channels layer supplies the richer
+interactions. Current docs' standard-Markdown path is not our direct Slack-dialect
+contract. Earlier research is retained read-only in the
+[feature plan](https://ampcode.com/threads/T-01a1b897-03f9-765f-8332-6a0f70141030).
+
+| Nicety                                                       | Computah evidence and remaining boundary                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Readable lists, paragraphs, emphasis, inline/fenced code     | Implemented instructions in both model roles and the Slack admission protocol; executable fake-Slack payload checks preserve actual newlines, code indentation/literal escapes, URL case/query and escaped control syntax. No real-model compliance or Slack-client rendering claim.                               |
+| Accessible message text, no accidental notifications/unfurls | Visible top-level mrkdwn text, explicit `link_names:false`, `parse:none`, entity escaping and unfurls off; executable payload assertions.                                                                                                                                                                          |
+| Thread-aware replies and follow-ups                          | Existing finite destination selection, top-level DM default, inherited threads and durable channel subscriptions; adapter tests. Installed channel grants remain separate.                                                                                                                                         |
+| Multi-speaker context                                        | Existing bounded attributed first-mention history. Not full live sender/display-name attribution on every subsequent message.                                                                                                                                                                                      |
+| Working status                                               | Existing opt-in coarse threaded processing/active status with durable cleanup. Not Mastra's [tool-aware copy](https://github.com/mastra-ai/mastra/blob/6e8dfcb83facb0861ebefa4fee384429a113acf4/packages/core/src/channels/typing-status.ts), and no top-level DM typing.                                          |
+| Tool cards and approval controls                             | Missing. Mastra's [formatting implementation](https://github.com/mastra-ai/mastra/blob/6e8dfcb83facb0861ebefa4fee384429a113acf4/packages/core/src/channels/formatting.ts) renders tool lifecycle/Approve/Deny cards. Computah needs a durable exact-action approval/resume contract first, not decorative buttons. |
+| Progressive streaming, native Stop, generated files/media    | Missing Slack projection/action wiring; final text only. Ordinary native Slack streaming/status require threads, so no silent change to top-level DM placement.                                                                                                                                                    |
+| Long-form rich output                                        | Existing explicit shortening, not complete file/card output. No generic Markdown conversion, semantic card renderer or full-length attachment delivery.                                                                                                                                                            |
+
+The screenshot's flat inline bullet run is not evidence that serialization removed
+line breaks: the existing adapter preserves supplied newlines even in plain text.
+The confirmed rendering defect was explicit `mrkdwn:false`/`plain_text`; missing
+composition guidance was a separate source gap. Existing malformed flat replies
+are not retroactively rewritten. Local tests exercise production executable
+dispatch and JSON-envelope decoding, not a second bot or unsolicited live posts.
+Runtime delivery remains within existing linked `slack.delivery` / `slack.api`
+tracing and bounded outcome logs; formatting adds no separate exporter/content
+telemetry. The executable formatting test checks successful delivery/API parent
+continuity and absence of answer text in intercepted sanitized Axiom exports;
+existing retry/cancel/failure export tests remain required. Local interception
+does not establish live Axiom ingestion. No authenticated Slack-client session is
+available in this isolated formatting check, so client rendering/real-model
+obedience remain explicit post-activation acceptance gaps, not simulated proof.
 
 ## Delivery and recovery semantics
 

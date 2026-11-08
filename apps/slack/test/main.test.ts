@@ -6,6 +6,35 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+const formattedAnswer = [
+  "i currently have:",
+  "",
+  "• *Task*: delegate work.",
+  "• _timing_: inspect requests.",
+  "",
+  "```js",
+  '  const literal = "\\n";',
+  "  if (a < b && b > 0) return;",
+  "```",
+  "https://example.com/MixedCase?q=one&n=two",
+  "<@U123> <!here> <#C123|general>",
+  "literal &amp; stays literal",
+].join("\n");
+const expectedWireText = [
+  "i currently have:",
+  "",
+  "• *Task*: delegate work.",
+  "• _timing_: inspect requests.",
+  "",
+  "```js",
+  '  const literal = "\\n";',
+  "  if (a &lt; b &amp;&amp; b &gt; 0) return;",
+  "```",
+  "https://example.com/MixedCase?q=one&amp;n=two",
+  "&lt;@U123&gt; &lt;!here&gt; &lt;#C123|general&gt;",
+  "literal &amp;amp; stays literal",
+].join("\n");
+
 // Exercise the executable boundary without Slack credentials or network calls.
 const preload = `
 import { registerHooks } from 'node:module';
@@ -22,6 +51,8 @@ const modules = {
   '@slack/web-api': \`export const LogLevel={ERROR:'error'};
     export class WebClient {auth={test:async()=>JSON.parse(process.env.TEST_AUTH)};
       chat={postMessage:async(payload)=>{if(payload.channel!=='CALLOWED'||payload.thread_ts!=='100.001')throw new Error('Wrong destination');
+        if(payload.text!==process.env.TEST_EXPECTED_WIRE||payload.mrkdwn!==true||payload.link_names!==false||payload.parse!=='none'||payload.unfurl_links!==false||payload.unfurl_media!==false||payload.blocks!==undefined)throw new Error('Wrong Slack formatting');
+        console.log('synthetic.formatting.correct');
         console.log('synthetic.delivered');process.kill(process.pid,'SIGTERM');return {ok:true};}};
     }\`,
 };
@@ -29,10 +60,17 @@ registerHooks({resolve(specifier,context,next){
   if(modules[specifier])return {url:'data:text/javascript,'+encodeURIComponent(modules[specifier]),shortCircuit:true};
   return next(specifier,context);
 }});
+let replyRequestId='';
+const exportedSpans=[];
 globalThis.fetch=async(_url,options)=>{
   const url=new URL(_url);
   if(url.hostname==='api.axiom.co'){
-    if(url.pathname==='/v1/traces'&&JSON.parse(options.body).resourceSpans.some(r=>r.scopeSpans.some(s=>s.spans.some(span=>span.name==='computah.start.failed'))))console.log('synthetic.start_failed.flushed');
+    if(url.pathname==='/v1/traces'){
+      if(options.body.includes('i currently have:'))throw new Error('Answer leaked to telemetry');
+      exportedSpans.push(...JSON.parse(options.body).resourceSpans.flatMap(r=>r.scopeSpans.flatMap(s=>s.spans)));
+      if(exportedSpans.some(span=>span.name==='computah.start.failed'))console.log('synthetic.start_failed.flushed');
+      if(exportedSpans.some(delivery=>delivery.name==='computah.slack.delivery'&&delivery.status?.code!==2&&exportedSpans.some(api=>api.name==='computah.slack.api'&&api.traceId===delivery.traceId&&api.parentSpanId===delivery.spanId&&api.status?.code!==2)))console.log('synthetic.formatting.trace.correct');
+    }
     return new Response('{}');
   }
   if(url.hostname==='slack.com'){
@@ -44,13 +82,15 @@ globalThis.fetch=async(_url,options)=>{
   if(process.env.TEST_CONTEXT&&!/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/.test(options.headers.traceparent??''))throw new Error('Missing core trace propagation');
   if(url.pathname==='/v1/submissions'){
     const body=JSON.parse(options.body);
+    replyRequestId=JSON.parse(/requestId=("[^"]+")/.exec(body.text)?.[1]??'""');
     const correct=options.headers.authorization.endsWith('shared')&&Object.keys(body).sort().join(',')==='clientMutationId,text'&&body.clientMutationId.startsWith('slack:')&&
+      replyRequestId&&body.text.includes('real newline per list item after JSON decoding')&&
       body.text.includes('[Slack reply protocol: host-offered destinations]')&&
       (process.env.TEST_CONTEXT==='granted'?body.text.includes('"author":"UPEER"')&&body.text.includes('synthetic thread root')&&body.text.includes('[Current request]\\ncurrent request'):body.text.startsWith('current request\\n\\n[Slack reply protocol:'));
     if(!correct)throw new Error('Wrong core request');
     console.log('synthetic.core.correct');return new Response(JSON.stringify({id:'synthetic-signed-handle'}));
   }
-  if(url.pathname.startsWith('/v1/submissions/'))return new Response(JSON.stringify({submission:{outcome:'completed'},messages:[{role:'assistant',blocks:[{kind:'text',text:'synthetic answer'}]}]}));
+  if(url.pathname.startsWith('/v1/submissions/'))return new Response(JSON.stringify({submission:{outcome:'completed'},messages:[{role:'assistant',blocks:[{kind:'text',text:JSON.stringify({requestId:replyRequestId,destination:'thread',text:${JSON.stringify(formattedAnswer)}})}]}]}));
   return new Response(JSON.stringify({viewer:{tenantId:'synthetic',userId:'owner',agentId:options.headers.authorization.endsWith('shared')?process.env.TEST_CHANNEL_VIEWER:'computah',capabilities:['task.send','history.read']}}));
 };
 `;
@@ -104,6 +144,7 @@ async function run(
           TEST_AUTH: JSON.stringify(auth),
           TEST_CHANNEL_VIEWER: channelViewer ?? "",
           TEST_CONTEXT: contextScenario ?? "",
+          TEST_EXPECTED_WIRE: expectedWireText,
           SLACK_APP_TOKEN: "synthetic",
           SLACK_BOT_TOKEN: "synthetic",
           COMPUTAH_CORE_URL: "http://127.0.0.1:1",
@@ -244,6 +285,8 @@ test("executable fetches only the invoked thread with observed grants, ACKs firs
     assert.equal(result.code, 0, result.output);
     assert.match(result.output, /synthetic.acked/);
     assert.match(result.output, /synthetic.core.correct/);
+    assert.match(result.output, /synthetic.formatting.correct/);
+    assert.match(result.output, /synthetic.formatting.trace.correct/);
     assert.match(result.output, /synthetic.delivered/);
     if (context === "granted") {
       assert.match(result.output, /synthetic.context.lookup/);

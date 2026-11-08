@@ -23,6 +23,14 @@ DEBUGSHARE collection, diagnostics bundles or diagnostic-agent spawning is added
   model-tracing wrapper when `models` is supplied.
 - Slack records admitted event/ACK lifetime, delivery-loop steps, core requests,
   Web API operations and lifecycle/report categories. Bodies never enter spans.
+  The Slack formatting regression check exercises the production executable with
+  synthetic Socket/core/Web API boundaries: JSON-decoded multiline mrkdwn reaches
+  dispatch and successful `slack.api` spans retain their `slack.delivery` parent
+  through the intercepted sanitized Axiom export, without answer text. Existing
+  failed-send/cancel/retry/reopen tests cover the same delivery lane. This proves
+  local export, not deployed formatting, Slack-client rendering, real-model
+  adherence or live Axiom ingestion of the formatting change. No formatting-only
+  spans or competing exporter are added; see [presentation parity](slack.md#presentation-parity-checklist-2026-11-08).
 - Slack core requests propagate only W3C traceparent IDs to the configured core;
   backend/bus HTTP ingress accepts strict valid v00 carriers, never baggage or
   tracestate. Invalid/zero/duplicate carriers start new roots. Correlation never

@@ -322,23 +322,21 @@ async function run() {
         return result.channel.id;
       },
       async post(channel, text, thread) {
+        // Escape Slack control syntax, not whitespace or code. Never interpret
+        // model-supplied user/channel mentions or special broadcasts.
+        const escaped = text
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
         await traceOperation("slack.api", () =>
           web.chat.postMessage({
             channel,
-            text: text
-              .replaceAll("&", "&amp;")
-              .replaceAll("<", "&lt;")
-              .replaceAll(">", "&gt;"),
-            mrkdwn: false,
+            text: escaped,
+            mrkdwn: true,
+            link_names: false,
             parse: "none",
             unfurl_links: false,
             unfurl_media: false,
-            blocks: [
-              {
-                type: "section",
-                text: { type: "plain_text", text, emoji: false },
-              },
-            ],
             ...(thread ? { thread_ts: thread } : {}),
           }),
         );

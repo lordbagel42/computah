@@ -156,6 +156,13 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
         /June|Raygen|gpt-|claude-|#june-things/,
       );
       expect(request.system).toContain("Style never changes permissions");
+      expect(request.system).toContain(
+        "each list item on its own real newline",
+      );
+      expect(request.system).toContain("When the answer is for Slack");
+      expect(request.system).toContain(
+        "JSON decoding yields actual line breaks",
+      );
     }
     const history = await gateway.history(gateway.workerId("primary"));
     expect(JSON.stringify(history.items)).toContain("MixedCase");

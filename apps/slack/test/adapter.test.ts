@@ -672,23 +672,40 @@ test("pending work has truthful deadline; oversized output has explicit omission
     await adapter.step();
     assert.equal(f.calls.length, 0);
     assert.match(String(f.posts[0]?.[1]), /not a cancellation/);
-    f.transport.request = async (_binding, _path, body) =>
-      body
-        ? { id: "signed" }
-        : {
-            submission: { outcome: "completed" },
-            messages: [
-              {
-                role: "assistant",
-                blocks: [{ kind: "text", text: "x".repeat(5000) }],
-              },
-            ],
-          };
-    adapter.admit({ ...mention, event_id: "Ev2" });
-    await adapter.step();
-    await adapter.step();
-    assert.ok(String(f.posts[1]?.[1]).length < 2800);
-    assert.match(String(f.posts[1]?.[1]), /Answer shortened/);
+    const notice = "\n[Answer shortened for Slack; ask for a shorter summary.]";
+    const closed = "```\nx\n```\n";
+    const cases = [
+      ["x".repeat(5000), "x".repeat(2700)],
+      [
+        "```js\n" + "x".repeat(4000) + "\n```",
+        "```js\n" + "x".repeat(2694) + "\n```",
+      ],
+      ["x".repeat(2699) + "```\n" + "y".repeat(400), "x".repeat(2699)],
+      [
+        "```js\n" + "x".repeat(2693) + "```" + "y".repeat(400),
+        "```js\n" + "x".repeat(2693) + "\n```",
+      ],
+      [closed + "x".repeat(4000), closed + "x".repeat(2690)],
+    ];
+    for (const [index, [answer, expected]] of cases.entries()) {
+      f.transport.request = async (_binding, _path, body) =>
+        body
+          ? { id: "signed" }
+          : {
+              submission: { outcome: "completed" },
+              messages: [
+                {
+                  role: "assistant",
+                  blocks: [{ kind: "text", text: answer }],
+                },
+              ],
+            };
+      adapter.admit({ ...mention, event_id: `EvLong${index}` });
+      await adapter.step();
+      await adapter.step();
+      assert.equal(f.posts[index + 1]?.[1], expected + notice);
+      assert.ok(String(f.posts[index + 1]?.[1]).length < 2800);
+    }
   } finally {
     adapter.close();
     f.cleanup();
@@ -1638,6 +1655,8 @@ test("input received during context preparation queues separately from the froze
 });
 
 test("agent selects only host-offered surfaces without changing the admitted principal", async () => {
+  const answer =
+    'i currently have:\n\n• *Task*: delegate.\n• timing: inspect.\n\n```js\n  const literal = "\\n";\n```\nhttps://example.com/MixedCase?a=1&b=2';
   for (const [dm, destination, expectedChannel, expectedThread] of [
     [true, "thread", "DPRIVATE", "123.456"],
     [true, "conversation", "DPRIVATE", null],
@@ -1652,6 +1671,7 @@ test("agent selects only host-offered surfaces without changing the admitted pri
         const text = (body as { text: string }).text;
         requestId = JSON.parse(/requestId=("[^"]+")/.exec(text)?.[1] ?? '""');
         assert.ok(requestId);
+        assert.match(text, /real newline per list item after JSON decoding/);
         if (dm) assert.doesNotMatch(text, /"sender_dm"/);
         return request(principal, path, body);
       }
@@ -1670,7 +1690,7 @@ test("agent selects only host-offered surfaces without changing the admitted pri
                 text: JSON.stringify({
                   requestId,
                   destination,
-                  text: "Chosen answer",
+                  text: answer,
                 }),
               },
             ],
@@ -1707,9 +1727,7 @@ test("agent selects only host-offered surfaces without changing the admitted pri
       );
       await adapter.step();
       await adapter.step();
-      assert.deepEqual(f.posts, [
-        [expectedChannel, "Chosen answer", expectedThread],
-      ]);
+      assert.deepEqual(f.posts, [[expectedChannel, answer, expectedThread]]);
       assert.equal(
         f.calls[0]?.principal.agentId,
         dm ? "agent" : "shared-agent",
