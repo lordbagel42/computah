@@ -92,8 +92,14 @@ New admissions also atomically append an identifier-only predecessor link and
 host admission timestamp to the receipt. Identical retries do not advance this
 chain or rewrite the timestamp. The timing tool bounds traversal to 256 receipts,
 finds the earliest current-run input, and selects the newest completed input
-before it. Current coalesced inputs and newer queued messages cannot become the
-diagnostic target. An explicit older durable request ID is also supported; it
+before it. In an all-Slack run it skips background/non-Slack inputs sharing the
+actor; mixed runs retain actor-wide selection. `recent` catalogs up to eight
+such completed targets with bounded input previews under current `history.read`
+as well as `operations.read`, without querying Axiom or transport. It permits
+exact-ID discovery for older retained inputs, including those whose original
+Slack footer exposed only a reply-routing UUID. Current coalesced inputs and
+newer queued messages cannot become the diagnostic target. An explicit older
+durable request ID is also supported; it
 must belong to this actor and precede the active run. Legacy/unindexed inputs
 and lookup limits return unavailable, not fabricated historical timing.
 

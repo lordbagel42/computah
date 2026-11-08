@@ -362,9 +362,13 @@ Slack event subscription or proof that installed grants are sufficient.
 
 New runtime submissions also include a compact `[Slack source]` footer with the
 actual mapped Slack author ID, originating channel and up to eight receipt-order
-messages with their observed timestamp and incoming thread. Incoming thread is
-recorded separately from reply placement: `Reply top-level:` does not erase a
-source thread, and `Reply in thread:` does not turn an unthreaded source into a
+messages with their observed timestamp and incoming thread. `timingRequestId`
+identifies this job's exact core durable timing receipt (`input:slack:<hash>`),
+not the unrelated reply-routing UUID. Burst receipts share one timing target;
+the footer is frozen on admission/retry, not retroactively added to legacy jobs.
+Incoming thread is recorded separately from reply placement: `Reply top-level:`
+does not erase a source thread, and `Reply in thread:` does not turn an
+unthreaded source into a
 thread reply. Different actual source origins now remain separate jobs even when
 reply placement matches, so each stop command can target an unambiguous source.
 An additive `receipt_origins` table stores that observation; old receipts have

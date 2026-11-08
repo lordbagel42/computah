@@ -39,12 +39,14 @@ test("timing selects the earlier answered exchange and its Worker, never this di
       submissionId: number;
       traceId: string | null;
       executionTraceId: string | null;
+      inputPreview?: string;
     }[];
     evidence: { status: string; code?: string };
   }[] = [];
   const queries: string[] = [];
   const transportReceipts: string[] = [];
   let enqueue: (() => void) | undefined;
+  let selector = "previous";
   const provider: PiProviderConfig = {
     api: "ops-test",
     baseUrl: "http://unused.invalid",
@@ -75,7 +77,7 @@ test("timing selects the earlier answered exchange and its Worker, never this di
           enqueue?.();
           enqueue = undefined;
           response = fauxAssistantMessage(
-            fauxToolCall("message_timing", { requestId: "previous" }),
+            fauxToolCall("message_timing", { requestId: selector }),
             { stopReason: "toolUse" },
           );
         }
@@ -148,19 +150,27 @@ test("timing selects the earlier answered exchange and its Worker, never this di
       userId: "alice",
       agentId: "default",
     });
-    const prior = await alice.submit(alice.interactionId, "prior", "prior");
+    const priorId = `slack:${"a".repeat(64)}`;
+    const prior = await alice.submit(alice.interactionId, "prior", priorId);
     const result = await alice.result(
       alice.interactionId,
       prior.submissionId,
       true,
     );
     expect(result.submission.status).toBe("done");
-    expect(await alice.submit(alice.interactionId, "prior", "prior")).toEqual(
+    expect(await alice.submit(alice.interactionId, "prior", priorId)).toEqual(
       prior,
     );
     await expect(
-      alice.submit(alice.interactionId, "different", "prior"),
+      alice.submit(alice.interactionId, "different", priorId),
     ).rejects.toMatchObject({ code: "conflict" });
+    // The actor also receives background work between visible Slack exchanges.
+    const background = await alice.submit(
+      alice.interactionId,
+      "background draft",
+      "background",
+    );
+    await alice.wait(alice.interactionId, background.submissionId);
     await alice.sleep(alice.interactionId);
     let later: ReturnType<typeof alice.submit> | undefined;
     enqueue = () => {
@@ -169,12 +179,12 @@ test("timing selects the earlier answered exchange and its Worker, never this di
     const diagnostic = await alice.submit(
       alice.interactionId,
       "diagnose",
-      "diagnostic",
+      `slack:${"b".repeat(64)}`,
     );
     await alice.wait(alice.interactionId, diagnostic.submissionId);
     expect(observed).toHaveLength(1);
     expect(observed[0].targets[0]).toMatchObject({
-      requestId: "input:prior",
+      requestId: `input:${priorId}`,
       submissionId: prior.submissionId,
     });
     expect(observed[0].targets[0].traceId).toBe(
@@ -183,7 +193,7 @@ test("timing selects the earlier answered exchange and its Worker, never this di
     expect(observed[0].targets[0].executionTraceId).toMatch(/^[a-f0-9]{32}$/);
     expect(observed[0].targets[1].requestId).toMatch(/^task:/);
     expect(observed[0].evidence.status).toBe("ready");
-    expect(transportReceipts).toEqual(["input:prior"]);
+    expect(transportReceipts).toEqual([`input:${priorId}`]);
     expect(queries).toHaveLength(1);
     const diagnosticRecord = (
       await alice.result(alice.interactionId, diagnostic.submissionId)
@@ -194,6 +204,31 @@ test("timing selects the earlier answered exchange and its Worker, never this di
     );
     if (later)
       await alice.wait(alice.interactionId, (await later).submissionId);
+    selector = "recent";
+    const catalog = await alice.submit(
+      alice.interactionId,
+      "diagnose recent",
+      `slack:${"c".repeat(64)}`,
+    );
+    await alice.wait(alice.interactionId, catalog.submissionId);
+    expect(observed.at(-1)?.targets.map((target) => target.requestId)).toEqual([
+      `input:slack:${"b".repeat(64)}`,
+      `input:${priorId}`,
+    ]);
+    expect(observed.at(-1)?.targets.at(-1)?.inputPreview).toBe("prior");
+    expect(queries).toHaveLength(1);
+    expect(transportReceipts).toEqual([`input:${priorId}`]);
+    selector = observed.at(-1)?.targets.at(-1)?.requestId ?? "missing";
+    const exact = await alice.submit(
+      alice.interactionId,
+      "diagnose exact",
+      `slack:${"d".repeat(64)}`,
+    );
+    await alice.wait(alice.interactionId, exact.submissionId);
+    expect(observed.at(-1)?.targets[0].submissionId).toBe(prior.submissionId);
+    expect(observed.at(-1)?.targets[1].requestId).toMatch(/^task:/);
+    expect(queries).toHaveLength(2);
+    expect(transportReceipts).toEqual([`input:${priorId}`, `input:${priorId}`]);
     const bob = core.attach(client)({
       tenantId: "synthetic",
       userId: "bob",
@@ -201,9 +236,9 @@ test("timing selects the earlier answered exchange and its Worker, never this di
     });
     const denied = await bob.submit(bob.interactionId, "diagnose", "denied");
     await bob.wait(bob.interactionId, denied.submissionId);
-    expect(queries).toHaveLength(1);
+    expect(queries).toHaveLength(2);
     expect(JSON.stringify(observed.at(-1))).toContain("denied");
-    expect(transportReceipts).toEqual(["input:prior"]);
+    expect(transportReceipts).toEqual([`input:${priorId}`, `input:${priorId}`]);
   } finally {
     await core.close();
     await telemetry.close();

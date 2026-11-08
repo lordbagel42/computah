@@ -16,9 +16,24 @@ conversations. Workers do not select a different conversation's diagnostic targe
 
 `operations_discover` explains the source, configuration state, grant boundary,
 phase definitions and missing coverage. `message_timing({requestId:"previous"})`
-resolves the completed input/reply immediately preceding the current run, not
-the diagnostics request's own model call. An exact previously returned durable
-request ID can select an older completed exchange in the same conversation.
+resolves the completed input/reply preceding the current run, not the diagnostics
+request's own model call. When all active inputs are Slack receipts, `previous`
+skips non-Slack/background work (including Gmail drafts) sharing the actor.
+Mixed/non-Slack runs retain actor-wide selection; this is not a Slack-channel
+filter or permission boundary. An exact previously returned durable request ID
+can select an older completed exchange in the same conversation.
+`message_timing({requestId:"recent"})` supplies June-style retained-target
+discovery: up to eight completed inputs before this run, newest first, within
+the existing 256-receipt scan. It returns bounded 240-code-unit input previews,
+admission UTC and exact durable/trace IDs, without an Axiom or transport query.
+The same Slack filter applies. Select a matching exact ID for timing and Worker
+links; the catalog is not evidence of elapsed time or a complete message archive.
+Previews additionally require current `history.read` before lookup and disclosure;
+they are untrusted input data, not instructions. Selection is memoized per
+tool task, survives actor sleep and never includes current/newer inputs.
+New Slack source footers include `timingRequestId` (`input:slack:<hash>`), distinct
+from the reply-routing UUID. Frozen legacy submissions are not rewritten;
+`recent` can discover their retained durable IDs without time-proximity matching.
 Results contain the host-resolved receipt/submission/answer/actor identities,
 admission and execution trace IDs, linked Worker roots, omitted-link counts,
 and individual measured spans. Missing roots or pre-index historical messages
@@ -88,6 +103,11 @@ text, returned spans/history, bodies or credentials are added to telemetry.
 Native-parent, typed-denial, deadline/cancellation, empty-result, cleanup-lifetime
 and sanitization regressions are local proof; revision-matched production
 query/tool trace and log acceptance remains separate.
+The `recent` catalog stays inside the same `operations.timing` lifetime, emits
+linked ready/denied/cancelled/missing-target outcomes, and exports `count=0`
+because it returns no Axiom span rows. No preview or target identity enters
+sanitized spans/lifecycle logs. Catalog recovery is a bounded replay-safe read,
+not a new background recorder, retry loop or exporter.
 
 Admission is a host commit clock, **not sender-to-ingress delay**. Model lifetime
 is through terminal stream result, **not TTFT**. Slack Web API lifetime is not
@@ -148,6 +168,11 @@ Discovery returns current remote input schemas for exactly `listDatasets`,
 `getDatasetFields` and `queryDataset`; call arguments are a JSON-encoded object.
 The host rejects every other tool, including admin, mutations and feedback.
 Remote descriptions/results are untrusted evidence, not authority.
+Wake-time guidance identifies the Computah traces/logs datasets, their different
+ID namespaces, explicit UTC windows, trace filters, bounded results and
+`duration / 1ms`; operators inspect current fields rather than assume an
+`attributes` object. Exact native timing targets seed deeper authorized MCP
+investigation. Missing `operations.read` does not become MCP query authority.
 
 This is an **operator-wide**, not conversation-scoped, capability. It requires
 an explicit `axiom.read` standing grant in `COMPUTAH_AUTH_JSON`, checked against

@@ -58,6 +58,17 @@ test("operational queries require explicit grant and separate configuration, and
   expect(await denied.query(scope, [target], signal)).toMatchObject({
     code: "denied",
   });
+  const noHistory = createOperations({
+    queryToken: "synthetic-query",
+    authorize: (_scope, capability) => capability !== "history.read",
+    fetch,
+  });
+  expect(await noHistory.discover(scope)).toMatchObject({
+    status: "configured",
+  });
+  expect(await noHistory.discover(scope, true)).toMatchObject({
+    code: "denied",
+  });
   const missing = createOperations({ authorize: () => true, fetch });
   expect(await missing.discover(scope)).toMatchObject({
     code: "not_configured",

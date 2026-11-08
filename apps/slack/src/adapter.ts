@@ -1151,6 +1151,7 @@ export class SlackAdapter {
               {
                 author: binding.slackUserId,
                 channel: job.channel,
+                timingRequestId: `input:${job.id}`,
                 messages: sources.map((row) => ({
                   ts: (JSON.parse(row.source) as string[])[2],
                   ...(row.origin_known ? { thread: row.thread } : {}),

@@ -625,6 +625,17 @@ end-to-end ancestry is not claimed here. Atomic admission/dedup and private gran
 lineage stay intact.
 Live Axiom ingestion of the deployed Gmail path remains a separate acceptance check.
 
+## Native message timing target discovery
+
+The native `message_timing` recent-target catalog uses the existing private
+`operations.timing` span and linked lifecycle logger; it does not create a second
+recorder/exporter. Local sanitized-export checks cover ready, revoked, cancelled
+and missing-target outcomes, parent continuity and no input-preview disclosure.
+Catalog `count=0` means no Axiom span rows were queried, not zero messages.
+Slack-aware target selection and catalog source support do not establish
+revision-matched live tool selection, Slack adoption or Axiom acceptance; those
+remain separate receipts. See [native operational tools](tools.md).
+
 ## Live public timing channel
 
 The Node SDK also supports an independent `LiveSpanProcessor`, enabled only with

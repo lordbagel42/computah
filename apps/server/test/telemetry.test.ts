@@ -5,18 +5,27 @@ import {
   traceOperation,
 } from "@computah/observability";
 import {
+  BACKGROUND_CONTEXT,
+  withAbortSignal,
+} from "@earendil-works/chord/context";
+import {
   createFauxCore,
   fauxAssistantMessage,
   fauxToolCall,
   getSystemMessageText,
 } from "@earendil-works/pi-ai";
+import type { ToolExecutionApi } from "@earendil-works/pi-durable";
 import { Effect } from "effect";
 import { setupTest } from "rivetkit/test";
 import { expect, test, vi } from "vitest";
 import { readConfig } from "../src/config.js";
 import { createCore } from "../src/core.js";
 import { closeHttp, createHttpServer } from "../src/http.js";
-import { createOperations, type OperationalTarget } from "../src/operations.js";
+import {
+  createOperations,
+  createOperationsExtension,
+  type OperationalTarget,
+} from "../src/operations.js";
 import { smokeProvider } from "../src/smoke-model.js";
 import { createTavily } from "../src/tavily.js";
 
@@ -292,6 +301,38 @@ test("Pi phases keep traces content-free while opted-in native content reaches p
         executionTraceId: null,
         workerLinksOmitted: 0,
       };
+      for (const expected of ["ready", "denied", "cancelled", "unavailable"]) {
+        let allowed = true;
+        const abort = new AbortController();
+        const extension = createOperationsExtension({
+          client: createOperations({ authorize: () => allowed }),
+          scope: async () => scope,
+          target: async () => {
+            if (expected === "denied") allowed = false;
+            if (expected === "cancelled") abort.abort();
+            return expected === "unavailable"
+              ? []
+              : [{ ...target, inputPreview: "private-catalog-preview-canary" }];
+          },
+          transportTiming: async () => {
+            throw new Error("Catalog must not query transport");
+          },
+        });
+        const tool = extension.tools?.find(
+          (tool) => tool.name === "message_timing",
+        );
+        if (!tool) throw new Error("Missing timing tool");
+        const result = JSON.stringify(
+          await tool.execute(
+            { requestId: "recent" },
+            {} as ToolExecutionApi,
+            withAbortSignal(abort.signal, BACKGROUND_CONTEXT),
+          ),
+        );
+        expect(result).toContain(expected);
+        if (expected !== "ready")
+          expect(result).not.toContain("private-catalog-preview-canary");
+      }
       const controller = new AbortController();
       for (const [code, authorize, queryToken, fetch, targets, signal] of [
         [
@@ -600,6 +641,37 @@ test("Pi phases keep traces content-free while opted-in native content reaches p
       }) => r.scopeLogs.flatMap((s) => s.logRecords),
     ),
   );
+  const catalogs = spans.filter(
+    (span) =>
+      span.name === "computah.operations.timing" &&
+      span.traceId === diagnosticsParent.traceparent?.split("-")[1] &&
+      span.parentSpanId === diagnosticsParent.traceparent?.split("-")[2],
+  );
+  expect(catalogs.map((span) => attr(span, "outcome")).sort()).toEqual([
+    "cancelled",
+    "denied",
+    "ready",
+    "target_not_found_or_legacy_or_scan_limit",
+  ]);
+  for (const catalog of catalogs) {
+    const outcome = attr(catalog, "outcome");
+    expect(catalog.status.code).toBe(outcome === "ready" ? 0 : 2);
+    expect(
+      logs.find(
+        (row) =>
+          row.traceId === catalog.traceId && row.spanId === catalog.spanId,
+      ),
+    ).toBeDefined();
+    expect(
+      spans.some(
+        (span) =>
+          span.name === "computah.operations.query" &&
+          span.parentSpanId === catalog.spanId,
+      ),
+    ).toBe(false);
+  }
+  expect(JSON.stringify(spans)).not.toContain("private-catalog-preview-canary");
+  expect(JSON.stringify(logs)).not.toContain("private-catalog-preview-canary");
   for (const search of searches) {
     expect(
       logs.find(

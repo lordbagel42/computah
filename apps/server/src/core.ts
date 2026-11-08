@@ -1129,9 +1129,18 @@ export function createCore(options: CoreOptions) {
             );
             if (active.length !== inputs.length) return null;
             const boundary = Math.min(...active.map((node) => node.sequence));
+            // Slack and background source admissions share an Interaction actor.
+            // "Previous" in a Slack turn must not silently select a Gmail draft.
+            const slackTurn = active.every((node) =>
+              node.requestId.startsWith("input:slack:"),
+            );
+            const recent = requestId === "recent";
             const candidates =
-              requestId === "previous"
-                ? nodes
+              requestId === "previous" || recent
+                ? nodes.filter(
+                    (node) =>
+                      !slackTurn || node.requestId.startsWith("input:slack:"),
+                  )
                 : [
                     {
                       requestId,
@@ -1140,6 +1149,10 @@ export function createCore(options: CoreOptions) {
                           ?.sequence ?? Infinity,
                     },
                   ];
+            const selected: {
+              target: OperationalTarget;
+              links: { worker: string; requestId: string }[];
+            }[] = [];
             for (const node of candidates) {
               if (node.sequence >= boundary) continue;
               const record = await tx.submissionByRequest(
@@ -1150,24 +1163,43 @@ export function createCore(options: CoreOptions) {
                 const links = Object.values(
                   (await tx.doc(Delegations, api.conversationId)).calls,
                 ).filter((link) => link.inputs.includes(record.id));
-                return {
-                  target: await operationalTarget(
-                    tx,
-                    record,
-                    interactionId(targetScope),
-                  ),
-                  links: links.map((link) => ({
-                    worker: link.worker,
-                    requestId: link.requestId,
-                  })),
-                };
+                const target = await operationalTarget(
+                  tx,
+                  record,
+                  interactionId(targetScope),
+                );
+                if (recent) {
+                  target.workerLinksOmitted = links.length;
+                  const entry = await tx.entry(record.entry);
+                  target.inputPreview = (entry?.model ?? [])
+                    .filter((message) => message.role === "user")
+                    .flatMap((message) =>
+                      typeof message.content === "string"
+                        ? [message.content]
+                        : message.content.flatMap((part) =>
+                            part.type === "text" ? [part.text] : [],
+                          ),
+                    )
+                    .join("\n")
+                    .slice(0, 240);
+                }
+                selected.push({
+                  target,
+                  links: recent
+                    ? []
+                    : links.map((link) => ({
+                        worker: link.worker,
+                        requestId: link.requestId,
+                      })),
+                });
+                if (!recent || selected.length === 8) break;
               }
             }
-            return null;
+            return selected;
           }, context);
-          if (!selected) return [];
-          const targets = [selected.target];
-          for (const link of selected.links.slice(0, 20)) {
+          if (!selected?.length) return [];
+          const targets = selected.map((item) => item.target);
+          for (const link of selected[0].links.slice(0, 20)) {
             const target = await handle(
               controlClient(),
               "worker",
@@ -1176,8 +1208,9 @@ export function createCore(options: CoreOptions) {
             ).operationContext(link.requestId);
             if (target) targets.push(target);
           }
-          targets[0].workerLinksOmitted =
-            selected.links.length - (targets.length - 1);
+          if (requestId !== "recent")
+            targets[0].workerLinksOmitted =
+              selected[0].links.length - (targets.length - selected.length);
           await permit(binding.scope, "operations.read");
           return (await api.memo(
             "computah.operations.target.v1",

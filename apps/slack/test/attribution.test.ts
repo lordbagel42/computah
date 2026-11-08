@@ -181,11 +181,13 @@ test("each live speaker and burst retains observed source context across lost ad
       {
         author: "UALICE",
         channel: "CSHARED",
+        timingRequestId: `input:${admitted[0].body.clientMutationId}`,
         messages: [{ ts: "100.001", thread: null }],
       },
       {
         author: "UALICE",
         channel: "CSHARED",
+        timingRequestId: `input:${admitted[1].body.clientMutationId}`,
         messages: [
           { ts: "100.002", thread: "100.001" },
           { ts: "100.0025", thread: "100.001" },
@@ -194,6 +196,7 @@ test("each live speaker and burst retains observed source context across lost ad
       {
         author: "UBOB",
         channel: "CSHARED",
+        timingRequestId: `input:${admitted[2].body.clientMutationId}`,
         messages: [{ ts: "100.003", thread: "100.001" }],
       },
     ]);
@@ -255,6 +258,7 @@ test("each live speaker and burst retains observed source context across lost ad
           {
             author: "UALICE",
             channel: "DPRIVATE",
+            timingRequestId: `input:${calls[before + messageIndex].body.clientMutationId}`,
             messages: [
               {
                 ts: message.ts,
