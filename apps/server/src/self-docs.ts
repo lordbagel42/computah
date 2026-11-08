@@ -20,6 +20,7 @@ const documents = [
   "gmail",
   "procedures",
   "tavily",
+  "browser",
   "bus",
   "events",
   "slack",

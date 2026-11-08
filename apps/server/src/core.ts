@@ -56,6 +56,12 @@ import {
   createAxiomMcp,
   createAxiomMcpExtension,
 } from "./axiom-mcp.js";
+import {
+  type BrowserOptions,
+  createBrowser,
+  createBrowserExtension,
+} from "./browser.js";
+import { createAgentOSBrowser } from "./browser-agentos.js";
 import { createFileTools, type FileCapability } from "./files.js";
 import {
   createOperations,
@@ -108,6 +114,7 @@ export type Capability =
   | "core.maintain"
   | "web.search"
   | "web.extract"
+  | "browser.read"
   | "operations.read"
   | FileCapability
   | "axiom.read";
@@ -283,6 +290,8 @@ export interface CoreOptions {
   apiKeys?: PiOptions["apiKeys"];
   /** Host-only credential/test transport. Never model or ingress input. */
   tavily?: { apiKey: string; fetch?: typeof fetch };
+  /** Explicit native VPS paths; embedded agentOS host callback, not guest ELF execution. */
+  browser?: Pick<BrowserOptions, "executable" | "chromium" | "timeoutMs">;
   /** Separate dataset-scoped read credential; never reuse an ingest/MCP token. */
   operations?: { queryToken?: string; fetch?: typeof fetch };
   /** Private host service callback, independent of Axiom; never an ingress argument. */
@@ -994,6 +1003,27 @@ export function createCore(options: CoreOptions) {
     scope: async (api, context) =>
       (await api.snapshot(Binding, context))?.scope ?? null,
   });
+  const browser = options.browser
+    ? createAgentOSBrowser(
+        createBrowser({ ...options.browser, authorize: options.authorize }),
+      )
+    : undefined;
+  const browserExtension = browser
+    ? createBrowserExtension({
+        client: browser,
+        scope: async (api, context) =>
+          (await api.snapshot(Binding, context))?.scope ?? null,
+        current: async (api, context) => {
+          const binding = await api.snapshot(Binding, context);
+          if (!binding?.scope) throw new CoreError("denied");
+          await sourceCheck(
+            binding.scope,
+            (await api.snapshot(SourceLineage, api.conversationId, context))
+              ?.grants ?? [],
+          );
+        },
+      })
+    : undefined;
   const workerTools = createRegistry();
   workerTools.install(sourceHooks);
   const procedures = createProcedures({
@@ -1011,6 +1041,7 @@ export function createCore(options: CoreOptions) {
   });
   workerTools.install(procedures.extension);
   if (options.tavily) workerTools.install(tavilyExtension);
+  if (browserExtension) workerTools.install(browserExtension);
   const files = createFileTools({
     authorize: options.authorize,
     scope: async (api, context) =>
@@ -1524,6 +1555,10 @@ export function createCore(options: CoreOptions) {
       await common.onWake(c);
       const capabilities = await tavily.capabilities(scopeOf(c.key));
       const fileTools = await files.available(scopeOf(c.key));
+      const browserTools =
+        browser && (await browser.available(scopeOf(c.key)))
+          ? (browserExtension?.tools ?? [])
+          : [];
       const tools = (tavilyExtension.tools ?? []).filter((tool) =>
         capabilities.includes(
           tool.name === "web_search" ? "web.search" : "web.extract",
@@ -1538,6 +1573,7 @@ export function createCore(options: CoreOptions) {
           tools: [
             ...tools,
             ...fileTools,
+            ...browserTools,
             ...sourceTools,
             ...(selfDocs.extension.tools ?? []),
             procedures.tool,

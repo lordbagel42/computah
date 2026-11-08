@@ -19,6 +19,7 @@ const capabilities: Capability[] = [
   "core.maintain",
   "web.search",
   "web.extract",
+  "browser.read",
   "operations.read",
   "files.read",
   "files.write",
@@ -169,6 +170,15 @@ export function readConfig(env: NodeJS.ProcessEnv) {
   } catch {
     throw new Error("Invalid COMPUTAH_OPERATOR_PRIVILEGED_URL_PREFIXES");
   }
+  const executable = env.COMPUTAH_BROWSER_EXECUTABLE;
+  const chromium = env.COMPUTAH_BROWSER_CHROMIUM;
+  if (
+    (executable || chromium) &&
+    (!executable?.startsWith("/") || !chromium?.startsWith("/"))
+  )
+    throw new Error(
+      "Native browser requires both explicit absolute COMPUTAH_BROWSER_EXECUTABLE and COMPUTAH_BROWSER_CHROMIUM paths",
+    );
   return {
     mode: mode as "real" | "faux",
     secret,
@@ -178,6 +188,7 @@ export function readConfig(env: NodeJS.ProcessEnv) {
     sentinel,
     port,
     authFile,
+    browser: executable && chromium ? { executable, chromium } : undefined,
     apiKeys: key ? { [provider]: key } : undefined,
     operatorRedactValues: [
       secret,

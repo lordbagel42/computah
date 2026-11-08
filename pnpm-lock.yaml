@@ -193,6 +193,9 @@ importers:
       '@earendil-works/pi-telemetry':
         specifier: 1.5.0
         version: 1.5.0
+      '@rivet-dev/agentos-core':
+        specifier: 0.4.7
+        version: 0.4.7
       '@rivet-dev/pi':
         specifier: 0.5.6
         version: 0.5.6(@aws-sdk/credential-provider-node@3.972.94)(@earendil-works/chord@1.5.0(esbuild@0.28.2))(@earendil-works/pi-ai@1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-durable@1.5.0(patch_hash=b58034faf761941a407f56c009c72ceb6292607446c1e4c628025f34690a7f4b)(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-telemetry@1.5.0)(@smithy/signature-v4@5.7.5)(rivetkit@3.0.6)(zod@4.6.7)
@@ -205,6 +208,9 @@ importers:
       tsx:
         specifier: 4.21.0
         version: 4.21.0
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
     devDependencies:
       '@types/node':
         specifier: 24.10.0
@@ -377,6 +383,10 @@ packages:
   '@babel/runtime@7.29.13':
     resolution: {integrity: sha512-v+oN26xP4YIlQsbQ/CbTH1WG5m/l/DjKKZNy/Kp3f/AFvbgt7Em/D0FeMM3O2hX0YzeN2M16W8lOpyhIkfCBcQ==}
     engines: {node: '>=6.9.0'}
+
+  '@bare-ts/lib@0.4.1':
+    resolution: {integrity: sha512-G9RnojF6PJjAF6ULnlOc2C10gnCk0jgywZXxVhxDH2Kw4pCNdf0jGk+bYm1kIE9VbzJ9m5iG53mT92jXTCzPzA==}
+    engines: {node: ^14.18.0 || >=16.0.0}
 
   '@biomejs/biome@2.6.6':
     resolution: {integrity: sha512-NCgVJRyrU1+hsW1ILNaRqNAb9fRL4n49bwyef+wjVJQ488/bXbp0BfnNqTTExkiNQT3ugkgYKR1vK8NxsjlNSQ==}
@@ -1102,6 +1112,42 @@ packages:
   '@protobufjs/utf8@1.1.2':
     resolution: {integrity: sha512-b1UQwcEZ4yCnMCD8DAL1VlbvBJE9/IX4FTIp7BG1xYpf29SLazLSrqUkj4w7Y5y7cCVP6E5tcqqcI0xemPkHug==}
 
+  '@rivet-dev/agentos-core@0.4.7':
+    resolution: {integrity: sha512-xayx2Bzl5orwr8PU/6LWYqEvo8i9BSGJmjgwN/LbBmQFIG7gF/8FlXmydUqjjKSrZ/pgUkxfaBc2DcLK+cMOlg==}
+
+  '@rivet-dev/agentos-runtime-core@0.4.7':
+    resolution: {integrity: sha512-mxdwu4zHJPxU5i/Vq/b3NLNIT2x6Dwnn+9oGhkn6pluxmv5WIpIuvq2oet5FfNtF/s/rZpvAuORlNsIHXrdlxg==}
+
+  '@rivet-dev/agentos-runtime-sidecar-darwin-arm64@0.4.7':
+    resolution: {integrity: sha512-WCFsclWACMHODCInpWTKRn312bYQ8U6tdFnT8AskXSQDfomgm7RpoT6HxweASFOli1KQpK+p0OmjiKpvOAvx7w==}
+    engines: {node: '>=20'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@rivet-dev/agentos-runtime-sidecar-darwin-x64@0.4.7':
+    resolution: {integrity: sha512-L2LFzQZOciOVelfmB4WozYjE+Cbsk98kbFb54WziNIXRLpH1/nzClXDyCde6YxNYpkiRdW9vNDjqxTIMlo+A5Q==}
+    engines: {node: '>=20'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu@0.4.7':
+    resolution: {integrity: sha512-kvCLkKPCFi0MeqhzYfU2pMGQNKFRdYx42z8qNNnKsiRXxphYyjfaCXWs3qrEkyJzGq9Y9XIfzpt7Yv/I4grdfw==}
+    engines: {node: '>=20'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu@0.4.7':
+    resolution: {integrity: sha512-K6VypQ2KmRw1y9s5RNiUZsuGui1VdDwTDN8EjspSghdpJbhW4rnWPQdox9Y8fcHzdDecOinBFiEmfLaiZHzTJA==}
+    engines: {node: '>=20'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@rivet-dev/agentos-runtime-sidecar@0.4.7':
+    resolution: {integrity: sha512-AnwwpQ/37GgkJvhRvZWq2IuSqE+evsqupcwG28iLCj98NQsRjuQ0l+IqY21wZaGV4efs1tcG4EsI9R08ahVHPA==}
+    engines: {node: '>=20'}
+
   '@rivet-dev/pi@0.5.6':
     resolution: {integrity: sha512-xRE0G7XPXubCP777jEW8bfXOMF6qMNAi9F7WnhCt44rhTaX0QhUCEIeKOc/FcIvApfOkUgOf7HMDjzjIlHhvtw==}
     engines: {node: '>=22.19.0'}
@@ -1653,6 +1699,9 @@ packages:
   '@vitest/utils@3.2.4':
     resolution: {integrity: sha512-fB2V0JFrQSMsCo9HiSq3Ezpdv4iYaXRG1Sx8edX3MwxfyNn83mKiGzOcH+Fkxt4MHxr3y42fQi1oeAInqgX2QA==}
 
+  '@xterm/headless@6.0.0':
+    resolution: {integrity: sha512-5Yj1QINYCyzrZtf8OFIHi47iQtI+0qYFPHmouEfG8dHNxbZ9Tb9YGSuLcsEwj9Z+OL75GJqPyJbyoFer80a2Hw==}
+
   abort-controller@3.0.0:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
     engines: {node: '>=6.5'}
@@ -1733,6 +1782,10 @@ packages:
   combined-stream@1.0.8:
     resolution: {integrity: sha512-FQN4MRfuJeHf7cBbBMJFXhKSDq+2kAArBlmRBvcvFE5BB1HZKXtSFASDhdlz9zOYwxh8lDdnvmMOe/+5cdoEdg==}
     engines: {node: '>= 0.8'}
+
+  croner@10.0.1:
+    resolution: {integrity: sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g==}
+    engines: {node: '>=18.0'}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -2080,6 +2133,9 @@ packages:
   lmdb@3.5.9:
     resolution: {integrity: sha512-4vgmIHlEPN3a764suer0WhAVq/OhoetrVHXdA/Ed1iWa1NMtUcf8ITDp1D23VOlhHvKFADA4BuC+P3MHdp8QGQ==}
     hasBin: true
+
+  long-timeout@0.1.1:
+    resolution: {integrity: sha512-BFRuQUqc7x2NWxfJBCyUrN8iYUYznzL9JROmRz1gZ6KlOIgmoD+njPVbb+VNn2nGMKggMsK79iUNErillsrx7w==}
 
   long@5.3.2:
     resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
@@ -2594,6 +2650,11 @@ packages:
     engines: {node: '>= 14.6'}
     hasBin: true
 
+  zod-to-json-schema@3.25.2:
+    resolution: {integrity: sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA==}
+    peerDependencies:
+      zod: ^3.25.28 || ^4
+
   zod@4.6.7:
     resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
@@ -2794,6 +2855,8 @@ snapshots:
   '@aws/lambda-invoke-store@0.3.0': {}
 
   '@babel/runtime@7.29.13': {}
+
+  '@bare-ts/lib@0.4.1': {}
 
   '@biomejs/biome@2.6.6':
     optionalDependencies:
@@ -3344,6 +3407,41 @@ snapshots:
 
   '@protobufjs/utf8@1.1.2': {}
 
+  '@rivet-dev/agentos-core@0.4.7':
+    dependencies:
+      '@rivet-dev/agentos-runtime-core': 0.4.7
+      '@rivet-dev/agentos-runtime-sidecar': 0.4.7
+      '@xterm/headless': 6.0.0
+      croner: 10.0.1
+      long-timeout: 0.1.1
+      zod: 4.6.7
+
+  '@rivet-dev/agentos-runtime-core@0.4.7':
+    dependencies:
+      '@bare-ts/lib': 0.4.1
+      '@rivet-dev/agentos-runtime-sidecar': 0.4.7
+      zod: 4.6.7
+      zod-to-json-schema: 3.25.2(zod@4.6.7)
+
+  '@rivet-dev/agentos-runtime-sidecar-darwin-arm64@0.4.7':
+    optional: true
+
+  '@rivet-dev/agentos-runtime-sidecar-darwin-x64@0.4.7':
+    optional: true
+
+  '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu@0.4.7':
+    optional: true
+
+  '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu@0.4.7':
+    optional: true
+
+  '@rivet-dev/agentos-runtime-sidecar@0.4.7':
+    optionalDependencies:
+      '@rivet-dev/agentos-runtime-sidecar-darwin-arm64': 0.4.7
+      '@rivet-dev/agentos-runtime-sidecar-darwin-x64': 0.4.7
+      '@rivet-dev/agentos-runtime-sidecar-linux-arm64-gnu': 0.4.7
+      '@rivet-dev/agentos-runtime-sidecar-linux-x64-gnu': 0.4.7
+
   '@rivet-dev/pi@0.5.6(@aws-sdk/credential-provider-node@3.972.94)(@earendil-works/chord@1.5.0(esbuild@0.28.2))(@earendil-works/pi-ai@1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-durable@1.5.0(patch_hash=b58034faf761941a407f56c009c72ceb6292607446c1e4c628025f34690a7f4b)(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-telemetry@1.5.0)(@smithy/signature-v4@5.7.5)(rivetkit@3.0.6)(zod@4.6.7)':
     dependencies:
       '@earendil-works/chord': 1.5.0(esbuild@0.28.2)
@@ -3763,6 +3861,8 @@ snapshots:
       loupe: 3.2.1
       tinyrainbow: 2.0.0
 
+  '@xterm/headless@6.0.0': {}
+
   abort-controller@3.0.0:
     dependencies:
       event-target-shim: 5.0.1
@@ -3839,6 +3939,8 @@ snapshots:
   combined-stream@1.0.8:
     dependencies:
       delayed-stream: 1.0.0
+
+  croner@10.0.1: {}
 
   cross-spawn@7.0.6:
     dependencies:
@@ -4155,6 +4257,8 @@ snapshots:
       '@lmdb/lmdb-linux-x64': 3.5.9
       '@lmdb/lmdb-win32-arm64': 3.5.9
       '@lmdb/lmdb-win32-x64': 3.5.9
+
+  long-timeout@0.1.1: {}
 
   long@5.3.2: {}
 
@@ -4694,5 +4798,9 @@ snapshots:
   yaml@2.9.0: {}
 
   yaml@2.9.1: {}
+
+  zod-to-json-schema@3.25.2(zod@4.6.7):
+    dependencies:
+      zod: 4.6.7
 
   zod@4.6.7: {}

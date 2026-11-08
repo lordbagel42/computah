@@ -131,6 +131,7 @@ async function main() {
     tavily: process.env.COMPUTAH_TAVILY_API_KEY
       ? { apiKey: process.env.COMPUTAH_TAVILY_API_KEY }
       : undefined,
+    browser: config.browser,
     operations: { queryToken: process.env.COMPUTAH_AXIOM_QUERY_TOKEN },
     axiomMcp: {
       pat: process.env.COMPUTAH_AXIOM_MCP_PAT,
