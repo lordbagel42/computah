@@ -37,6 +37,14 @@ DEBUGSHARE collection, diagnostics bundles or diagnostic-agent spawning is added
   never trace/log attributes. Attribution preserves the existing admission and
   submit spans rather than introducing per-field spans; live model use of the
   metadata and production adoption remain separate acceptance gaps.
+  Rich presentation and stop/progress reuse these same bounded lanes: long-answer
+  executable checks preserve delivery→API parentage, while actual SSE phase and
+  core cancellation checks cover `slack.status`/`slack.wait`→`slack.core` with
+  typed confirmed, denied and unknown outcomes and linked structured logs.
+  Model text, envelopes and worker labels stay out of these sanitized exports.
+  Retry/reopen and ambiguous sends retain their existing reconciliation rules.
+  These are intercepted local exports, not proof of live revision-specific
+  Axiom ingestion, real Slack rendering or one unified Slack→native Task tree.
 - Slack core requests propagate only W3C traceparent IDs to the configured core;
   backend/bus HTTP ingress accepts strict valid v00 carriers, never baggage or
   tracestate. Invalid/zero/duplicate carriers start new roots. Correlation never

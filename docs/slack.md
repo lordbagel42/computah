@@ -334,7 +334,8 @@ actual mapped Slack author ID, originating channel and up to eight receipt-order
 messages with their observed timestamp and incoming thread. Incoming thread is
 recorded separately from reply placement: `Reply top-level:` does not erase a
 source thread, and `Reply in thread:` does not turn an unthreaded source into a
-thread reply. A mixed-origin burst retains each message's actual source thread.
+thread reply. Different actual source origins now remain separate jobs even when
+reply placement matches, so each stop command can target an unambiguous source.
 An additive `receipt_origins` table stores that observation; old receipts have
 unknown origin (omitted field), not an invented unthreaded value. New unthreaded
 inputs explicitly carry `thread:null`. This covers ordinary subscribed follow-ups,
@@ -353,8 +354,8 @@ attributes. This is source/local adapter proof, not live participant acceptance.
 
 The runtime uses a 1.2s quiet window for already-received text, capped at five
 seconds from the first receipt. Only the same mapped sender, trusted principal,
-channel and reply destination may coalesce, with at most eight messages and
-20,000 combined characters per job. Text is joined in receipt order with blank
+channel, actual incoming source origin and reply destination may coalesce, with
+at most eight messages and 20,000 combined characters per job. Text is joined in receipt order with blank
 lines. The polling interval and existing network/backlog can delay dispatch beyond
 the eligibility time; this is not a five-second response guarantee.
 Each event is journaled before ACK even when merged. Mention/message callbacks
@@ -370,6 +371,49 @@ human typing debounce implementation to copy. Its thread status/reaction mechani
 do not establish availability of Socket Mode human typing events.
 
 ## Native working indicator and its boundary
+
+### Stop and observed progress integration
+
+The source supports the following controls and observations; runtime adoption
+and actual Slack-client acceptance remain separate checks.
+
+Mapped users can send exactly `stop` or `stop current` (case-insensitive, with an
+optional final `!` or `.`) in a DM or an allowed mention/subscribed thread. This
+is an adapter control, not a model request. Admission durably freezes the newest
+eligible work target for that sender, trusted core audience and **actual incoming
+source location**, independently of its chosen reply destination. Controls take
+priority over queued work, but a current core long-poll can delay handling up to
+its existing 30-second transport deadline. This is not instant interruption.
+
+Queued/preparing work is withdrawn without core admission. An already submitted
+signed handle uses the authenticated core cancellation endpoint; confirmed,
+too-late, denied and unavailable results have distinct replies, while an unknown
+or not-yet-confirmed result explicitly leaves cancellation unconfirmed. A
+missing handle after possible admission freezes the original job as `unresolved`
+for operator reconciliation. Stop does not retry admission or create a model turn
+just to obtain a handle. Native cancellation acts on a coalesced run and cannot
+undo completed effects. Legacy jobs without observed source origin are not
+guessed into a stop target.
+
+Native same-run coalescing can include more than one sender's input in a shared
+core scope. Cancellation is therefore gated for a scope/audience with multiple
+current **or retained historical** Slack senders. Removing a binding, restarting
+or pruning a receipt does not erase this durable fence. Single-sender stop still
+describes run-wide effects and no external-effect rollback. This does not provide
+per-message isolated cancellation inside the native run.
+
+After five seconds and a pending result poll, a job can make one bounded attempt
+to read actual core SSE phase and post a progress marker at its original source
+location. The snapshot has a two-second/128,000 decoded UTF-16-unit budget; no live
+model text, JSON reply envelope, Worker label, reasoning or tool payload is published. It does not
+replay on reconnect or change the final answer's host-validated route. Top-level
+DM placement remains unchanged. Stop acknowledgments and progress use ordinary
+send uncertainty reconciliation, not blind re-posts.
+
+Interactivity/Stop buttons remain gated by unobserved installed app configuration.
+Native task streams/cards are a separate dependent increment, not proved by this
+one-shot phase marker. Neither source tests nor intercepted sanitized telemetry
+prove live Slack rendering or real-model behavior.
 
 Native status is **off by default**. Enable `COMPUTAH_SLACK_STATUS_ENABLED=true`
 only after validating installed grants and the actual threaded surface. Startup
@@ -412,23 +456,32 @@ unrequested thread, send fake typing messages or use unsupported user-token sock
 Native threaded status is locally exercised, not yet visually/live verified in
 the owner's actual client. Broader scopes do not remove this protocol constraint.
 
-Output is bounded Slack mrkdwn text, with the same accessible top-level `text`
-used for the visible message (no overriding plain-text block). Interaction and
-Worker instructions require real newline-separated list items and blank lines
+### Bounded rich answer presentation
+
+Output is one bounded Slack mrkdwn post, with all retained content in accessible
+top-level `text` and visible mrkdwn sections (no overriding plain-text block).
+Interaction and Worker instructions require real newline-separated list items and blank lines
 between paragraphs; the Slack reply protocol also specifies correct JSON newline
-encoding and Slack's dialect rather than Markdown headings/tables/links. JSON
+encoding and Slack's dialect rather than Markdown headings/tables. JSON
 decoding preserves newlines; the host does not guess where inline bullets should
 split or turn literal backslash-n sequences into whitespace. Code indentation,
-literal escapes, URL case and query strings are preserved. Only Slack's three
-control characters (`&`, `<`, `>`) are entity-escaped at dispatch; model-supplied
-mention/channel/broadcast and angle-bracket link syntax stays literal. Automatic
-mention parsing and unfurls stay disabled. Use bare URLs, not labeled Markdown
-links. Slack itself owns rendering and link detection, not a local HTML emulator.
-Answers over 2800 characters retain a roughly 2700-character prefix, discard a
-partial trailing backtick delimiter and close an open triple-backtick code fence
-before the explicit shortened-output notice. This is not a general Markdown
-parser or lossless long-answer delivery. No attachment or private-history link
-is generated. json-render is selected for future rich
+literal escapes, URL case and query strings are preserved. Slack's control
+characters (`&`, `<`, `>`) are entity-escaped; model-supplied mention/channel/
+broadcast syntax stays literal. Outside code, simple `[label](HTTP(S))` and native
+`<HTTP(S)|label>` links become safe labeled native links after URL validation.
+Malformed or credential-bearing targets stay literal. Ambiguous Markdown URL
+parentheses/brackets/backticks are not converted; this is not a generic Markdown
+parser. Automatic mention parsing and unfurls stay disabled. Slack itself owns
+rendering and link detection, not a local HTML emulator.
+
+A post retains up to 29,000 escaped/projected UTF-16 units, plus any closing fence
+and explicit omission notice, in at most 20 sections of at most 2900 units each.
+Code fences close/reopen across sections without rewriting retained code
+whitespace or literal escapes. Inline code and link tokens are indivisible: a
+projected token over 2892 units, or exhausted section-packing budget, can end
+retention earlier, with the same truthful notice. This replaces the previous
+2800-character clip but is not lossless long-answer delivery. No attachment or
+private-history link is generated. json-render is selected for future rich
 messages: shared semantic catalog → explicit `@json-render/chat`/Chat SDK Slack
 projection → validated Block Kit budgets. No native controls or arbitrary props
 are treated as executable Slack UI; the text-only REST does not supply rich specs.
@@ -445,16 +498,17 @@ interactions. Current docs' standard-Markdown path is not our direct Slack-diale
 contract. Earlier research is retained read-only in the
 [feature plan](https://ampcode.com/threads/T-01a1b897-03f9-765f-8332-6a0f70141030).
 
-| Nicety                                                       | Computah evidence and remaining boundary                                                                                                                                                                                                                                                                           |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Readable lists, paragraphs, emphasis, inline/fenced code     | Implemented instructions in both model roles and the Slack admission protocol; executable fake-Slack payload checks preserve actual newlines, code indentation/literal escapes, URL case/query and escaped control syntax. No real-model compliance or Slack-client rendering claim.                               |
-| Accessible message text, no accidental notifications/unfurls | Visible top-level mrkdwn text, explicit `link_names:false`, `parse:none`, entity escaping and unfurls off; executable payload assertions.                                                                                                                                                                          |
-| Thread-aware replies and follow-ups                          | Existing finite destination selection, top-level DM default, inherited threads and durable channel subscriptions; adapter tests. Installed channel grants remain separate.                                                                                                                                         |
-| Multi-speaker context                                        | Bounded attributed first-mention history plus actual author/channel/thread/timestamps on every newly prepared runtime input, including subscribed follow-ups. Burst/restart/lost-response tests preserve separate speakers and authority. Display-name lookup remains absent.                                      |
-| Working status                                               | Existing opt-in coarse threaded processing/active status with durable cleanup. Not Mastra's [tool-aware copy](https://github.com/mastra-ai/mastra/blob/6e8dfcb83facb0861ebefa4fee384429a113acf4/packages/core/src/channels/typing-status.ts), and no top-level DM typing.                                          |
-| Tool cards and approval controls                             | Missing. Mastra's [formatting implementation](https://github.com/mastra-ai/mastra/blob/6e8dfcb83facb0861ebefa4fee384429a113acf4/packages/core/src/channels/formatting.ts) renders tool lifecycle/Approve/Deny cards. Computah needs a durable exact-action approval/resume contract first, not decorative buttons. |
-| Progressive streaming, native Stop, generated files/media    | Missing Slack projection/action wiring; final text only. Ordinary native Slack streaming/status require threads, so no silent change to top-level DM placement.                                                                                                                                                    |
-| Long-form rich output                                        | Existing explicit shortening, not complete file/card output. No generic Markdown conversion, semantic card renderer or full-length attachment delivery.                                                                                                                                                            |
+| Nicety                                                       | Computah evidence and remaining boundary                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Readable lists, paragraphs, emphasis, inline/fenced code     | Implemented instructions in both model roles and the Slack admission protocol; executable fake-Slack payload checks preserve actual newlines, code indentation/literal escapes, URL case/query and escaped control syntax. No real-model compliance or Slack-client rendering claim.                                                                                                                                                      |
+| Accessible message text, no accidental notifications/unfurls | Full retained top-level accessibility text plus bounded visible mrkdwn sections, explicit `link_names:false`, `parse:none`, entity escaping and unfurls off; executable exact-payload assertions.                                                                                                                                                                                                                                         |
+| Thread-aware replies and follow-ups                          | Existing finite destination selection, top-level DM default, inherited threads and durable channel subscriptions; adapter tests. Installed channel grants remain separate.                                                                                                                                                                                                                                                                |
+| Multi-speaker context                                        | Bounded attributed first-mention history plus actual author/channel/thread/timestamps on every newly prepared runtime input, including subscribed follow-ups. Burst/restart/lost-response tests preserve separate speakers and authority. Display-name lookup remains absent.                                                                                                                                                             |
+| Working status and observed progress                         | Existing opt-in coarse threaded processing/active status with durable cleanup; one-attempt actual Interaction/Worker phase marker after five seconds and a pending poll, at actual source. Executable SSE/phase-only/uncertainty/export tests. Not Mastra's [tool-aware copy](https://github.com/mastra-ai/mastra/blob/6e8dfcb83facb0861ebefa4fee384429a113acf4/packages/core/src/channels/typing-status.ts), and no top-level DM typing. |
+| Tool cards and approval controls                             | Missing. Mastra's [formatting implementation](https://github.com/mastra-ai/mastra/blob/6e8dfcb83facb0861ebefa4fee384429a113acf4/packages/core/src/channels/formatting.ts) renders tool lifecycle/Approve/Deny cards. Computah needs a durable exact-action approval/resume contract first, not decorative buttons.                                                                                                                        |
+| Stop                                                         | Implemented exact stop/current text control without model work; durable sender/source/audience target, queued withdrawal and real authenticated core cancellation. Legacy unknown-origin and current/historically shared core scopes conservatively gated. Missing handle freezes unresolved for operator reconciliation, never re-admission. Native button still needs observed interactivity and action-to-core binding.                |
+| Progressive streaming and generated files/media              | Missing Slack projection/action wiring. Native task-state streams are a dependent increment, not a claim about this one-shot progress marker. Ordinary native Slack streaming/status require threads, so no silent change to top-level DM placement.                                                                                                                                                                                      |
+| Long-form rich output and safe labeled links                 | Implemented one-post budget of 29,000 escaped/projected retained units plus closure/omission, at most 20 sections of 2900; indivisible-token/packing limits can shorten earlier. Code-safe splits and simple validated HTTP(S) labels outside code. Executable hard-limit/Unicode/accessibility and sanitized-export checks pass. No generic Markdown converter, lossless attachment, semantic cards or client-rendering proof.           |
 
 The screenshot's flat inline bullet run is not evidence that serialization removed
 line breaks: the existing adapter preserves supplied newlines even in plain text.
