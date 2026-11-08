@@ -51,6 +51,14 @@ protected-host activation and independently queried ingestion are separate state
   Retry/reopen and ambiguous sends retain their existing reconciliation rules.
   These are intercepted local exports, not proof of live revision-specific
   Axiom ingestion, real Slack rendering or one unified Slack→native Task tree.
+  Fair immediate-snapshot polling retains these same per-job phase carriers;
+  local sanitized-export checks interleave two receipts and verify separate
+  receive→job→submit/wait/delivery ancestry and cancellation outcome logs.
+  Typed cancelled/failed snapshots mark the wait phase and its structured log
+  accordingly, not just the nested event. The durable service ordinal is not a
+  timing measurement and does not rewrite admission/dequeue boundaries. These
+  checks prove local scheduling/correlation, not deployed latency improvement
+  or a five-second answer guarantee.
   Native phase-card checks exercise executable DM/channel start/append/stop with
   trusted recipients and isolated channel credentials. They verify status→API
   parentage, linked logs and explicit error/denial attributes, including uncertain

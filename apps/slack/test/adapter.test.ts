@@ -45,6 +45,82 @@ const mention: Ingress = {
 };
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+test("an unfinished reply does not block newer admission or starve other replies across restart", async () => {
+  const f = fixture();
+  const submitted: string[] = [];
+  let finishFirst = false;
+  f.transport.request = async (_principal, path, body) => {
+    if (body) {
+      const text = (body as { text: string }).text;
+      submitted.push(text);
+      return { id: text };
+    }
+    assert.equal(
+      new URL(path, "https://core.invalid").searchParams.get("wait"),
+      "false",
+    );
+    const id = decodeURIComponent(path.split("/").at(-1)?.split("?")[0] ?? "");
+    return {
+      submission: {
+        outcome: id === "first" && !finishFirst ? "streaming" : "completed",
+      },
+      messages: [
+        { role: "assistant", blocks: [{ kind: "text", text: `${id} answer` }] },
+      ],
+    };
+  };
+  const input = (id: string): Ingress => ({
+    team_id: "TTEST",
+    event_id: id,
+    event: {
+      type: "message",
+      channel_type: "im",
+      user: "UOWNER",
+      channel: "DOWNER",
+      ts: "123.456",
+      text: id,
+    },
+  });
+  // A frozen clock also catches a timestamp-based scheduler that never rotates.
+  let adapter = new SlackAdapter(
+    f.path,
+    [binding],
+    "UBOT",
+    f.transport,
+    () => 10_000,
+  );
+  try {
+    adapter.admit(input("first"));
+    await adapter.step();
+    adapter.admit(input("second"));
+    await adapter.step();
+    assert.deepEqual(submitted, ["first", "second"]);
+    await adapter.step(); // First is still generating; this is not a long poll.
+    assert.deepEqual(f.posts, []);
+    adapter.close();
+    adapter = new SlackAdapter(
+      f.path,
+      [binding],
+      "UBOT",
+      f.transport,
+      () => 10_000,
+    );
+    await adapter.step(); // Fairness survives reopen: second completes first.
+    assert.deepEqual(f.posts, [["DOWNER", "second answer", null]]);
+    finishFirst = true;
+    await adapter.step();
+    assert.deepEqual(f.posts, [
+      ["DOWNER", "second answer", null],
+      ["DOWNER", "first answer", null],
+    ]);
+    assert.deepEqual(adapter.counts(), { done: 2 });
+    assert.equal(await adapter.step(), false);
+  } finally {
+    adapter.close();
+    f.cleanup();
+  }
+});
+
 test("auxiliary timing write failures cannot suppress ACK or turn an unsent reply uncertain", async () => {
   for (const operation of ["INSERT", "UPDATE"]) {
     const f = fixture();
@@ -1129,12 +1205,17 @@ test("burst quiet window persists across restart; lost admission freezes text an
     const sends = f.calls
       .filter((c) => c.body)
       .map((c) => c.body as { text: string; clientMutationId: string });
-    assert.deepEqual(
-      sends.map((s) => s.text),
-      ["one\n\ntwo", "one\n\ntwo", "three"],
+    assert.deepEqual(sends.map((s) => s.text).sort(), [
+      "one\n\ntwo",
+      "one\n\ntwo",
+      "three",
+    ]);
+    const retries = sends.filter((send) => send.text === "one\n\ntwo");
+    assert.equal(retries[0]?.clientMutationId, retries[1]?.clientMutationId);
+    assert.notEqual(
+      retries[0]?.clientMutationId,
+      sends.find((send) => send.text === "three")?.clientMutationId,
     );
-    assert.equal(sends[0]?.clientMutationId, sends[1]?.clientMutationId);
-    assert.notEqual(sends[1]?.clientMutationId, sends[2]?.clientMutationId);
     assert.equal(f.posts.length, 2);
     assert.ok(f.posts.every((p) => p[2] === null));
   } finally {
@@ -1575,9 +1656,12 @@ test("denied context falls back to original text; DMs, unbound channels, roots a
     for (let i = 0; i < 6; i++) await adapter.step();
     assert.equal(lookups, 1);
     assert.equal(f.posts.length, 4);
-    assert.equal(
-      (f.calls[6]?.body as { text: string } | undefined)?.text.length,
-      20000,
+    assert.ok(
+      f.calls.some(
+        (call) =>
+          (call.body as { text?: string } | undefined)?.text ===
+          "a".repeat(20000),
+      ),
     );
   } finally {
     adapter.close();

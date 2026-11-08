@@ -239,6 +239,14 @@ export class SlackAdapter {
     if (
       !(
         this.db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]
+      ).some((column) => column.name === "serviced")
+    )
+      this.db.exec(
+        "ALTER TABLE jobs ADD COLUMN serviced INTEGER NOT NULL DEFAULT 0",
+      );
+    if (
+      !(
+        this.db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[]
       ).some((column) => column.name === "context_before")
     )
       this.db.exec("ALTER TABLE jobs ADD COLUMN context_before TEXT");
@@ -886,10 +894,18 @@ export class SlackAdapter {
     this.lastStepWasUpload = false;
     const job = this.db
       .prepare(
-        "SELECT * FROM jobs WHERE (state='queued' AND ready<=?) OR state IN ('preparing','admitting','submitted') ORDER BY CASE WHEN id IN (SELECT job FROM job_lifecycle WHERE kind='stop') THEN 0 ELSE 1 END, created, rowid LIMIT 1",
+        "SELECT * FROM jobs WHERE (state='queued' AND ready<=?) OR state IN ('preparing','admitting','submitted') ORDER BY CASE WHEN id IN (SELECT job FROM job_lifecycle WHERE kind='stop') THEN 0 ELSE 1 END, serviced, created, rowid LIMIT 1",
       )
       .get(this.now()) as unknown as Job | undefined;
     if (!job) return false;
+    // Rotate even failed attempts; an unfinished or unreachable oldest job must
+    // not monopolize admission or polling. A durable ordinal also works across
+    // restart and equal/backwards wall-clock readings; it is not a timing value.
+    this.db
+      .prepare(
+        "UPDATE jobs SET serviced=(SELECT coalesce(max(serviced),0)+1 FROM jobs) WHERE id=?",
+      )
+      .run(job.id);
     const timing = this.timing(job.id);
     if (timing && timing.dequeued === null) {
       const dequeued = this.now();
@@ -1178,37 +1194,43 @@ export class SlackAdapter {
         });
         return true;
       }
-      const result = await this.phase(job.id, "wait", async () => {
-        const result = (await this.transport.request(
-          binding,
-          `/v1/submissions/${encodeURIComponent(job.submission ?? "")}?wait=true`,
-        )) as {
-          submission?: { outcome?: string };
-          messages?: {
-            role: string;
-            blocks: { kind: string; text?: string }[];
-          }[];
-        };
-        if (
-          ![
-            "accepted",
-            "streaming",
-            "completed",
-            "cancelled",
-            "failed",
-          ].includes(result.submission?.outcome ?? "")
-        )
-          throw new Error("Invalid result");
-        traceEvent("slack.wait", {
-          outcome:
+      let waitOutcome: PhaseOutcome = "success";
+      const result = await this.phase(
+        job.id,
+        "wait",
+        async () => {
+          const result = (await this.transport.request(
+            binding,
+            `/v1/submissions/${encodeURIComponent(job.submission ?? "")}?wait=false`,
+          )) as {
+            submission?: { outcome?: string };
+            messages?: {
+              role: string;
+              blocks: { kind: string; text?: string }[];
+            }[];
+          };
+          if (
+            ![
+              "accepted",
+              "streaming",
+              "completed",
+              "cancelled",
+              "failed",
+            ].includes(result.submission?.outcome ?? "")
+          )
+            throw new Error("Invalid result");
+          waitOutcome =
             result.submission?.outcome === "cancelled"
               ? "cancelled"
               : result.submission?.outcome === "failed"
                 ? "error"
-                : "success",
-        });
-        return result;
-      });
+                : "success";
+          traceEvent("slack.wait", { outcome: waitOutcome });
+          return result;
+        },
+        undefined,
+        () => waitOutcome,
+      );
       const outcome = result.submission?.outcome;
       if (outcome === "accepted" || outcome === "streaming") {
         await this.progressJob(job, binding);

@@ -570,8 +570,18 @@ alias receipts are removed with their job. Subscriptions have their separate cap
 Delayed duplicates outside retention can
 produce another notification, although core mutation IDs still deduplicate work.
 
-A single polling worker performs bounded 30s core requests, roughly one per second
-between steps, and waits at most five minutes from receipt before trying a truthful
+A single polling worker performs bounded 30s core requests, with a one-second
+pause between steps. Result reads request immediate snapshots, not a model-completion
+long poll. Eligible jobs rotate by a durable service ordinal, with stop controls
+first, so an unfinished or failed oldest job cannot monopolize new admission or
+other replies. The ordinal is scheduling state, not a measured timestamp; timing
+boundaries remain unchanged. Processing stays serial to preserve cancellation,
+frozen admission and ambiguous-send semantics. Slow HTTP/status/context calls and
+backlog can still delay a step; this is not a five-second reply guarantee.
+This trades long polling for at most roughly one snapshot request per second
+across the worker, not per job; each read still incurs core authorization and
+telemetry. More pending jobs share that rate rather than creating parallel polls.
+The worker waits at most five minutes from receipt before trying a truthful
 timeout notice at the receipt's original destination (DM or approved channel thread).
 This does not cancel core work. Backlog and network outage
 can delay that notice; no hard wall-clock delivery guarantee.

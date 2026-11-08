@@ -205,6 +205,29 @@ test("sanitized traces and logs connect first receive to durable job, retries, r
         pumps.every((pump) => pump.split("-")[1] !== carrier.split("-")[1]),
       );
     }
+    // Fair scheduling interleaves different receipts without borrowing the
+    // current pump or another job's parent, including typed cancellation.
+    const interleaved: string[] = [];
+    transport.post = async () => {};
+    for (const id of ["fair-first", "fair-second"]) {
+      await traceOperation("slack.receive", async () => {
+        interleaved.push(currentTraceHeaders().traceparent);
+        adapter.admit({
+          ...input,
+          event_id: id,
+          event: { ...input.event, ts: id, text: "private-synthetic-message" },
+        });
+      });
+      await adapter.step();
+    }
+    await adapter.step();
+    await adapter.step();
+    assert.deepEqual(coreRoots.slice(5), [
+      interleaved[0].split("-")[1],
+      interleaved[1].split("-")[1],
+      interleaved[0].split("-")[1],
+      interleaved[1].split("-")[1],
+    ]);
     db.close();
     adapter.close();
     await telemetry.close();
@@ -271,6 +294,47 @@ test("sanitized traces and logs connect first receive to durable job, retries, r
           resource.scopeSpans.flatMap((scope) => scope.spans),
       ),
     );
+    for (const receive of interleaved) {
+      const graph = spans.filter(
+        (span) => span.traceId === receive.split("-")[1],
+      );
+      const job = graph.find((span) => span.name === "computah.slack.job");
+      assert.equal(job?.parentSpanId, receive.split("-")[2]);
+      for (const name of ["submit", "wait", "delivery"])
+        assert.ok(
+          graph.some(
+            (span) =>
+              span.name === `computah.slack.${name}` &&
+              span.parentSpanId === job?.spanId,
+          ),
+        );
+      const wait = graph.find(
+        (span) =>
+          span.name === "computah.slack.wait" &&
+          (span.attributes as { key: string }[]).some(
+            (attribute) => attribute.key === "attempt",
+          ),
+      );
+      assert.ok(wait);
+      assert.ok(
+        (
+          wait.attributes as { key: string; value: { stringValue?: string } }[]
+        ).some(
+          (attribute) =>
+            attribute.key === "outcome" &&
+            attribute.value.stringValue === "cancelled",
+        ),
+      );
+      assert.ok(
+        records.some(
+          (record) =>
+            record.traceId === receive.split("-")[1] &&
+            record.spanId === wait?.spanId &&
+            record.event === "operation.completed" &&
+            record.attributes.outcome === "cancelled",
+        ),
+      );
+    }
     const jobSpans = spans.filter(
       (span) => span.traceId === root.split("-")[1],
     );
@@ -319,7 +383,7 @@ test("sanitized traces and logs connect first receive to durable job, retries, r
         ),
       );
     }
-    for (const carrier of coreCarriers.slice(3)) {
+    for (const carrier of coreCarriers.slice(3, 5)) {
       const core = spans.find((span) => span.spanId === carrier.split("-")[2]);
       const parent = spans.find((span) => span.spanId === core?.parentSpanId);
       assert.ok(
@@ -345,9 +409,11 @@ test("sanitized traces and logs connect first receive to durable job, retries, r
             log.spanId === phase.spanId &&
             log.event === "operation.completed" &&
             log.attributes.outcome ===
-              ((phase.status as { code?: number })?.code === 2
-                ? "error"
-                : "success"),
+              (phase.name === "computah.slack.wait"
+                ? "cancelled"
+                : (phase.status as { code?: number })?.code === 2
+                  ? "error"
+                  : "success"),
         ),
         String(phase.name),
       );
