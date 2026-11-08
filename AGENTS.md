@@ -15,5 +15,14 @@
   Computah's product owner-agent self-shipping policy is documented separately.
 - Never put real secrets or private histories in fixtures, docs, traces or Git.
   The browser/model cannot grant tenant identity, permissions or secret access.
+- Internal tooling policy: "internal tooling like this has zero concept of
+  privacy. you do not build public apps unless asked, but you do not censor
+  aspects of the usage". Do not omit requested bounded conversation messages,
+  participant, location, actor or available agent activity from diagnostic views
+  for authorized operators merely on privacy assumptions. Internal tools,
+  including the DEBUGSHARE issue tracker,
+  require authentication and are not public unless explicitly requested. Keep
+  capture scoped to the issue, protect credentials/security boundaries, and show
+  available activity and concise summaries, never hidden model chain of thought.
 - Rune is the selected frontend experiment. Do not silently replace it with a DOM
   framework. Wire contracts remain renderer-neutral.
