@@ -4,14 +4,52 @@ import test from "node:test";
 import { Effect } from "effect";
 import { effectTracing } from "../src/effect.js";
 import {
+  createTraceCarrier,
   currentTraceHeaders,
   sanitizeTraces,
   startObservability,
   traceEvent,
   traceHttp,
+  traceInterval,
   traceLifecycle,
   traceOperation,
+  withTraceContext,
 } from "../src/index.js";
+
+test("durable carriers remain unique and restorable without telemetry enabled", async () => {
+  const first = createTraceCarrier("slack.job");
+  const second = createTraceCarrier("slack.job");
+  assert.match(first.traceparent ?? "", /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/);
+  assert.notEqual(first.traceparent, second.traceparent);
+  assert.deepEqual(withTraceContext(first, currentTraceHeaders), first);
+  await withTraceContext(second, async () => {
+    await Promise.resolve();
+    assert.deepEqual(currentTraceHeaders(), second);
+    assert.deepEqual(
+      withTraceContext({ traceparent: "invalid" }, currentTraceHeaders),
+      {},
+    );
+    await traceOperation(
+      "slack.admit",
+      async () => assert.deepEqual(currentTraceHeaders(), first),
+      first,
+    );
+    await traceOperation(
+      "slack.admit",
+      async () => assert.deepEqual(currentTraceHeaders(), {}),
+      {},
+    );
+    for (const suffix of ["\n", "\r", "\r\n"])
+      assert.deepEqual(
+        withTraceContext(
+          { traceparent: first.traceparent + suffix },
+          currentTraceHeaders,
+        ),
+        {},
+      );
+  });
+  assert.deepEqual(currentTraceHeaders(), {});
+});
 
 test("OTLP export preserves native relationships and outcomes but removes content and identities", () => {
   const secret = "private-content-not-exportable";
@@ -46,6 +84,16 @@ test("OTLP export preserves native relationships and outcomes but removes conten
                       value: { intValue: "503" },
                     },
                     { key: "outcome", value: { stringValue: "faulted" } },
+                    {
+                      key: "computah.debugshare.id",
+                      value: {
+                        stringValue: "12b42dd4-8123-4234-9234-123456789abc",
+                      },
+                    },
+                    {
+                      key: "computah.debugshare.id",
+                      value: { stringValue: secret },
+                    },
                     { key: "tool.name", value: { stringValue: secret } },
                   ],
                   events: [
@@ -92,14 +140,23 @@ test("OTLP export preserves native relationships and outcomes but removes conten
   assert.deepEqual(span?.attributes, [
     { key: "http.response.status_code", value: { doubleValue: 503 } },
     { key: "outcome", value: { stringValue: "faulted" } },
+    {
+      key: "computah.debugshare.id",
+      value: { stringValue: "12b42dd4-8123-4234-9234-123456789abc" },
+    },
   ]);
 });
 
 test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failure does not fail application work", async () => {
   const originalFetch = globalThis.fetch;
   const exported: string[] = [];
+  const logs: string[] = [];
   let fail = false;
   globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://api.axiom.co/v1/logs") {
+      logs.push(String(init?.body));
+      return new Response("{}", { status: 200 });
+    }
     if (String(input) === "https://api.axiom.co/v1/traces") {
       exported.push(String(init?.body));
       return new Response("{}", { status: fail ? 503 : 200 });
@@ -107,6 +164,7 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
     return originalFetch(input, init);
   };
   process.env.COMPUTAH_AXIOM_INGEST_TOKEN = "synthetic-private-credential";
+  process.env.COMPUTAH_AXIOM_LOG_DATASET = "computah-prod-logs";
   const telemetry = await startObservability("backend");
   const http = createServer(async (_request, response) => {
     await traceOperation("submit", async () => 42);
@@ -154,6 +212,13 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
       }),
       (error) => error === failure,
     );
+    await assert.rejects(
+      traceOperation("cancel", async (span) => {
+        span.setAttribute("outcome", "cancelled");
+        throw failure;
+      }),
+      (error) => error === failure,
+    );
     await traceOperation("ready", async () => {
       assert.equal(await traceLifecycle("registry", async () => 73), 73);
       await assert.rejects(
@@ -172,6 +237,38 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
     traceEvent("synthetic", {
       requested: "priority",
       prompt: "private-content",
+    });
+    traceEvent("ready");
+    await traceOperation("web.search", async (span) => {
+      span.setAttribute("outcome", "not_configured").setStatus({ code: 2 });
+      return { status: "unavailable", content: "private-content" };
+    });
+    await traceOperation("slack.step", async () => {
+      const incoming = currentTraceHeaders();
+      const job = createTraceCarrier("slack.job", [
+        incoming,
+        { traceparent: "invalid" },
+      ]);
+      assert.notEqual(
+        job.traceparent?.split("-")[1],
+        incoming.traceparent?.split("-")[1],
+      );
+      await traceOperation(
+        "slack.submit",
+        async () => {
+          assert.equal(
+            currentTraceHeaders().traceparent?.split("-")[1],
+            job.traceparent?.split("-")[1],
+          );
+          await Promise.resolve();
+        },
+        job,
+      );
+      traceInterval("slack.queue", 1700000000123, 1700000000987, job, {
+        phase: "queue",
+      });
+      traceInterval("slack.queue", 20, 10, job);
+      traceInterval("bus.receipt", 0, 100, job);
     });
     const native = {
       resourceSpans: [
@@ -218,6 +315,7 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
     await telemetry.close();
     globalThis.fetch = originalFetch;
     delete process.env.COMPUTAH_AXIOM_INGEST_TOKEN;
+    delete process.env.COMPUTAH_AXIOM_LOG_DATASET;
   }
   const spans = exported.flatMap((body) =>
     JSON.parse(body).resourceSpans.flatMap(
@@ -295,6 +393,69 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
     assert.ok(attrs.has("duration.ms"));
   }
   assert.equal(lifecycle[1]?.status.code, 2);
+  const job = spans.find((span) => span.name === "computah.slack.job");
+  const submitted = spans.find((span) => span.name === "computah.slack.submit");
+  assert.ok(job);
+  assert.equal(job.parentSpanId, undefined);
+  assert.equal(submitted?.traceId, job.traceId);
+  assert.equal(submitted?.parentSpanId, job.spanId);
+  const intervals = spans.filter(
+    (span) => span.name === "computah.slack.queue",
+  );
+  assert.equal(intervals.length, 1);
+  assert.equal(intervals[0]?.startTimeUnixNano, "1700000000123000000");
+  assert.equal(intervals[0]?.endTimeUnixNano, "1700000000987000000");
+  assert.equal(job.links.length, 1);
+  assert.equal(
+    job.links[0].spanId,
+    spans.find((span) => span.name === "computah.slack.step")?.spanId,
+  );
+  const early = spans.find((span) => span.name === "computah.bus.receipt");
+  assert.equal(early?.startTimeUnixNano, "0");
+  assert.equal(early?.endTimeUnixNano, "100000000");
+  type LogRecord = {
+    body: { stringValue: string };
+    traceId?: string;
+    attributes: { key: string; value: { stringValue?: string } }[];
+  };
+  const records: LogRecord[] = logs.flatMap((body) =>
+    JSON.parse(body).resourceLogs.flatMap(
+      (r: { scopeLogs: { logRecords: LogRecord[] }[] }) =>
+        r.scopeLogs.flatMap((s) => s.logRecords),
+    ),
+  );
+  assert.ok(
+    records.some((record) => record.body.stringValue === "runtime.ready"),
+  );
+  const unavailable = records.find((record) =>
+    record.attributes.some(
+      (a) => a.key === "operation" && a.value.stringValue === "web.search",
+    ),
+  );
+  assert.ok(unavailable);
+  assert.ok(
+    unavailable.attributes.some(
+      (a) => a.key === "outcome" && a.value.stringValue === "error",
+    ),
+  );
+  assert.ok(
+    unavailable.attributes.some(
+      (a) => a.key === "reason" && a.value.stringValue === "not_configured",
+    ),
+  );
+  assert.ok(unavailable.traceId);
+  assert.ok(
+    records.some((record) =>
+      record.attributes.some(
+        (a) => a.key === "outcome" && a.value.stringValue === "cancelled",
+      ),
+    ),
+  );
+  assert.ok(!logs.join().includes("private-content"));
+  assert.ok(
+    spans.some((span) => span.name === "computah.logs.export"),
+    "log export spans must drain before provider shutdown",
+  );
   assert.ok(!exported.join().includes("private-content"));
   assert.ok(!exported.join().includes("synthetic-private-credential"));
 });

@@ -1,6 +1,18 @@
 import { zstdDecompressSync } from "node:zlib";
-import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
+import {
+  createTraceCarrier,
+  currentTraceHeaders,
+  withTraceContext,
+} from "@computah/observability";
+import {
+  InMemoryCredentialStore,
+  type StreamOptions,
+} from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import {
+  NOOP_TELEMETRY_CONTEXT,
+  NOOP_TELEMETRY_PROPAGATION,
+} from "@earendil-works/pi-telemetry";
 import { expect, test } from "vitest";
 import { readConfig } from "../src/config.js";
 import {
@@ -63,6 +75,16 @@ test("official native request methods finalize priority/high after transforms an
   let rawCalls = 0;
   let responses = 0;
   const sent: Record<string, unknown>[] = [];
+  const restored = createTraceCarrier("model");
+  const unrelated = createTraceCarrier("http");
+  const telemetry: NonNullable<StreamOptions["telemetry"]> = {
+    ...NOOP_TELEMETRY_CONTEXT,
+    propagation: { ...NOOP_TELEMETRY_PROPAGATION, inject: () => restored },
+    addLink() {},
+    addEvent() {},
+    setAttributes() {},
+    setStatus() {},
+  };
   for (const method of [
     "stream",
     "streamSimple",
@@ -73,12 +95,16 @@ test("official native request methods finalize priority/high after transforms an
       const model = models.getModel("openai-codex", id);
       if (!model) throw new Error("Missing pinned catalog model");
       const options = {
+        telemetry,
         transport: "sse" as const,
         reasoning: "low" as const,
         reasoningEffort: "off" as const,
         serviceTier: "default" as const,
         maxRetries: 0,
         onPayload: async (body: unknown) => {
+          expect(currentTraceHeaders().traceparent?.split("-")[1]).toBe(
+            restored.traceparent?.split("-")[1],
+          );
           payloadCalls++;
           return {
             ...(body as object),
@@ -128,14 +154,20 @@ test("official native request methods finalize priority/high after transforms an
           );
         },
       };
-      const result = models[method](
-        model,
-        {
-          messages: [
-            { role: "user", content: "synthetic-private-prompt", timestamp: 1 },
-          ],
-        },
-        options,
+      const result = withTraceContext(unrelated, () =>
+        models[method](
+          model,
+          {
+            messages: [
+              {
+                role: "user",
+                content: "synthetic-private-prompt",
+                timestamp: 1,
+              },
+            ],
+          },
+          options,
+        ),
       );
       const message = await ("result" in result ? result.result() : result);
       expect(message.stopReason).toBe("stop");

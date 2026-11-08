@@ -19,6 +19,11 @@
   hidden reasoning. Document remaining gaps in `docs/observability.md` and
   distinguish local proof, enabled collection and live Axiom ingestion. Never
   claim complete coverage merely because emitted spans export without sampling.
+- Structured runtime logs accompany operation/lifecycle outcomes through the
+  shared bounded logger, linked to current trace context. Test typed failures
+  as well as thrown errors; never label a resolved denial as success. Do not
+  add competing exporters or silently unlogged runtime paths. Keep credentials,
+  hidden reasoning and raw histories out of telemetry; use fixed categories.
 - Build permission alone does not authorize pushing or deployment from Amp.
   Follow explicit task authorization; current Computah main publication and
   nest-bagel deployment are authorized, not unrelated host actions or purchases.

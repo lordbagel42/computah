@@ -3,13 +3,13 @@
 ## Source contract and integration
 
 `packages/observability/src/logs.ts` implements one process-local bounded OTLP
-log exporter. This module alone does **not** activate logging in entry points.
-The integration owner must re-export `runtimeLog`, `startRuntimeLogging`,
-`RuntimeLogEvent` and `RuntimeLogFields` from the observability index, call
-`startRuntimeLogging(service)` during the existing observability bootstrap,
-and await the returned logger's `close()` **before** shutting down the trace
-provider/relay. Register `logs.export` in the trace operation allowlist; until
-then the privacy relay retains its lifetime/links under `runtime.operation`.
+log exporter. The observability index re-exports `runtimeLog`,
+`startRuntimeLogging`, `RuntimeLogEvent` and `RuntimeLogFields`; the existing
+observability bootstrap starts it and closes it **before** the trace provider,
+so `logs.export` spans drain. Operation completion, HTTP lifetime, model streams
+and lifecycle events emit fixed content-free records. Typed error outcomes are
+not inferred from resolved return objects: explicit span outcome/status writes
+drive the completion log. Production adoption/ingestion remains separate proof.
 No manifest changes or new dependencies are required.
 
 Runtime owners use the shared hook inside their existing traced operation:

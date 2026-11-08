@@ -64,9 +64,9 @@ backfill is performed and no model call is needed for ingestion verification.
 This does not automatically instrument every function, socket frame, SQL
 statement or external library. It exports all spans those configured runtimes
 emit and adds the explicit boundaries above. Raw stdout/SDK logs are not shipped:
-they can contain private actor keys and content. Dedicated OTLP logs/metrics
-pipelines, host metrics and the [analytics](analytics.md) rollup hooks are not
-wired by this change. Per-call SDK token scalars, where available, are
+they can contain private actor keys and content. Structured OTLP logs use the
+separate [bounded positive-schema pipeline](logging.md); host metrics and the
+[analytics](analytics.md) rollup hooks are separate work. Per-call SDK token scalars, where available, are
 `sdk_unverified`; native default model spans can also contain SDK usage scalars.
 SDK defaults/zeros are not proof of actual provider usage. Missing counters remain
 missing, not fabricated zeros. Provider-returned tiers are distinct from requested
@@ -74,6 +74,29 @@ priority. Cost attributes are excluded: SDK pricing-derived cost is not an invoi
 or proof that priority was served.
 
 ## Runtime coverage ledger
+
+Shared durable APIs now support independent admission roots:
+`createTraceCarrier(operation, links?)` creates a root marker or valid random
+IDs when telemetry is disabled; persist that carrier exactly once at admission.
+`withTraceContext(carrier, body)` restores strict v00 IDs for synchronous or
+asynchronous work, including disabled-export operation; it never restores baggage.
+`traceOperation(operation, body, parent?, links?)` uses ambient context only when
+parent is omitted, `{}` forces a root, and up to 32 validated causal links survive.
+`traceInterval(operation, startEpochMs, endEpochMs, parent, attributes?)` records
+actual persisted queue boundaries, including epoch zero, and rejects reversed or
+nonfinite intervals. These helpers are not evidence every queue has adopted them.
+
+The shared bootstrap also starts [structured logs](logging.md); HTTP, operation,
+stream-model and lifecycle outcomes carry the active trace ID. Closing the logger
+before the trace provider preserves export-span drain. A synthetic logger record
+was independently queried in `computah-prod-logs` (`34b0edb9-3906-4e43-a564-60f6749a701b`);
+this is not yet proof of production token grants or deployed log collection.
+
+Tavily production trace ingestion at revision `99962a5` is verified by a bounded
+native-adapter run: trace `882ac53cf7d80de89b7e4dc9840a67d1` contains native
+`pi.tool` web search/extract parents and ready `computah.web.search/extract`
+children ([query](https://app.axiom.co/bagel-w3ue/query?qid=17kuj79bwqv-to6au0)).
+Separate log ingestion and complete Task admission linkage remain unproved.
 
 The AGENTS.md rule requires instrumented runtime changes; this ledger records
 known debt, not permission to silently extend it. Static schemas, assets, fixtures
@@ -85,7 +108,7 @@ coverage is an executable operation and its observable outcome/linkage.
 | Backend HTTP → gateway → Rivet RPC       | Request lifetime/status and Effect operations; active RPC context propagates                             | Abort/disconnect/reconnect and every route's failures are not exhaustively traced/tested                                                                                  |
 | Interaction → Task → Worker              | Native Pi phases and Rivet actions export, including native error/replay events                          | Custom `admit` uses `BACKGROUND_CONTEXT`; Pi creates a new root with no caller link at each admission. Presence is not continuity; sleep/restart linkage remains unproved |
 | Slack → backend                          | Core operation → HTTP → async child correlation locally tested; only configured-core requests inject IDs | Socket receive → persisted inbox → later delivery has no stored carrier; individual adapter state/retry/status outcomes are not fully covered                             |
-| Tavily                                   | Full service operation with typed denial/provider/timeout/cancel outcomes and cleanup lifetime           | Actual production web-tool ingestion is not verified; no automatic retries exist                                                                                          |
+| Tavily                                   | Full service typed outcomes/cleanup; production native-adapter tool trace verified at `99962a5`          | Separate structured-log ingestion and full Task admission linkage remain unproved; no automatic retries exist                                                             |
 | Standalone bus                           | HTTP and native actor spans                                                                              | Pump/outbox/stream network attempts and replay offsets lack dedicated spans/links; dispatch is disabled, so no bus → backend run linkage is claimed                       |
 | Dashboard                                | No observability bootstrap or export in its Node BFF                                                     | HTTP/auth/upstream/replay and browser interaction instrumentation; dashboard is not deployed                                                                              |
 | Native product                           | No trace exporter in Rust shell or Node host/backend/owner scripts                                       | Input → host IPC → HTTP, polling/cancel, local tools, render/recovery and process lifecycle instrumentation                                                               |

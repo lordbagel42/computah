@@ -25,6 +25,17 @@ export function priorityModels(
   models: Models,
   report: (diagnostic: Diagnostic) => void,
 ): Models {
+  // Restored durable tasks carry their authoritative parent explicitly; ambient
+  // OTel context may belong to a gateway or recovery action instead.
+  function parent(input?: StreamOptions) {
+    if (!input?.telemetry) return undefined;
+    try {
+      return input.telemetry.propagation?.inject(input.telemetry) ?? {};
+    } catch {
+      // A telemetry adapter failure must not break model work or mis-parent it.
+      return {};
+    }
+  }
   function options<T extends StreamOptions>(model: Model<Api>, original: T): T {
     const id = `${model.provider}/${model.id}`;
     // Do not silently substitute an old checkpoint's model or provider.
@@ -122,8 +133,10 @@ export function priorityModels(
     "stream" | "streamSimple" | "complete" | "completeSimple"
   > = {
     stream(model, context, input) {
-      const stream = traceModelStream(model.id, () =>
-        models.stream<Api>(model, context, options(model, input ?? {})),
+      const stream = traceModelStream(
+        model.id,
+        () => models.stream<Api>(model, context, options(model, input ?? {})),
+        parent(input),
       );
       void stream.result().then(
         (message) => terminal(model, message),
@@ -139,11 +152,14 @@ export function priorityModels(
       return stream;
     },
     streamSimple(model, context, input) {
-      const stream = traceModelStream(model.id, () =>
-        models.streamSimple(model, context, {
-          ...options(model, input ?? {}),
-          reasoning: "high",
-        }),
+      const stream = traceModelStream(
+        model.id,
+        () =>
+          models.streamSimple(model, context, {
+            ...options(model, input ?? {}),
+            reasoning: "high",
+          }),
+        parent(input),
       );
       void stream.result().then(
         (message) => terminal(model, message),
@@ -161,19 +177,37 @@ export function priorityModels(
     async complete(model, context, input) {
       return terminal(
         model,
-        await traceOperation("model", () =>
-          models.complete<Api>(model, context, options(model, input ?? {})),
+        await traceOperation(
+          "model",
+          async (span) => {
+            const message = await models.complete<Api>(
+              model,
+              context,
+              options(model, input ?? {}),
+            );
+            span.setAttribute("outcome", message.stopReason);
+            if (message.stopReason === "error") span.setStatus({ code: 2 });
+            return message;
+          },
+          parent(input),
         ),
       );
     },
     async completeSimple(model, context, input) {
       return terminal(
         model,
-        await traceOperation("model", () =>
-          models.completeSimple(model, context, {
-            ...options(model, input ?? {}),
-            reasoning: "high",
-          }),
+        await traceOperation(
+          "model",
+          async (span) => {
+            const message = await models.completeSimple(model, context, {
+              ...options(model, input ?? {}),
+              reasoning: "high",
+            });
+            span.setAttribute("outcome", message.stopReason);
+            if (message.stopReason === "error") span.setStatus({ code: 2 });
+            return message;
+          },
+          parent(input),
         ),
       );
     },
