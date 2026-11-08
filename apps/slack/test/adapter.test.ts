@@ -656,7 +656,7 @@ test("lost core admission response retries same mutation; binding reassignment n
   }
 });
 
-test("pending work has truthful deadline; oversized output has explicit omission notice", async () => {
+test("pending work has truthful deadline; complete answers reach the presentation transport once", async () => {
   const f = fixture();
   let now = 1000;
   const adapter = new SlackAdapter(
@@ -672,22 +672,14 @@ test("pending work has truthful deadline; oversized output has explicit omission
     await adapter.step();
     assert.equal(f.calls.length, 0);
     assert.match(String(f.posts[0]?.[1]), /not a cancellation/);
-    const notice = "\n[Answer shortened for Slack; ask for a shorter summary.]";
     const closed = "```\nx\n```\n";
     const cases = [
-      ["x".repeat(5000), "x".repeat(2700)],
-      [
-        "```js\n" + "x".repeat(4000) + "\n```",
-        "```js\n" + "x".repeat(2694) + "\n```",
-      ],
-      ["x".repeat(2699) + "```\n" + "y".repeat(400), "x".repeat(2699)],
-      [
-        "```js\n" + "x".repeat(2693) + "```" + "y".repeat(400),
-        "```js\n" + "x".repeat(2693) + "\n```",
-      ],
-      [closed + "x".repeat(4000), closed + "x".repeat(2690)],
+      "x".repeat(5000),
+      "```js\n" + "x".repeat(12000) + "\n```",
+      "x".repeat(2699) + "```\n" + "y".repeat(400),
+      closed + "x".repeat(40000),
     ];
-    for (const [index, [answer, expected]] of cases.entries()) {
+    for (const [index, answer] of cases.entries()) {
       f.transport.request = async (_binding, _path, body) =>
         body
           ? { id: "signed" }
@@ -703,8 +695,8 @@ test("pending work has truthful deadline; oversized output has explicit omission
       adapter.admit({ ...mention, event_id: `EvLong${index}` });
       await adapter.step();
       await adapter.step();
-      assert.equal(f.posts[index + 1]?.[1], expected + notice);
-      assert.ok(String(f.posts[index + 1]?.[1]).length < 2800);
+      assert.equal(f.posts.length, index + 2);
+      assert.equal(f.posts[index + 1]?.[1], answer);
     }
   } finally {
     adapter.close();

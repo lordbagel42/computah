@@ -1212,16 +1212,6 @@ export class SlackAdapter {
         return;
       }
     }
-    let limited = text;
-    if (text.length > 2800) {
-      let end = 2700;
-      // Do not retain a partial fence at the cut. Close an open code block so
-      // the omission notice remains prose, without rewriting retained code.
-      while (end > 0 && text[end - 1] === "`") end--;
-      const prefix = text.slice(0, end);
-      const openFence = (prefix.match(/```/g)?.length ?? 0) % 2 === 1;
-      limited = `${prefix}${openFence ? "\n```" : ""}\n[Answer shortened for Slack; ask for a shorter summary.]`;
-    }
     this.finish(job.id, "posting");
     try {
       await this.phase(job.id, "delivery", async () => {
@@ -1235,7 +1225,7 @@ export class SlackAdapter {
               (await this.transport.openDm(binding.slackUserId));
         await this.transport.post(
           channel,
-          limited,
+          text,
           privateChannel ? null : route ? route.thread : job.thread,
         );
       });

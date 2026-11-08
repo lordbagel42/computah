@@ -13,6 +13,7 @@ import { SocketModeClient } from "@slack/socket-mode";
 import { LogLevel, WebClient } from "@slack/web-api";
 import { type Binding, type Ingress, SlackAdapter } from "./adapter.js";
 import type { DebugReport } from "./debugshare.js";
+import { presentSlack } from "./presentation.js";
 import { startTimingBroker } from "./timing-broker.js";
 
 async function main() {
@@ -322,16 +323,10 @@ async function run() {
         return result.channel.id;
       },
       async post(channel, text, thread) {
-        // Escape Slack control syntax, not whitespace or code. Never interpret
-        // model-supplied user/channel mentions or special broadcasts.
-        const escaped = text
-          .replaceAll("&", "&amp;")
-          .replaceAll("<", "&lt;")
-          .replaceAll(">", "&gt;");
         await traceOperation("slack.api", () =>
           web.chat.postMessage({
             channel,
-            text: escaped,
+            ...presentSlack(text),
             mrkdwn: true,
             link_names: false,
             parse: "none",

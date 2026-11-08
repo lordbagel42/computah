@@ -19,6 +19,10 @@ const formattedAnswer = [
   "https://example.com/MixedCase?q=one&n=two",
   "<@U123> <!here> <#C123|general>",
   "literal &amp; stays literal",
+  "[Guide](https://example.com/Case?q=A&b=%2f)",
+  "<https://example.com/B|Second & label>",
+  `\`\`\`\n${"  echo '<&>'; \\n\n".repeat(300)}\`\`\``,
+  "End of the complete answer.",
 ].join("\n");
 const expectedWireText = [
   "i currently have:",
@@ -33,6 +37,10 @@ const expectedWireText = [
   "https://example.com/MixedCase?q=one&amp;n=two",
   "&lt;@U123&gt; &lt;!here&gt; &lt;#C123|general&gt;",
   "literal &amp;amp; stays literal",
+  "<https://example.com/Case?q=A&amp;b=%2f|Guide>",
+  "<https://example.com/B|Second &amp; label>",
+  `\`\`\`\n${"  echo '&lt;&amp;&gt;'; \\n\n".repeat(300)}\`\`\``,
+  "End of the complete answer.",
 ].join("\n");
 
 // Exercise the executable boundary without Slack credentials or network calls.
@@ -51,7 +59,11 @@ const modules = {
   '@slack/web-api': \`export const LogLevel={ERROR:'error'};
     export class WebClient {auth={test:async()=>JSON.parse(process.env.TEST_AUTH)};
       chat={postMessage:async(payload)=>{if(payload.channel!=='CALLOWED'||payload.thread_ts!=='100.001')throw new Error('Wrong destination');
-        if(payload.text!==process.env.TEST_EXPECTED_WIRE||payload.mrkdwn!==true||payload.link_names!==false||payload.parse!=='none'||payload.unfurl_links!==false||payload.unfurl_media!==false||payload.blocks!==undefined)throw new Error('Wrong Slack formatting');
+        if(payload.text!==process.env.TEST_EXPECTED_WIRE||payload.mrkdwn!==true||payload.link_names!==false||payload.parse!=='none'||payload.unfurl_links!==false||payload.unfurl_media!==false)throw new Error('Wrong Slack formatting');
+        const fence=String.fromCharCode(96).repeat(3);
+        if(!payload.blocks?.length||payload.blocks.length>20||payload.blocks.some(b=>b.type!=='section'||b.text.type!=='mrkdwn'||b.text.verbatim!==true||!b.text.text.length||b.text.text.length>3000||(b.text.text.split(fence).length-1)%2))throw new Error('Wrong Slack blocks');
+        const visible=payload.blocks.map(b=>b.text.text).join('').replaceAll(String.fromCharCode(10)+fence+fence+String.fromCharCode(10),'');
+        if(visible!==payload.text)throw new Error('Accessibility content mismatch');
         console.log('synthetic.formatting.correct');
         console.log('synthetic.delivered');process.kill(process.pid,'SIGTERM');return {ok:true};}};
     }\`,
@@ -90,7 +102,7 @@ globalThis.fetch=async(_url,options)=>{
     if(!correct)throw new Error('Wrong core request');
     console.log('synthetic.core.correct');return new Response(JSON.stringify({id:'synthetic-signed-handle'}));
   }
-  if(url.pathname.startsWith('/v1/submissions/'))return new Response(JSON.stringify({submission:{outcome:'completed'},messages:[{role:'assistant',blocks:[{kind:'text',text:JSON.stringify({requestId:replyRequestId,destination:'thread',text:${JSON.stringify(formattedAnswer)}})}]}]}));
+  if(url.pathname.startsWith('/v1/submissions/'))return new Response(JSON.stringify({submission:{outcome:'completed'},messages:[{role:'assistant',blocks:[{kind:'text',text:JSON.stringify({requestId:replyRequestId,destination:'thread',text:process.env.TEST_HARD_LIMIT?'a '.repeat(20000):${JSON.stringify(formattedAnswer)}})}]}]}));
   return new Response(JSON.stringify({viewer:{tenantId:'synthetic',userId:'owner',agentId:options.headers.authorization.endsWith('shared')?process.env.TEST_CHANNEL_VIEWER:'computah',capabilities:['task.send','history.read']}}));
 };
 `;
@@ -102,6 +114,7 @@ async function run(
   channelViewer?: string,
   statusRequested = false,
   contextScenario?: "granted" | "denied",
+  hardLimit = false,
 ) {
   const dir = await mkdtemp(join(tmpdir(), "computah-slack-startup-"));
   try {
@@ -144,7 +157,11 @@ async function run(
           TEST_AUTH: JSON.stringify(auth),
           TEST_CHANNEL_VIEWER: channelViewer ?? "",
           TEST_CONTEXT: contextScenario ?? "",
-          TEST_EXPECTED_WIRE: expectedWireText,
+          TEST_HARD_LIMIT: hardLimit ? "true" : "",
+          TEST_EXPECTED_WIRE: hardLimit
+            ? "a ".repeat(14500) +
+              "\n[Answer shortened for Slack: the remaining text exceeded this message's presentation budget.]"
+            : expectedWireText,
           SLACK_APP_TOKEN: "synthetic",
           SLACK_BOT_TOKEN: "synthetic",
           COMPUTAH_CORE_URL: "http://127.0.0.1:1",
@@ -296,4 +313,20 @@ test("executable fetches only the invoked thread with observed grants, ACKs firs
       );
     } else assert.doesNotMatch(result.output, /synthetic.context.lookup/);
   }
+});
+
+test("executable hard-limit omission still makes one bounded accessible post with linked export", async () => {
+  const result = await run(
+    { user_id: "UBOT", team_id: "TTEST" },
+    undefined,
+    undefined,
+    "shared",
+    false,
+    "denied",
+    true,
+  );
+  assert.equal(result.code, 0, result.output);
+  assert.equal(result.output.match(/synthetic.delivered/g)?.length, 1);
+  assert.match(result.output, /synthetic.formatting.correct/);
+  assert.match(result.output, /synthetic.formatting.trace.correct/);
 });
