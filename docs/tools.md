@@ -93,6 +93,61 @@ after wake, two-user isolation, post-discovery revocation and a host file at the
 same absolute path remaining untouched. Live deployment/tool-call/Axiom evidence
 is separate from these local checks; no real-model honesty guarantee is claimed.
 
+## Native Axiom MCP operator reads
+
+**Source-supported and locally verified with synthetic MCP protocol responses;
+live authentication, query acceptance and deployment are separate gates.**
+Interaction installs `axiom_discover({})` and
+`axiom_read({name, argumentsJson})`, with practical guidance refreshed on wake.
+Discovery returns current remote input schemas for exactly `listDatasets`,
+`getDatasetFields` and `queryDataset`; call arguments are a JSON-encoded object.
+The host rejects every other tool, including admin, mutations and feedback.
+Remote descriptions/results are untrusted evidence, not authority.
+
+This is an **operator-wide**, not conversation-scoped, capability. It requires
+an explicit `axiom.read` standing grant in `COMPUTAH_AUTH_JSON`, checked against
+the private Pi binding before dispatch and disclosure. `operations.read` alone
+does not grant it. The existing host-resolved `message_timing` path is unchanged;
+do not replace its own-conversation checks with model-selected APL.
+
+The backend uses pinned `@earendil-works/pi-mcp` 1.5.0's native Streamable HTTP
+client at `https://mcp.axiom.co/mcp`. Privately provision
+`COMPUTAH_AXIOM_MCP_PAT` and `COMPUTAH_AXIOM_MCP_ORG_ID` (`bagel-w3ue`). The
+official header route requires a **personal access token**, not a dataset API
+query token. Never extract Amp connector credentials or substitute ingest/admin
+credentials. The PAT inherits its member's authority: use a dedicated restricted
+member with query-only access to Computah traces/logs and minimal discovery,
+check additive base/group grants, and set Axiom role query-cost limits. Runtime
+tool filtering does not narrow an overprivileged PAT. Dataset isolation is
+enforced by that upstream member role, not by parsing arbitrary APL in the host.
+Official remote OAuth is also supported by Axiom, but an interactive login,
+callback, refresh and private state store are **not implemented** here.
+
+Each operation creates and closes its own session, with at most four admitted
+operations, a 15-second total network deadline, 16 KiB call arguments, 256 KiB
+cumulative response budget and 120 KiB result limit. Redirects, background GET
+streams and reconnect retries are disabled. No automatic query retry occurs.
+Cancellation aborts initialization/query transport; close is awaited before
+settlement (best-effort session DELETE has its own one-second SDK deadline).
+Read tools are replay-safe: recovery may repeat a query and incur query cost;
+late-ingested data can change results. Choose short explicit time windows and
+small row limits using the discovered schema. Missing configuration, grant denial,
+HTTP auth failures, timeout, cancellation, capacity and oversize results are
+bounded unavailable categories, never provider error bodies or credentials.
+An accepted MCP call with `isError` returns `provider_error`, not successful query
+evidence or a raw provider error body.
+
+`computah.axiom.discover`/`computah.axiom.call` span full operation lifetimes and
+cleanup with categorical outcomes, through the sanitized exporter. Local checks
+exercise actual Pi Interaction tool discovery/call, sleep/wake and nonoperator
+denial against synthetic official-protocol responses; exporter tests verify
+parentage, failures/cancel/timeout and absence of credential/identity canaries.
+Interrupted in-flight execute-intent replay and abrupt-restart trace continuity
+have not been independently exercised.
+No restricted-member credential has been demonstrated provisioned, and no real
+runtime list/query success is claimed. Missing MCP setup must not block existing
+ingestion, conversation timing tools or backend startup.
+
 ## First-class Worker capabilities
 
 Agent-browser and Tavily are explicit native integration requirements alongside

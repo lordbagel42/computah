@@ -22,6 +22,7 @@ const capabilities: Capability[] = [
   "operations.read",
   "files.read",
   "files.write",
+  "axiom.read",
 ];
 
 export function readConfig(env: NodeJS.ProcessEnv) {

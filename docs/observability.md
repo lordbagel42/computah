@@ -32,6 +32,11 @@ DEBUGSHARE collection, diagnostics bundles or diagnostic-agent spawning is added
   consumption and awaited cleanup, with fixed ready/failure/timeout/cancel outcome
   categories and conservative request-state labels. No query, URL, credential or
   result content enters spans, and no trace headers go to external providers.
+- Native Axiom MCP discovery/read spans cover authorization, initialization,
+  list/call and session close, including denial, provider errors, timeout and
+  cancellation. Only categorical outcomes export, never APL, schemas, results,
+  PATs or organization headers. Local sanitized-export tests verify parentage;
+  live native MCP queries remain blocked on private restricted-member credentials.
 - The separate bus entry point records HTTP, native actor spans and lifecycle.
   It remains dispatch-disabled and does not mount backend/provider credentials.
   Provision only its Axiom credential, not the backend's provider env file.

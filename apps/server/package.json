@@ -22,6 +22,7 @@
     "@earendil-works/pi-ai": "1.5.0",
     "@earendil-works/pi-coding-agent": "1.5.0",
     "@earendil-works/pi-durable": "1.5.0",
+    "@earendil-works/pi-mcp": "1.5.0",
     "@earendil-works/pi-schema": "1.5.0",
     "@earendil-works/pi-telemetry": "1.5.0",
     "@rivet-dev/pi": "0.5.6",

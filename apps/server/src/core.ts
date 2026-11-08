@@ -35,6 +35,11 @@ import {
 import { Effect } from "effect";
 import { type Client, setup } from "rivetkit";
 import { createClient } from "rivetkit/client";
+import {
+  axiomInstructions,
+  createAxiomMcp,
+  createAxiomMcpExtension,
+} from "./axiom-mcp.js";
 import { createFileTools, type FileCapability } from "./files.js";
 import {
   createOperations,
@@ -66,7 +71,8 @@ export type Capability =
   | "web.search"
   | "web.extract"
   | "operations.read"
-  | FileCapability;
+  | FileCapability
+  | "axiom.read";
 
 export class CoreError extends Error {
   constructor(readonly code: "denied" | "invalid" | "conflict" | "runtime") {
@@ -243,6 +249,8 @@ export interface CoreOptions {
     reviews: readonly { scope: Scope; mode: "monitor" | "preflight" }[];
     review(input: SentinelInput): Promise<SentinelDecision>;
   };
+  /** Operator-wide read access via dedicated member PAT, not dataset API tokens. */
+  axiomMcp?: { pat?: string; orgId?: string; fetch?: typeof fetch };
   models?: PiOptions["models"];
   settings?: PiOptions["settings"];
 }
@@ -632,6 +640,19 @@ export function createCore(options: CoreOptions) {
   });
   workerTools.install(files.extension);
 
+  if (options.axiomMcp) {
+    interactionTools.install(
+      createAxiomMcpExtension({
+        client: createAxiomMcp({
+          ...options.axiomMcp,
+          authorize: options.authorize,
+        }),
+        scope: async (api, context) =>
+          (await api.snapshot(Binding, context))?.scope ?? null,
+      }),
+    );
+  }
+
   if (options.operations) {
     const operations = createOperations({
       ...options.operations,
@@ -960,9 +981,11 @@ export function createCore(options: CoreOptions) {
       const root = await c.pi.root(BACKGROUND_CONTEXT);
       await root.configure(
         {
-          instructions: options.operations
-            ? `${interactionInstructions}\n\n${operationalInstructions}`
-            : interactionInstructions,
+          instructions:
+            (options.operations
+              ? `${interactionInstructions}\n\n${operationalInstructions}`
+              : interactionInstructions) +
+            (options.axiomMcp ? `\n\n${axiomInstructions}` : ""),
           model: modelRef(options.model),
           ...(options.thinkingLevel
             ? { thinkingLevel: options.thinkingLevel }

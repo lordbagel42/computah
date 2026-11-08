@@ -61,6 +61,10 @@ async function main() {
       ? { apiKey: process.env.COMPUTAH_TAVILY_API_KEY }
       : undefined,
     operations: { queryToken: process.env.COMPUTAH_AXIOM_QUERY_TOKEN },
+    axiomMcp: {
+      pat: process.env.COMPUTAH_AXIOM_MCP_PAT,
+      orgId: process.env.COMPUTAH_AXIOM_MCP_ORG_ID,
+    },
     models: runtimeModels,
     sentinel:
       config.sentinel && runtimeModels
