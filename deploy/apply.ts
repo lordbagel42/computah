@@ -31,7 +31,8 @@ try {
       "--pids-limit",
       "256",
       "--tmpfs",
-      "/data:rw,uid=1000,gid=1000,mode=0700,size=128m",
+      // Native depot preallocates two 64 MiB segments before any actor data.
+      "/data:rw,uid=1000,gid=1000,mode=0700,size=256m",
       "--env",
       "HOME=/data",
       "--env",
