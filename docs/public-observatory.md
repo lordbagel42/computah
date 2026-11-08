@@ -225,3 +225,44 @@ traffic displacing application activity.
   independent design review and code review were addressed. Reduced motion
   runs no CSS animations and no canvas loop. This is not a zero-findings claim
   or production visual acceptance of the redesign.
+
+### AMOLED production acceptance — 2026-11-08
+
+The client source at `6f7af2b8dc67073caaa7ee14885c51d06e6d524f` is deployed
+as Worker version `a8886a46-7346-4f2c-882b-2df4655fe066`, receipt
+`30d16a7a-2eb2-40aa-8e25-ebc940f7341f`. Independent HTTPS readback matched
+the shipped HTML, CSS, JavaScript and Geist Mono bytes. The protected owner
+retained the existing domain, Durable Object namespace and query/live/HMAC
+bindings; this acceptance did not mutate deployment state.
+
+[Production acceptance evidence](https://ampcode.com/threads/T-01a1bacf-7aa6-7595-8e97-fcf08e05c4c6)
+includes inspected desktop (1440px, 2×), Chromium Pixel 7 touch-emulation
+captures (coarse pointer verified, not a physical phone), open controls,
+inspector, paused and reduced-motion states, and a real-pointer interaction
+recording against production, not a fixture or local proxy. Executed checks
+covered service filtering/reset, pause/resume reconnect, trace pin/release,
+touch selection of a rendered horizon mark, declared-relationship navigation,
+inspector dismissal, Escape restoring operation-row focus and Home/End/arrow
+navigation. Both widths had zero page-level horizontal overflow; the touch
+run reported no page errors. Bounded tree scrolling and missing relationships
+remained visible rather than claiming a complete trace.
+
+A separate passive 30-second production SSE read received one snapshot,
+74 deltas and 74 statuses, including 97 active observations and 49 observed
+active-to-ended transitions. Every observed span field belonged to the positive
+timing/topology schema. This corroborates real lifecycle traffic, not a claim
+that every transition appears in the interaction recording or that all runtime
+paths are instrumented. Stale-clock failure cases retain the earlier synthetic
+coverage and source review; no production outage was induced for this check.
+
+lintapple 0.1.20 was rerun at 390/1440px on paused production snapshots and
+open controls (pausing avoids its accessibility scan racing live DOM updates).
+It still exits nonzero: unresolved contrast over SVG/scroll-clipped content,
+intentional operation-label truncation, a pure-black root-background false
+positive, and a clipped carousel entry classified as an unlabeled icon button.
+These are not a clean automated accessibility bill of health. The inspected
+layout and keyboard/touch checks are separate evidence. Read-only review found
+no blocking acceptance defect; it did identify a narrow remaining limitation:
+an inspector relationship button can lose keyboard focus when an updated span
+causes its detail subtree to be replaced. Close/Escape row-focus restoration
+passed, but continuous relationship-button focus is not claimed.
