@@ -190,7 +190,9 @@ async function run(
     };
     child.stdout.on("data", collect);
     child.stderr.on("data", collect);
-    const deadline = setTimeout(() => child.kill("SIGKILL"), 5_000);
+    // Hang guard only: delivery runs take ~4.4s on the adapter's 1s step loop, so
+    // one missed tick on a slow CI runner must not turn into a kill (exit null).
+    const deadline = setTimeout(() => child.kill("SIGKILL"), 15_000);
     try {
       const code = await exited;
       assert.doesNotMatch(output, /synthetic-token-not-a-real-credential/);
