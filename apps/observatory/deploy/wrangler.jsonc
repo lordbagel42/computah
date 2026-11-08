@@ -14,6 +14,7 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PublicTraceFeed"] }],
   "observability": { "enabled": true, "head_sampling_rate": 1 },
   "vars": {
+    "OBSERVATORY_LIVE_TOKEN": "",
     "COMPUTAH_AXIOM_QUERY_TOKEN": "",
     "PUBLIC_ID_SECRET": "",
     "COMPUTAH_AXIOM_INGEST_TOKEN": ""

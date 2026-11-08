@@ -21,6 +21,21 @@ const operations = new Set([
   "slack.step",
   "slack.api",
   "slack.core",
+  "slack.job",
+  "slack.admit",
+  "slack.ack",
+  "slack.queue",
+  "slack.prepare",
+  "slack.submit",
+  "slack.wait",
+  "slack.delivery",
+  "slack.retry",
+  "slack.status",
+  "slack.recover",
+  "slack.finish",
+  "slack.finalize",
+  "slack.timing",
+  "slack.upload",
   "web.search",
   "web.extract",
   "start.failed",
@@ -28,6 +43,9 @@ const operations = new Set([
   "bus.stream.create",
   "bus.stream.append",
   "bus.replay",
+  "bus.admit",
+  "bus.receipt",
+  "bus.dispatch",
   "native.ipc",
   "native.render",
   "native.recovery",
@@ -81,6 +99,8 @@ export type PublicSpan = {
   start: number;
   durationMs: number;
   status: "ok" | "error" | "unset";
+  lifecycle?: "active" | "ended";
+  observedAt?: number;
 };
 
 /** Independent public boundary. No attributes, resources, error text or raw IDs survive. */

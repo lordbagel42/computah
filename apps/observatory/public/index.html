@@ -4,53 +4,36 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <meta name="description" content="Explore the shape of Computah's runtime through a bounded, content-free OpenTelemetry trace projection." />
+    <meta name="description" content="Watch sanitized runtime traces take shape in Computah's public observatory." />
     <title>Observatory — Computah</title>
     <link rel="stylesheet" href="/style.css" />
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <a class="skip-link" href="#instrument">Skip to traces</a>
+    <a class="skip-link" href="#instrument">Skip to trace</a>
     <header class="masthead">
-      <a class="wordmark" href="/"><svg width="25" height="25" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 22 12 12 22 2 12Z M12 7 17 12 12 17 7 12Z" fill="none" stroke="currentColor" stroke-width="1.5" /></svg>computah<span class="wordmark-divider">/</span><span class="wordmark-place">public observatory</span></a>
-      <span class="protocol">OpenTelemetry <span aria-hidden="true">/</span> bounded live projection</span>
+      <a class="wordmark" href="/">computah<span>/ observatory</span></a>
+      <div class="feed-state"><i id="state-dot" aria-hidden="true"></i><strong id="feed-state" role="status">Connecting</strong><span id="freshness">Awaiting source</span></div>
+      <button id="pause" type="button" aria-pressed="false">Pause feed</button>
     </header>
-
-    <main>
-      <section class="opening" aria-labelledby="page-title">
-        <div><h1 id="page-title">Observatory<span class="title-dot" aria-hidden="true">.</span></h1><p class="intro">A window into the runtime. <br />Follow the work, not the conversation.</p></div>
-        <div class="feed-controls">
-          <div class="feed-state"><span id="state-dot" class="state-dot" data-state="connecting" aria-hidden="true"></span><strong id="feed-state" role="status">Connecting</strong><span id="freshness">Awaiting first response</span></div>
-          <div class="actions"><button id="exporter" type="button" aria-pressed="false">Include log exporter</button><button id="pause" type="button" aria-pressed="false">Pause updates</button><button id="demo" type="button" aria-pressed="false">Explore demo</button></div>
-        </div>
+    <main id="instrument" tabindex="-1">
+      <div class="source-line"><h1>Work, unfolding.</h1><span id="source-label">Axiom history · ingestion delayed</span></div>
+      <p id="notice" class="notice" role="status">Connecting to the public stream. No private content is queried.</p>
+      <section class="stage" aria-label="Following trace">
+        <div class="stage-heading"><div><p id="trace-phase" class="phase">Awaiting a trace</p><h2 id="trace-title">Listening for work</h2><p id="trace-summary">Actual operations will appear here when available.</p></div><button id="follow" type="button" aria-pressed="true">Following newest</button></div>
+        <div class="field-meta"><span>Operation / service<small id="scroll-hint" hidden>Scroll field for more operations</small></span><span id="extent">Elapsed time</span></div>
+        <div id="empty-state" class="empty-state"><div class="quiet-signal" aria-hidden="true"></div><h3 id="empty-title">Nothing in the field. Yet.</h3><p id="empty-copy">An empty window does not mean the runtime is idle. Only observed spans appear here.</p><button id="empty-demo" type="button">Explore synthetic demo</button></div>
+        <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users can focus and vertically scroll the bounded timing field. -->
+        <section id="field" aria-label="Span timing field; scroll for more operations" tabindex="0" hidden><div id="ruler" class="ruler"></div><div id="timing-field" class="timing-field"><svg id="connections" class="connections" aria-hidden="true"></svg><div id="span-rows"></div></div></section>
+        <div class="stage-foot"><span id="field-note">Only declared parents and links. Missing relationships stay missing.</span><span id="sample-label">Bounded to 1,000 spans</span></div>
       </section>
-
-      <section class="instrument" id="instrument" aria-label="Trace explorer" tabindex="-1">
-        <div class="toolbar">
-          <div class="window-label"><span class="scope-symbol" aria-hidden="true"></span><strong id="window-label">Last 15 minutes</strong><span id="sample-label">Up to 1,000 spans</span></div>
-          <div class="filters"><label for="service">Service<select id="service"><option value="">All services</option></select></label><label for="status">Status<select id="status"><option value="">All statuses</option><option value="error">Error</option><option value="ok">OK</option><option value="unset">Unset</option></select></label><button id="reset" class="quiet" type="button" hidden>Reset filters</button></div>
-        </div>
-        <div id="notice" class="notice" role="status">Requesting the public trace projection. No private content is queried.</div>
-        <div class="workspace">
-          <aside class="trace-index" aria-labelledby="traces-title">
-            <div class="panel-heading"><h2 id="traces-title">Traces</h2><span id="trace-count" class="count">—</span></div>
-            <p class="filter-hint">Newest first · filters find traces</p>
-            <div id="trace-list" class="trace-list"></div>
-          </aside>
-          <div class="trace-stage">
-            <div class="stage-heading"><div><h2 id="trace-title">Waiting for a signal</h2><p id="trace-summary">Actual spans will appear here when available.</p></div><span class="field-label">Causal timing field</span></div>
-            <div class="legend"><span><i class="legend-bar" aria-hidden="true"></i>Span duration</span><span><i class="legend-parent" aria-hidden="true"></i>Parent</span><span><i class="legend-link" aria-hidden="true"></i>Link</span><span><i class="legend-error" aria-hidden="true"></i>Error</span></div>
-            <div id="empty-state" class="empty-state"><div class="empty-reticle" aria-hidden="true"></div><h3 id="empty-title">The field is quiet.</h3><p id="empty-copy">Connecting to the live projection. The observatory never substitutes demo data for live traces.</p><button id="empty-demo" type="button">Explore a synthetic trace</button></div>
-            <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users need to focus and horizontally scroll the timing field. -->
-            <section id="timeline-scroll" class="timeline-scroll" aria-label="Span timeline; scroll horizontally to explore elapsed time" tabindex="0" hidden><div id="timeline" class="timeline"><div id="ruler" class="ruler"></div><div id="timing-field" class="timing-field"><svg id="connections" class="connections" aria-hidden="true"></svg><div id="span-rows"></div></div></div></section>
-            <div class="stage-foot"><span id="field-note">Only declared relationships are shown.</span><span>Scroll horizontally and vertically · time flows left to right</span></div>
-          </div>
-        </div>
-        <section class="inspector" aria-labelledby="inspector-title"><div class="inspector-heading"><h2 id="inspector-title">Span inspector</h2><span id="span-position">Select a span in the timing field</span></div><div id="span-detail" class="span-detail"><p class="detail-placeholder">Inspect an operation to see its timing, status and available causal relationships.</p></div></section>
-      </section>
-
-      <footer class="footer"><p><strong>Public projection.</strong> This view contains sanitized operation names, services, opaque identifiers, timing and relationships. Messages, prompts, attributes, resources and credentials are excluded. Internal DEBUGSHARE is a separate surface.</p><p id="snapshot-note">A bounded window is not a complete execution history. Missing parents and links may fall outside this projection.</p></footer>
-      <noscript><p class="notice">JavaScript is required to load the trace projection. No live data is displayed.</p></noscript>
+      <section class="recent" aria-labelledby="recent-title"><div class="section-heading"><h2 id="recent-title">Passing through <span id="trace-count">0</span></h2><span id="window-label">Last 15 minutes</span></div><div id="trace-list" class="trace-list"></div></section>
+      <div class="secondary">
+        <details id="inspector"><summary>Span details <span id="span-position">Select an operation</span></summary><div id="span-detail" class="span-detail"><p>Select an operation to inspect its public timing and relationships.</p></div></details>
+        <details id="settings"><summary>Feed controls</summary><div class="settings-body"><div class="filters"><label for="service">Service<select id="service"><option value="">All services</option></select></label><label for="status">Status<select id="status"><option value="">All statuses</option><option value="error">Error</option><option value="ok">OK</option><option value="unset">Unset</option></select></label><button id="reset" type="button" hidden>Reset filters</button></div><div class="actions"><button id="exporter" type="button" aria-pressed="false">Include log exporter</button><button id="demo" type="button" aria-pressed="false">Explore demo</button></div><p>Filters find traces; other operations remain visible for causal context. Exporter diagnostics can crowd out application work.</p></div></details>
+      </div>
+      <footer class="footer"><p><strong>A public window, not a complete history.</strong> Sanitized operation names, services, opaque IDs, timing and declared relationships only. No messages, prompts, attributes or credentials.</p><p id="snapshot-note">Axiom history is ingestion delayed. A stream connection is not proof of continuously current runtime activity.</p></footer>
+      <noscript><p class="notice">JavaScript is required. No trace data is displayed.</p></noscript>
     </main>
   </body>
 </html>

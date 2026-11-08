@@ -41,15 +41,49 @@ links are discarded. No credential reaches static assets or public responses.
 No arbitrary-query proxy exists. Security headers restrict browser connections
 and scripts to the same origin. All rendered payload text uses `textContent`.
 
-## Freshness and interaction
+## Live transport and freshness
 
-The browser polls on completion every five seconds, never concurrently, with an
-eight-second deadline and 10/20/30-second reconnect backoff. Hidden tabs suspend
-polling; pause stops it. Failed refreshes retain the last snapshot and original
-timestamp, explicitly disconnected/stale. Unknown freshness is not called live.
-Service/status filters retain dimmed causal context. Timelines scroll internally
-in both dimensions and support keyboard selection. Demo is an explicit static
-synthetic example, never automatic fallback or claimed production activity.
+`GET /api/stream` (or its exact `?includeExporter=1` diagnostic mode) uses SSE.
+An initial `snapshot` resets the browser's bounded keyed map. Subsequent `delta`
+events contain metadata, changed `upserts` and removed keys (JSON-encoded
+`[traceId,id]`). Unchanged span snapshots are not repeatedly streamed. `status`
+events identify `runtime-push` versus `axiom-history`, last live receipt and
+history query freshness. Axiom remains ingestion-delayed settled history, queried
+at most once/five seconds per requested mode with the existing backoff and bounds.
+An SSE connection does not make native/Axiom-only stages instantaneous.
+
+Authenticated runtime `POST /api/ingest` bypasses that query delay for active
+operations. It requires a separate bearer `OBSERVATORY_LIVE_TOKEN` (at least 32
+characters); absent/empty binding denies every ingestion request. No query/HMAC
+credential is reused. Body version 1 admits at most 128 records and 128 KiB.
+Records contain fixed timing/topology fields plus `lifecycle` (`active`, `ended`),
+monotonic per-span `revision`, and epoch-millisecond `observed_at`. Invalid/stale
+records are dropped, replayed/lower revisions cannot reopen ended spans, and the
+Worker reconstructs public fields before retaining anything. Public spans add
+only optional `lifecycle` and `observedAt`; no raw IDs, incoming fields, errors,
+content or bearer tokens enter SSE, resume tokens or stored public state.
+
+Public live state is capped at 1,000 spans/15 minutes since last observation;
+merged responses additionally stop below 512 KiB, marking truncation and
+recomputing missing relationships. This prevents link-heavy snapshots from
+exceeding the streaming queue budget.
+Fresh active spans are prioritized over old settled history at the cap. Operations
+may start earlier than the history window, up to seven days. Their ongoing duration
+is provisional; after 15 seconds without an update clients freeze at last observed
+time and label the operation unconfirmed, never inventing a terminal event.
+Settled history wins when it reconciles an active record whose end was lost.
+
+Each fixed mode has an in-memory epoch/sequence replay ring, at most 256 events
+and 4 MiB. `Last-Event-ID` resumes newer events only; an unknown/expired cursor or
+DO restart yields a full snapshot reset. This is bounded recovery, not lossless
+durability. Cursors contain only random epoch/sequence, no runtime identifiers.
+Each mode admits at most 16 readers; each reader queue is bounded at 1 MiB.
+Replay larger than 768 KiB resets to the latest bounded snapshot instead of
+synchronously overfilling a fast reader's queue during connection startup.
+Slow readers are disconnected and reset/replay on reconnect. Cancel/disconnect
+removes the reader; zero readers stop the history polling loop. Tabs close their
+EventSource while hidden/paused and reopen with a full reset. Demo remains
+explicitly synthetic, never an automatic fallback for unavailable production data.
 
 ## Deployment and activation
 
@@ -141,6 +175,10 @@ traffic displacing application activity.
   Visitor disconnect signal is forwarded but actual network-disconnect export
   proof is not established. Optional edge ingest binding remains disabled; no live
   edge Axiom ingestion claim. See [observability](observability.md) for other gaps.
-- lintapple finds no desktop issues; its mobile SVG viewport rule flags the
-  intentionally clipped internal horizontal timeline. Page-level overflow and
-  internal scrolling are checked separately; this is not a zero-findings claim.
+- The continuous-stage finish review approved local desktop/narrow captures.
+  Browser checks cover keyed updates/removals, mode isolation, reconnect instance
+  retention, pin/follow, stale-clock freezing and mobile internal scrolling.
+  Interactive rows have eight-pixel gaps. lintapple checks initial/settings/demo/
+  details at both widths; four contrast checks remain unresolved on partially
+  clipped recent-trace carousel entries. No measured contrast failure remains,
+  but this is not a zero-findings claim or production visual acceptance.

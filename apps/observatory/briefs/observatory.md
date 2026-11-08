@@ -1,60 +1,35 @@
 # Public observatory surface brief
 
-Mode: Operate with an experiential timing field. The visitor reads the actual
-bounded public projection, selects a trace, and follows a span to its causes.
-The experience must remain useful without a configured data source.
+Mode: Operate, with an experiential continuous trace stage. Replacement of the
+incumbent dashboard is explicitly requested. Code-led; unattended execution.
 
 ## Direction contract
 
-THESIS: Make elapsed time spatial. Refuse decorative metric cards: a luminous
-causal timing field is the main content and the main interaction.
+THESIS: Watch work take shape, then make room for the next trace. One large
+timing stage replaces the permanent left index and dashboard scaffolding.
 
-OWN-WORLD: Ink-black instrument surface, ice-white type, mint timing bars,
-lavender causal links and coral errors. Fine measured rules, squared controls,
-large restrained lettering; no pictorial assets, glow furniture or glass cards.
+OWN-WORLD: Graphite, warm-white and pale mint; coral only for errors. Geist,
+large operation names, measured time marks, hairline causal routes. Visitors
+watch at a desk in low ambient light; dark fields keep the moving work legible.
 
-STORY: First understand whether the feed is real and fresh. Choose a trace,
-inspect measured operations, then follow only supplied parent/link relationships.
+STORY: Establish source truth first. Follow incoming active/latest traces,
+pin one to investigate, then return to follow. History is never called instant.
 
-FIRST VIEWPORT: Full-width identity and feed controls above a large two-column
-instrument: narrow trace index and expansive timing field. The selected span
-inspector sits directly below the field. On mobile the index becomes a bounded
-list above the horizontally scrollable field. The primary action selects data.
+FIRST VIEWPORT: Compact identity/source line, a large trace title and follow
+control, then full-width timing rows. Recent traces run horizontally below, not
+in a left rail. Filters and span facts are secondary disclosure surfaces.
 
-FORM: Brief-pinned futuristic observatory, code-led. A time-scaled orthogonal
-causal diagram is the signature interaction; selecting a bar locks its details.
-Concept seed `f9b3e87c` ran in Operate mode; the explicit futuristic brief
-overrides the random assignment. The score-like timing discipline is retained,
-not the unrelated challengers' materials or navigation metaphors.
+FORM: Brief-pinned futuristic continuous instrument. Signature interaction:
+"handover" holds a completed trace briefly, closes its field, and opens the
+next one. Keyed rows enter once; active bars extend without entrance replay.
+The concept-seed launcher was attempted but checksum verification failed;
+no generated seed or alternate concepts are claimed.
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
 
 ## Verification boundary
 
-Integration rendered review covers the deployed desktop/narrow empty/demo states
-and local live/disconnect/reconnect fixtures. Screenshots were inspected and
-keyboard/focus assertions executed. No shipping raster assets exist.
-
-## Integration review checklist
-
-- `/`: unconfigured and initial network failure, with no bars and no synthetic
-  data until `#demo` or `#empty-demo` is clicked.
-- `#demo`: twelve synthetic spans across three traces; select the error/retry
-  pair, missing parent, missing link and available cross-trace link.
-- Service/status filters identify traces with a matching span; dim other spans
-  but preserve causal context. Reset and relationship navigation clear filters.
-- A real live fixture, then a failed/invalid response: retain old spans, show
-  disconnected and stale after fifteen seconds. Check truncated and empty live
-  fixtures, pause/resume, timeout, hidden-tab cancellation and return-to-live.
-- 1440×900 and 390×844: field scroll stays inside the instrument. Keyboard
-  Tab/Enter, ArrowUp/ArrowDown/Home/End in rows, overflow scroll and focus
-  retention during polling. Reduced motion disables the bar registration reveal.
-- lintapple policy should use the source palette and Geist-first font stack,
-  12px minimum metadata, 14px base, 42px minimum controls and both viewports.
-
-Source detector ran once. Small-text findings were corrected; Geist is
-deliberately retained because the brief pins it and is now self-hosted. The
-public shell is deployed; actual production feed activation remains credential
-gated. lintapple desktop states pass, while mobile retains an SVG viewport
-finding for the intentionally internal scrolling timeline. See
-`docs/public-observatory.md` for acceptance evidence and remaining gaps.
+Local fixture stream is visual/interaction evidence only. Integration owns live
+source, server contract, sanitizer and telemetry proofs. No synthetic production
+data. Demo is explicit and static. Finish review is handed to the integrator;
+this packet cannot launch a separate reviewer. No shipping raster assets.
