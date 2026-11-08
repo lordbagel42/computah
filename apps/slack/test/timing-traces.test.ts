@@ -39,6 +39,11 @@ test("real sanitized export preserves per-job roots through ACK, retries, reopen
   const transport: Transport = {
     async request(_binding, _path, body) {
       coreRoots.push(currentTraceHeaders().traceparent?.split("-")[1]);
+      if (body) {
+        const text = (body as { text: string }).text;
+        assert.match(text, /\[Slack source: host-observed context/);
+        assert.match(text, /"author":"UFAKE"/);
+      }
       if (failing) throw new Error("private-synthetic-failure");
       return body
         ? { id: "private-submission-handle" }
@@ -61,6 +66,9 @@ test("real sanitized export preserves per-job roots through ACK, retries, reopen
     "BFAKE",
     transport,
     () => now,
+    false,
+    0,
+    true,
   );
   const input = {
     team_id: "TFAKE",
@@ -88,7 +96,16 @@ test("real sanitized export preserves per-job roots through ACK, retries, reopen
     now += 87;
     await adapter.step();
     adapter.close();
-    adapter = new SlackAdapter(path, [binding], "BFAKE", transport, () => now);
+    adapter = new SlackAdapter(
+      path,
+      [binding],
+      "BFAKE",
+      transport,
+      () => now,
+      false,
+      0,
+      true,
+    );
     failing = false;
     await adapter.step();
     await adapter.step();
@@ -127,6 +144,7 @@ test("real sanitized export preserves per-job roots through ACK, retries, reopen
       "synthetic-core-secret",
       "private-submission-handle",
       "fake-event",
+      "1794120000.001",
     ])
       assert.ok(!encoded.includes(secret), secret);
     const spans = exported.flatMap((batch) =>

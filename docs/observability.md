@@ -31,6 +31,12 @@ DEBUGSHARE collection, diagnostics bundles or diagnostic-agent spawning is added
   local export, not deployed formatting, Slack-client rendering, real-model
   adherence or live Axiom ingestion of the formatting change. No formatting-only
   spans or competing exporter are added; see [presentation parity](slack.md#presentation-parity-checklist-2026-11-08).
+  The same retry/cancel/reopen export check now prepares actual Slack source
+  attribution in the core input and verifies its author/channel canaries stay out
+  of sanitized exports. Speaker IDs and receipt timestamps are model context,
+  never trace/log attributes. Attribution preserves the existing admission and
+  submit spans rather than introducing per-field spans; live model use of the
+  metadata and production adoption remain separate acceptance gaps.
 - Slack core requests propagate only W3C traceparent IDs to the configured core;
   backend/bus HTTP ingress accepts strict valid v00 carriers, never baggage or
   tracestate. Invalid/zero/duplicate carriers start new roots. Correlation never

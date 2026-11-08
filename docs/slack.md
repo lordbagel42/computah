@@ -329,6 +329,28 @@ Slack event subscription or proof that installed grants are sufficient.
 
 ## Received-message bursts
 
+New runtime submissions also include a compact `[Slack source]` footer with the
+actual mapped Slack author ID, originating channel and up to eight receipt-order
+messages with their observed timestamp and incoming thread. Incoming thread is
+recorded separately from reply placement: `Reply top-level:` does not erase a
+source thread, and `Reply in thread:` does not turn an unthreaded source into a
+thread reply. A mixed-origin burst retains each message's actual source thread.
+An additive `receipt_origins` table stores that observation; old receipts have
+unknown origin (omitted field), not an invented unthreaded value. New unthreaded
+inputs explicitly carry `thread:null`. This covers ordinary subscribed follow-ups,
+not only fetched first-mention history. It uses the already authorized event
+binding and journal, not message claims, a profile lookup or `users:read`.
+Messages from different senders still cannot coalesce. The footer is labeled
+context, not instructions or authority; the separate host binding continues to
+select the core principal and audience. Display-name lookup is not implemented.
+
+Source context is frozen with the reply protocol before the first core POST.
+Lost admission responses and restart retry that exact text and mutation ID;
+already-admitting legacy jobs are not retroactively rewritten. Original message
+text, including someone claiming to be another speaker, is retained separately
+from the actual sender metadata. Source IDs/timestamps never become telemetry
+attributes. This is source/local adapter proof, not live participant acceptance.
+
 The runtime uses a 1.2s quiet window for already-received text, capped at five
 seconds from the first receipt. Only the same mapped sender, trusted principal,
 channel and reply destination may coalesce, with at most eight messages and
@@ -428,7 +450,7 @@ contract. Earlier research is retained read-only in the
 | Readable lists, paragraphs, emphasis, inline/fenced code     | Implemented instructions in both model roles and the Slack admission protocol; executable fake-Slack payload checks preserve actual newlines, code indentation/literal escapes, URL case/query and escaped control syntax. No real-model compliance or Slack-client rendering claim.                               |
 | Accessible message text, no accidental notifications/unfurls | Visible top-level mrkdwn text, explicit `link_names:false`, `parse:none`, entity escaping and unfurls off; executable payload assertions.                                                                                                                                                                          |
 | Thread-aware replies and follow-ups                          | Existing finite destination selection, top-level DM default, inherited threads and durable channel subscriptions; adapter tests. Installed channel grants remain separate.                                                                                                                                         |
-| Multi-speaker context                                        | Existing bounded attributed first-mention history. Not full live sender/display-name attribution on every subsequent message.                                                                                                                                                                                      |
+| Multi-speaker context                                        | Bounded attributed first-mention history plus actual author/channel/thread/timestamps on every newly prepared runtime input, including subscribed follow-ups. Burst/restart/lost-response tests preserve separate speakers and authority. Display-name lookup remains absent.                                      |
 | Working status                                               | Existing opt-in coarse threaded processing/active status with durable cleanup. Not Mastra's [tool-aware copy](https://github.com/mastra-ai/mastra/blob/6e8dfcb83facb0861ebefa4fee384429a113acf4/packages/core/src/channels/typing-status.ts), and no top-level DM typing.                                          |
 | Tool cards and approval controls                             | Missing. Mastra's [formatting implementation](https://github.com/mastra-ai/mastra/blob/6e8dfcb83facb0861ebefa4fee384429a113acf4/packages/core/src/channels/formatting.ts) renders tool lifecycle/Approve/Deny cards. Computah needs a durable exact-action approval/resume contract first, not decorative buttons. |
 | Progressive streaming, native Stop, generated files/media    | Missing Slack projection/action wiring; final text only. Ordinary native Slack streaming/status require threads, so no silent change to top-level DM placement.                                                                                                                                                    |
