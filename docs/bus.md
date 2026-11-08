@@ -148,13 +148,12 @@ is introduced.
 
 ## Durable receipt causality and timing
 
-Each newly admitted receipt gets a host-generated, independent
-`computah.bus.admit` root marker inside its admission transaction. It is an
-instantaneous identity marker, not the admission lifetime; native actor/SQL spans
-still measure admission work. Incoming HTTP context can be a validated ID-only
-link but cannot select the root or authorize a telemetry query. The carrier is
-saved atomically with the receipt and accepted outbox intent, including when the
-exporter is disabled. Duplicate admission retains that original carrier and dates.
+Each newly admitted receipt persists the carrier of its actual
+`computah.bus.admit` operation atomically with the receipt and accepted outbox
+intent. Admission continues the admitting transport/actor context rather than
+creating an independent linked receipt root. Duplicate admission retains its
+original carrier and dates. Without an SDK or valid context, a durable fallback
+identity remains available. Trace context never authorizes a telemetry query.
 
 `computah.bus.stream.append` attempts restore the saved receipt parent and link
 the current `computah.bus.pump` span; a batch never merges different receipt roots.
@@ -201,7 +200,7 @@ receipt/attempt trace context with fixed outcome, attempt/status and elapsed
 scalars, not receipt IDs, scope identities or content. Trace/log export remains
 bounded best-effort, separate from durable receipt correctness.
 
-Local native tests cover distinct roots, distrust of incoming IDs, cross-audience
+Local native tests cover causal ingress parenting, independent batch pumps, cross-audience
 denial, restart, duplicate admission, lost acknowledgement/204 dedup retry,
 unchanged replay, saved timing and sanitized trace/log linkage. These tests are
 not evidence of exact production revision adoption or actual Axiom ingestion;

@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { request } from "node:http";
 import { isAbsolute } from "node:path";
-import { traceOperation } from "@computah/observability";
+import { currentTraceHeaders, traceOperation } from "@computah/observability";
 import type { Capability, Scope } from "./core.js";
 
 export type TransportTimingResult =
@@ -186,6 +186,7 @@ export function createTransportTiming(options: {
               agent: false,
               signal: abort,
               headers: {
+                ...currentTraceHeaders(),
                 authorization: `Bearer ${options.token}`,
                 "content-type": "application/json",
                 "content-length": Buffer.byteLength(body),

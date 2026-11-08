@@ -56,6 +56,10 @@ export function createAxiomMcp(options: {
       return traceOperation(
         call ? "axiom.call" : "axiom.discover",
         async (span) => {
+          span.setAttribute(
+            "tool.name",
+            call ? "axiom_read" : "axiom_discover",
+          );
           const fail = (code: string) => ({
             status: "unavailable" as const,
             code,

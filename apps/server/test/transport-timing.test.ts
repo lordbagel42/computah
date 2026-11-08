@@ -2,7 +2,11 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type RequestListener } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startObservability, traceOperation } from "@computah/observability";
+import {
+  startObservability,
+  traceHttp,
+  traceOperation,
+} from "@computah/observability";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ToolExecutionApi } from "@earendil-works/pi-durable";
 import { expect, test } from "vitest";
@@ -60,6 +64,7 @@ async function broker(
   let handler: RequestListener = (_req, res) =>
     res.end(JSON.stringify({ timing }));
   const server = createServer((req, res) => handler(req, res));
+  traceHttp(server);
   await new Promise<void>((resolve) => server.listen(socketPath, resolve));
   try {
     await run(socketPath, (next) => {
@@ -108,7 +113,11 @@ test("private UDS client authenticates exact receipts/scopes, bounds and project
         expect(req.url).toBe("/v1/timing");
         expect(req.method).toBe("POST");
         expect(req.headers.authorization).toBe(`Bearer ${token}`);
-        expect(req.headers.traceparent).toBeUndefined();
+        expect(req.headers.traceparent).toMatch(
+          /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/,
+        );
+        expect(req.headers.baggage).toBeUndefined();
+        expect(req.headers.tracestate).toBeUndefined();
         let body = "";
         req.on("data", (chunk) => {
           body += chunk;
@@ -254,6 +263,15 @@ test("private UDS client authenticates exact receipts/scopes, bounds and project
       (s) => s.parentSpanId === parent.spanId && s.traceId === parent.traceId,
     ),
   ).toBe(true);
+  const clientSpan = children.find((s) => s.parentSpanId === parent.spanId);
+  expect(
+    spans.some(
+      (s) =>
+        s.name === "computah.http" &&
+        s.parentSpanId === clientSpan.spanId &&
+        s.traceId === parent.traceId,
+    ),
+  ).toBe(true);
   for (const outcome of ["ready", "denied", "error", "cancelled", "timeout"])
     expect(
       children.some((s) =>
@@ -263,6 +281,14 @@ test("private UDS client authenticates exact receipts/scopes, bounds and project
         ),
       ),
     ).toBe(true);
+  const records = logs.flatMap((body) =>
+    JSON.parse(body).resourceLogs.flatMap(
+      (resource: { scopeLogs: { logRecords: { spanId: string }[] }[] }) =>
+        resource.scopeLogs.flatMap((scope) => scope.logRecords),
+    ),
+  );
+  for (const http of spans.filter((s) => s.name === "computah.http"))
+    expect(records.filter((row) => row.spanId === http.spanId)).toHaveLength(1);
   expect(logs.join("")).toContain("slack.timing");
   for (const privateValue of [
     token,

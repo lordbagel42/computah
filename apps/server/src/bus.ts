@@ -380,84 +380,94 @@ export function createBus(options: {
         c,
         input: BusSendRequest,
         transport?: { traceparent?: string; receivedAtMs?: number },
-      ) => {
-        const scope = scopeOf(c.key);
-        await permit(scope, "task.send");
-        try {
-          input = Schema.decodeUnknownSync(BusSendRequest, {
-            onExcessProperty: "error",
-          })(input);
-        } catch {
-          throw new UserError("invalid-request");
-        }
-        const accepted = await c.db.transaction(
-          async (tx) => {
-            const existing = await tx.execute(
-              "SELECT text, receipt, traceparent FROM receipts WHERE mutation = ?",
-              input.clientMutationId,
-            );
-            if (existing[0]) {
-              if (existing[0].text !== input.text)
-                throw new UserError("conflict");
-              return {
-                value: receipt(existing[0]),
-                carrier: carrierOf(existing[0]),
-              };
+      ) =>
+        traceOperation(
+          "bus.admit",
+          async () => {
+            const scope = scopeOf(c.key);
+            await permit(scope, "task.send");
+            try {
+              input = Schema.decodeUnknownSync(BusSendRequest, {
+                onExcessProperty: "error",
+              })(input);
+            } catch {
+              throw new UserError("invalid-request");
             }
-            // Root identity is minted by the host, never inherited from caller-controlled HTTP.
-            const carrier = createTraceCarrier(
-              "bus.admit",
-              transport?.traceparent
-                ? [{ traceparent: transport.traceparent }]
-                : [],
+            const accepted = await c.db.transaction(
+              async (tx) => {
+                const existing = await tx.execute(
+                  "SELECT text, receipt, traceparent FROM receipts WHERE mutation = ?",
+                  input.clientMutationId,
+                );
+                if (existing[0]) {
+                  if (existing[0].text !== input.text)
+                    throw new UserError("conflict");
+                  return {
+                    value: receipt(existing[0]),
+                    carrier: carrierOf(existing[0]),
+                  };
+                }
+                // Persist the admitting operation, not an independent linked receipt root.
+                // Without an SDK or incoming context, retain a durable identity for recovery.
+                const active = currentTraceHeaders();
+                const carrier = active.traceparent
+                  ? active
+                  : createTraceCarrier("bus.admit");
+                const admittedAt = Date.now();
+                const receivedAt = transport?.receivedAtMs;
+                const result: BusReceipt = {
+                  version: 1,
+                  id: seal(scope, input.clientMutationId),
+                  clientMutationId: input.clientMutationId,
+                  status: "queued",
+                  submissionId: null,
+                };
+                await tx.execute(
+                  "INSERT INTO receipts(mutation, text, status, receipt, traceparent, received_at_ms, admitted_at_ms) VALUES (?, ?, 'queued', ?, ?, ?, ?)",
+                  input.clientMutationId,
+                  input.text,
+                  JSON.stringify(result),
+                  carrier.traceparent,
+                  typeof receivedAt === "number" &&
+                    Number.isSafeInteger(receivedAt) &&
+                    receivedAt > 0 &&
+                    receivedAt <= admittedAt
+                    ? receivedAt
+                    : null,
+                  admittedAt,
+                );
+                await tx.execute(
+                  "INSERT INTO outbox(payload, mutation, traceparent, enqueued_at_ms, attempts) VALUES (?, ?, ?, ?, 0)",
+                  JSON.stringify({
+                    version: 1,
+                    receipt: result,
+                    text: null,
+                  } satisfies BusOutput),
+                  input.clientMutationId,
+                  carrier.traceparent,
+                  admittedAt,
+                );
+                return { value: result, carrier };
+              },
+              { name: "bus.admit" },
             );
-            const admittedAt = Date.now();
-            const receivedAt = transport?.receivedAtMs;
-            const result: BusReceipt = {
-              version: 1,
-              id: seal(scope, input.clientMutationId),
-              clientMutationId: input.clientMutationId,
-              status: "queued",
-              submissionId: null,
-            };
-            await tx.execute(
-              "INSERT INTO receipts(mutation, text, status, receipt, traceparent, received_at_ms, admitted_at_ms) VALUES (?, ?, 'queued', ?, ?, ?, ?)",
-              input.clientMutationId,
-              input.text,
-              JSON.stringify(result),
-              carrier.traceparent,
-              typeof receivedAt === "number" &&
-                Number.isSafeInteger(receivedAt) &&
-                receivedAt > 0 &&
-                receivedAt <= admittedAt
-                ? receivedAt
-                : null,
-              admittedAt,
+            withTraceContext(accepted.carrier, () =>
+              runtimeLog("bus.delivery", {
+                outcome:
+                  accepted.value.status === "queued" ? "queued" : "success",
+                operation: "submit",
+              }),
             );
-            await tx.execute(
-              "INSERT INTO outbox(payload, mutation, traceparent, enqueued_at_ms, attempts) VALUES (?, ?, ?, ?, 0)",
-              JSON.stringify({
-                version: 1,
-                receipt: result,
-                text: null,
-              } satisfies BusOutput),
-              input.clientMutationId,
-              carrier.traceparent,
-              admittedAt,
+            // A pump can publish several unrelated receipts; it must not inherit one admission.
+            c.waitUntil(
+              withTraceContext({}, () => pump(c, "input").catch(() => {})),
             );
-            return { value: result, carrier };
+            return accepted.value;
           },
-          { name: "bus.admit" },
-        );
-        withTraceContext(accepted.carrier, () =>
-          runtimeLog("bus.delivery", {
-            outcome: accepted.value.status === "queued" ? "queued" : "success",
-            operation: "submit",
-          }),
-        );
-        c.waitUntil(pump(c, "input").catch(() => {}));
-        return accepted.value;
-      },
+          transport?.traceparent
+            ? { traceparent: transport.traceparent }
+            : undefined,
+        ),
       receipt: async (c, id: string) => {
         return receipt(await readReceipt(c, id));
       },

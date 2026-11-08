@@ -108,6 +108,9 @@ settings:
 overrides:
   '@opentelemetry/api': 1.9.1
 
+patchedDependencies:
+  '@earendil-works/pi-durable@1.5.0': b58034faf761941a407f56c009c72ceb6292607446c1e4c628025f34690a7f4b
+
 importers:
 
   .:
@@ -180,7 +183,7 @@ importers:
         version: 1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(zod@4.6.7)
       '@earendil-works/pi-durable':
         specifier: 1.5.0
-        version: 1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7)
+        version: 1.5.0(patch_hash=b58034faf761941a407f56c009c72ceb6292607446c1e4c628025f34690a7f4b)(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7)
       '@earendil-works/pi-mcp':
         specifier: 1.5.0
         version: 1.5.0
@@ -192,7 +195,7 @@ importers:
         version: 1.5.0
       '@rivet-dev/pi':
         specifier: 0.5.6
-        version: 0.5.6(@aws-sdk/credential-provider-node@3.972.94)(@earendil-works/chord@1.5.0(esbuild@0.28.2))(@earendil-works/pi-ai@1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-durable@1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-telemetry@1.5.0)(@smithy/signature-v4@5.7.5)(rivetkit@3.0.6)(zod@4.6.7)
+        version: 0.5.6(@aws-sdk/credential-provider-node@3.972.94)(@earendil-works/chord@1.5.0(esbuild@0.28.2))(@earendil-works/pi-ai@1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-durable@1.5.0(patch_hash=b58034faf761941a407f56c009c72ceb6292607446c1e4c628025f34690a7f4b)(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-telemetry@1.5.0)(@smithy/signature-v4@5.7.5)(rivetkit@3.0.6)(zod@4.6.7)
       effect:
         specifier: 4.1.2
         version: 4.1.2
@@ -2960,7 +2963,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-durable@1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7)':
+  '@earendil-works/pi-durable@1.5.0(patch_hash=b58034faf761941a407f56c009c72ceb6292607446c1e4c628025f34690a7f4b)(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7)':
     dependencies:
       '@earendil-works/chord': 1.5.0(esbuild@0.28.2)
       '@earendil-works/pi-ai': 1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7)
@@ -3341,15 +3344,15 @@ snapshots:
 
   '@protobufjs/utf8@1.1.2': {}
 
-  '@rivet-dev/pi@0.5.6(@aws-sdk/credential-provider-node@3.972.94)(@earendil-works/chord@1.5.0(esbuild@0.28.2))(@earendil-works/pi-ai@1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-durable@1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-telemetry@1.5.0)(@smithy/signature-v4@5.7.5)(rivetkit@3.0.6)(zod@4.6.7)':
+  '@rivet-dev/pi@0.5.6(@aws-sdk/credential-provider-node@3.972.94)(@earendil-works/chord@1.5.0(esbuild@0.28.2))(@earendil-works/pi-ai@1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-durable@1.5.0(patch_hash=b58034faf761941a407f56c009c72ceb6292607446c1e4c628025f34690a7f4b)(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))(@earendil-works/pi-telemetry@1.5.0)(@smithy/signature-v4@5.7.5)(rivetkit@3.0.6)(zod@4.6.7)':
     dependencies:
       '@earendil-works/chord': 1.5.0(esbuild@0.28.2)
       '@earendil-works/pi-ai': 1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(undici@8.12.3)(zod@4.6.7)
       '@earendil-works/pi-coding-agent': 1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(zod@4.6.7)
-      '@earendil-works/pi-durable': 1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7)
+      '@earendil-works/pi-durable': 1.5.0(patch_hash=b58034faf761941a407f56c009c72ceb6292607446c1e4c628025f34690a7f4b)(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7)
       '@earendil-works/pi-telemetry': 1.5.0
       '@opentelemetry/api': 1.9.1
-      '@rivet-dev/sandbox-adapter': 0.5.6(@earendil-works/chord@1.5.0(esbuild@0.28.2))(@earendil-works/pi-durable@1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))
+      '@rivet-dev/sandbox-adapter': 0.5.6(@earendil-works/chord@1.5.0(esbuild@0.28.2))(@earendil-works/pi-durable@1.5.0(patch_hash=b58034faf761941a407f56c009c72ceb6292607446c1e4c628025f34690a7f4b)(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))
       rivetkit: 3.0.6
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
@@ -3366,10 +3369,10 @@ snapshots:
       - ws
       - zod
 
-  '@rivet-dev/sandbox-adapter@0.5.6(@earendil-works/chord@1.5.0(esbuild@0.28.2))(@earendil-works/pi-durable@1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))':
+  '@rivet-dev/sandbox-adapter@0.5.6(@earendil-works/chord@1.5.0(esbuild@0.28.2))(@earendil-works/pi-durable@1.5.0(patch_hash=b58034faf761941a407f56c009c72ceb6292607446c1e4c628025f34690a7f4b)(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7))':
     optionalDependencies:
       '@earendil-works/chord': 1.5.0(esbuild@0.28.2)
-      '@earendil-works/pi-durable': 1.5.0(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7)
+      '@earendil-works/pi-durable': 1.5.0(patch_hash=b58034faf761941a407f56c009c72ceb6292607446c1e4c628025f34690a7f4b)(@aws-sdk/credential-provider-node@3.972.94)(@smithy/signature-v4@5.7.5)(esbuild@0.28.2)(undici@8.12.3)(zod@4.6.7)
 
   '@rivet-dev/services-darwin-arm64@0.2.5':
     optional: true

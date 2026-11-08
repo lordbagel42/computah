@@ -1,0 +1,45 @@
+diff --git a/dist/harness/submissions.js b/dist/harness/submissions.js
+index 6e882a8c252dda942b8b45e5b1837cf2fee28341..ab3c2a67a4d88dcce8b526123b36ed70a7edd40d 100644
+--- a/dist/harness/submissions.js
++++ b/dist/harness/submissions.js
+@@ -51,14 +51,15 @@ export class Submissions {
+     /** Run one admission in its `pi.durable.submit` span, asking for progress first, as the run it starts needs it. */
+     #traced(conversationId, draft, context, admit) {
+         this.#resume();
+-        // Inputs and continues start runs: root traces linked to their callers.
++        // Independent runs remain roots unless the host supplies a causal parent.
+         const startsRun = draft.type !== "write";
+-        const parent = startsRun ? this.#telemetry : context.telemetry;
++        const causal = draft.trace === undefined ? undefined : this.#telemetry.propagation?.extract(draft.trace);
++        const parent = causal ?? (startsRun ? this.#telemetry : context.telemetry);
+         return createTypedSpanStarter(parent, [DURABLE_TELEMETRY_SCHEMA])("pi.durable.submit", {
+             "submission.type": draft.type,
+             "conversation.id": conversationId,
+         }, async (span) => {
+-            if (startsRun)
++            if (startsRun && !causal)
+                 span.addLink({ context: context.telemetry });
+             try {
+                 const admission = await admit(span);
+diff --git a/dist/harness/types.d.ts b/dist/harness/types.d.ts
+index eb64e474162b158a43563e6c68d8ffea8c18b74a..059686d198084e97bf2040c4193b71a0120104e0 100644
+--- a/dist/harness/types.d.ts
++++ b/dist/harness/types.d.ts
+@@ -1,7 +1,7 @@
+ import type { Context, JsonValue, WatchHandle } from "@earendil-works/chord";
+ import type { Api, AssistantMessage, CacheRetention, ClientIdentity, Message, Model, Models, ModelThinkingLevel, Tool, ToolCall, ToolResultMessage, Transport, Usage, UserMessage } from "@earendil-works/pi-ai";
+ import type { Static } from "@earendil-works/pi-schema";
+-import type { TelemetryContext } from "@earendil-works/pi-telemetry";
++import type { TelemetryCarrier, TelemetryContext } from "@earendil-works/pi-telemetry";
+ import type { ExecutionEnv, ShellOutputSkip, ShellOutputWindow } from "../env/index.ts";
+ import type { CommitOptions, ConversationId, ConversationOwnership, ConversationRecord, Cursor, DocumentObserver, DocumentReader, Entry, EntryDraft, EntryId, EntryQuery, EntryRecord, JsonObject, Observation, Observer, Page, Report, Session, SetTimer, SubmissionId, SubmissionRecord, Task, TaskId, TaskOptions, TaskRecord, TaskState, Tx, TypedEntry } from "../types.ts";
+ import type { TaskGraph, TaskGraphWatch } from "./task-graph.ts";
+@@ -28,6 +28,8 @@ export type InputEntry = {
+  */
+ export type SubmissionDraft = {
+     readonly requestId?: string;
++    /** Host-only opt-in causal parent. Omitted preserves independent run roots. Stored atomically at admission. */
++    readonly trace?: TelemetryCarrier;
+ } & ({
+     readonly type: "input";
+     readonly content: UserInput;

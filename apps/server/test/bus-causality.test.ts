@@ -2,13 +2,17 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { startObservability } from "@computah/observability";
+import {
+  currentTraceHeaders,
+  startObservability,
+  traceOperation,
+} from "@computah/observability";
 import { DurableStreamTestServer } from "@durable-streams/server";
 import { setupTest } from "rivetkit/test";
 import { expect, test } from "vitest";
 import { busStreamPath, createBus } from "../src/bus.js";
 
-test("receipt trace roots and initial queue timing survive restart, duplicate admission and append-success/lost-ack", async (context) => {
+test("causal admission, dispatch and append survive restart, duplicate admission and lost acknowledgement", async (context) => {
   const originalFetch = globalThis.fetch;
   const exported: string[] = [];
   const logged: string[] = [];
@@ -60,23 +64,27 @@ test("receipt trace roots and initial queue timing survive restart, duplicate ad
     authorize: () => true,
   };
   let bus = createBus(options);
+  let ingress: Record<string, string> = {};
   try {
     let client = (await setupTest(context, bus.registry)).client;
     let session = bus.attach(client)(scope);
-    const first = await session.admit(
-      {
-        clientMutationId: "causal-first",
-        text: "private-message-causality-canary",
-      },
-      { traceparent: `00-${"a".repeat(32)}-${"b".repeat(16)}-01` },
-    );
+    const first = await traceOperation("bus.test.ingress", async () => {
+      ingress = currentTraceHeaders();
+      return session.admit(
+        {
+          clientMutationId: "causal-first",
+          text: "private-message-causality-canary",
+        },
+        ingress,
+      );
+    });
     const second = await session.admit({
       clientMutationId: "causal-second",
       text: "different private message",
     });
     const initialTiming = await session.timing(first.id);
     expect(initialTiming.traceId).toMatch(/^[a-f0-9]{32}$/);
-    expect(initialTiming.traceId).not.toBe("a".repeat(32));
+    expect(initialTiming.traceId).toBe(ingress.traceparent.split("-")[1]);
     expect(initialTiming.receivedAtMs).toBeNull();
     expect(initialTiming.admittedAtMs).toBeGreaterThan(0);
     expect(initialTiming.outputs).toHaveLength(1);
@@ -138,6 +146,40 @@ test("receipt trace roots and initial queue timing survive restart, duplicate ad
     expect(finalTiming.outputs?.[0].acknowledgedAtMs).toBeGreaterThanOrEqual(
       finalTiming.outputs?.[0].firstAttemptAtMs as number,
     );
+    await bus.registry.shutdown();
+    let failDispatch = true;
+    let dispatchFailures = 0;
+    bus = createBus({
+      ...options,
+      dispatch: async () => {
+        if (failDispatch) {
+          dispatchFailures++;
+          throw new Error("synthetic dispatch failure");
+        }
+        return {
+          submissionId: "synthetic-submission",
+          status: "completed",
+          text: "safe result",
+        };
+      },
+    });
+    client = (await setupTest(context, bus.registry)).client;
+    session = bus.attach(client)(scope);
+    // The failed wake attempt leaves both durable receipts queued for retry.
+    for (let i = 0; dispatchFailures === 0 && i < 100; i++) {
+      await session.pump().catch(() => {});
+      await delay(10);
+    }
+    expect(dispatchFailures).toBeGreaterThan(0);
+    expect((await session.receipt(first.id)).status).toBe("queued");
+    failDispatch = false;
+    for (let i = 0; i < 100; i++) {
+      await session.pump();
+      if ((await session.receipt(second.id)).status === "completed") break;
+      await delay(10);
+    }
+    expect((await session.receipt(first.id)).status).toBe("completed");
+    expect((await session.receipt(second.id)).status).toBe("completed");
   } finally {
     await bus.registry.shutdown();
     await streams.stop();
@@ -163,17 +205,16 @@ test("receipt trace roots and initial queue timing survive restart, duplicate ad
         resource.scopeSpans.flatMap((scope) => scope.spans),
     ),
   );
-  const roots = spans.filter(
-    (span) => span.name === "computah.bus.admit" && !span.parentSpanId,
+  const admissions = spans.filter((span) => span.name === "computah.bus.admit");
+  expect(admissions).toHaveLength(3); // two initial admissions plus the duplicate
+  const firstAdmission = admissions.find(
+    (span) => span.parentSpanId === ingress.traceparent.split("-")[2],
   );
-  expect(roots).toHaveLength(2);
-  expect(new Set(roots.map((span) => span.traceId)).size).toBe(2);
+  expect(firstAdmission?.traceId).toBe(ingress.traceparent.split("-")[1]);
+  const pumps = spans.filter((span) => span.name === "computah.bus.pump");
   expect(
-    roots.some((span) =>
-      span.links.some(
-        (link) =>
-          link.traceId === "a".repeat(32) && link.spanId === "b".repeat(16),
-      ),
+    pumps.every(
+      (pump) => !admissions.some((admit) => pump.parentSpanId === admit.spanId),
     ),
   ).toBe(true);
   const appends = spans.filter(
@@ -182,9 +223,33 @@ test("receipt trace roots and initial queue timing survive restart, duplicate ad
   expect(appends.length).toBeGreaterThanOrEqual(3);
   expect(
     appends.every((span) =>
-      roots.some(
+      admissions.some(
         (root) =>
           span.traceId === root.traceId && span.parentSpanId === root.spanId,
+      ),
+    ),
+  ).toBe(true);
+  expect(new Set(appends.map((span) => span.traceId)).size).toBe(2);
+  const dispatches = spans.filter(
+    (span) => span.name === "computah.bus.dispatch",
+  );
+  expect(dispatches.some((span) => span.status.code === 2)).toBe(true);
+  expect(dispatches.filter((span) => span.status.code !== 2)).toHaveLength(2);
+  expect(
+    dispatches.every((span) =>
+      admissions.some(
+        (admit) =>
+          span.traceId === admit.traceId && span.parentSpanId === admit.spanId,
+      ),
+    ),
+  ).toBe(true);
+  expect(
+    [...appends, ...dispatches].every((span) =>
+      span.links.some((link) =>
+        pumps.some(
+          (pump) =>
+            pump.traceId === link.traceId && pump.spanId === link.spanId,
+        ),
       ),
     ),
   ).toBe(true);
@@ -205,18 +270,28 @@ test("receipt trace roots and initial queue timing survive restart, duplicate ad
   expect(value(retried[0], "delivery.duration_ms")).toBeGreaterThanOrEqual(
     value(retried[0], "queue.duration_ms") as number,
   );
-  const deliveries: {
+  const logRecords: {
     traceId: string;
     spanId: string;
     body: { stringValue: string };
-  }[] = logged
-    .flatMap((body) =>
-      JSON.parse(body).resourceLogs.flatMap(
-        (resource: { scopeLogs: { logRecords: unknown[] }[] }) =>
-          resource.scopeLogs.flatMap((scope) => scope.logRecords),
+  }[] = logged.flatMap((body) =>
+    JSON.parse(body).resourceLogs.flatMap(
+      (resource: { scopeLogs: { logRecords: unknown[] }[] }) =>
+        resource.scopeLogs.flatMap((scope) => scope.logRecords),
+    ),
+  );
+  for (const span of [...admissions, ...dispatches])
+    expect(
+      logRecords.some(
+        (record) =>
+          record.body.stringValue === "operation.completed" &&
+          record.traceId === span.traceId &&
+          record.spanId === span.spanId,
       ),
-    )
-    .filter((record) => record.body.stringValue === "bus.delivery");
+    ).toBe(true);
+  const deliveries = logRecords.filter(
+    (record) => record.body.stringValue === "bus.delivery",
+  );
   expect(
     deliveries.some(
       (record) =>

@@ -1,13 +1,21 @@
-import { startObservability, traceOperation } from "@computah/observability";
+import {
+  currentTraceHeaders,
+  startObservability,
+  traceHttp,
+  traceOperation,
+} from "@computah/observability";
 import {
   createFauxCore,
   fauxAssistantMessage,
   fauxToolCall,
+  getSystemMessageText,
 } from "@earendil-works/pi-ai";
 import { Effect } from "effect";
 import { setupTest } from "rivetkit/test";
 import { expect, test, vi } from "vitest";
+import { readConfig } from "../src/config.js";
 import { createCore } from "../src/core.js";
+import { closeHttp, createHttpServer } from "../src/http.js";
 import { createOperations, type OperationalTarget } from "../src/operations.js";
 import { smokeProvider } from "../src/smoke-model.js";
 import { createTavily } from "../src/tavily.js";
@@ -18,6 +26,8 @@ test("Pi phases keep traces content-free while opted-in native content reaches p
   const logBodies: string[] = [];
   const cleanupElapsed: number[] = [];
   let queryCleanupElapsed = 0;
+  let ingress: Record<string, string> = {};
+  let diagnosticsParent: Record<string, string> = {};
   globalThis.fetch = async (input, init) => {
     if (String(input) === "https://api.axiom.co/v1/traces") {
       bodies.push(String(init?.body));
@@ -63,6 +73,32 @@ test("Pi phases keep traces content-free while opted-in native content reaches p
           const command = request.messages.findLast(
             (message) => message.role === "user",
           );
+          if (
+            command?.role === "user" &&
+            command.content === "causal-http-canary"
+          ) {
+            const interaction = request.messages
+              .filter((message) => message.role === "system")
+              .map(getSystemMessageText)
+              .join("\n")
+              .includes("Interaction agent");
+            faux.setResponses([
+              last?.role !== "toolResult"
+                ? fauxAssistantMessage(fauxToolCall("self_docs_discover", {}), {
+                    stopReason: "toolUse",
+                  })
+                : last.toolName === "self_docs_discover" && interaction
+                  ? fauxAssistantMessage(
+                      fauxToolCall("Task", {
+                        worker: "primary",
+                        text: "causal-http-canary",
+                      }),
+                      { stopReason: "toolUse" },
+                    )
+                  : fauxAssistantMessage("bounded completed answer"),
+            ]);
+            return faux.streamSimple(model, request, options);
+          }
           if (
             command?.role !== "user" ||
             command.content !== "private-operations-canary"
@@ -126,6 +162,27 @@ test("Pi phases keep traces content-free while opted-in native content reaches p
     },
   });
   const runtime = await setupTest(context, core.registry);
+  const authToken = "synthetic-http-token-not-a-real-credential";
+  const server = createHttpServer({
+    ...readConfig({
+      COMPUTAH_MODE: "faux",
+      COMPUTAH_CONNECTION_SECRET: "s".repeat(64),
+      COMPUTAH_AUTH_JSON: JSON.stringify([
+        {
+          ...scope,
+          token: authToken,
+          capabilities: ["task.send", "history.read"],
+        },
+      ]),
+    }),
+    bind: core.attach(runtime.client),
+  });
+  traceHttp(server);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing HTTP address");
+  const base = `http://127.0.0.1:${address.port}`;
   try {
     const session = core.attach(runtime.client)({
       tenantId: "private-tenant-canary",
@@ -157,6 +214,31 @@ test("Pi phases keep traces content-free while opted-in native content reaches p
         "capture-request",
       ),
     ).rejects.toThrow();
+    await traceOperation("synthetic", async () => {
+      ingress = currentTraceHeaders();
+      const admitted = await fetch(`${base}/v1/submissions`, {
+        method: "POST",
+        headers: {
+          ...ingress,
+          authorization: `Bearer ${authToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          text: "causal-http-canary",
+          clientMutationId: "synthetic-request",
+        }),
+      });
+      expect(admitted.status).toBe(202);
+      const receipt = (await admitted.json()) as { id: string };
+      const result = await fetch(
+        `${base}/v1/submissions/${receipt.id}?wait=true`,
+        { headers: { ...ingress, authorization: `Bearer ${authToken}` } },
+      );
+      expect(result.status).toBe(200);
+      expect(await result.json()).toMatchObject({
+        submission: { outcome: "completed" },
+      });
+    });
     const operational = await session.submit(
       session.interactionId,
       "private-operations-canary",
@@ -196,6 +278,7 @@ test("Pi phases keep traces content-free while opted-in native content reaches p
       (await session.wait(session.interactionId, denied.submissionId)).status,
     ).toBe("unanswered");
     await traceOperation("synthetic", async () => {
+      diagnosticsParent = currentTraceHeaders();
       const target: OperationalTarget = {
         requestId: "private-request-id-canary",
         submissionId: 1,
@@ -395,6 +478,7 @@ test("Pi phases keep traces content-free while opted-in native content reaches p
       expect(cleanup).toBe(true);
     });
   } finally {
+    await closeHttp(server);
     await core.close();
     await telemetry.close();
     globalThis.fetch = originalFetch;
@@ -434,6 +518,37 @@ test("Pi phases keep traces content-free while opted-in native content reaches p
   expect(spans.some((s) => s.name === "worker/admit")).toBe(true);
   const attr = (span: (typeof spans)[number], key: string) =>
     span.attributes.find((a) => a.key === key)?.value.stringValue;
+  const turn = spans.filter(
+    (s) => s.traceId === ingress.traceparent?.split("-")[1],
+  );
+  const admissions = turn.filter((s) => s.name === "pi.durable.submit");
+  expect(admissions).toHaveLength(2);
+  for (const admitted of admissions) {
+    expect(turn.find((s) => s.spanId === admitted.parentSpanId)).toBeDefined();
+  }
+  expect(
+    admissions.some((admitted) => {
+      const parent = turn.find((s) => s.spanId === admitted.parentSpanId);
+      return parent && attr(parent, "tool.name") === "Task";
+    }),
+  ).toBe(true);
+  expect(
+    turn.filter((s) => attr(s, "gen_ai.operation.name") === "chat"),
+  ).toHaveLength(5);
+  const searches = turn.filter((s) => s.name === "computah.self_docs.discover");
+  expect(searches).toHaveLength(2);
+  for (const search of searches) {
+    expect(attr(search, "tool.name")).toBe("self_docs_discover");
+    const ancestry = [];
+    let span: (typeof spans)[number] | undefined = search;
+    while (span && span.spanId !== ingress.traceparent?.split("-")[2]) {
+      ancestry.push(span.name);
+      span = turn.find((candidate) => candidate.spanId === span?.parentSpanId);
+    }
+    expect(span?.spanId).toBe(ingress.traceparent?.split("-")[2]);
+    expect(ancestry).toContain("pi.durable.submit");
+    expect(ancestry).toContain("pi.durable.phase");
+  }
   const timing = spans.find((s) => s.name === "computah.operations.timing");
   expect(timing).toBeDefined();
   expect(timing && attr(timing, "tool.name")).toBe("message_timing");
@@ -485,6 +600,13 @@ test("Pi phases keep traces content-free while opted-in native content reaches p
       }) => r.scopeLogs.flatMap((s) => s.logRecords),
     ),
   );
+  for (const search of searches) {
+    expect(
+      logs.find(
+        (row) => row.traceId === search.traceId && row.spanId === search.spanId,
+      )?.attributes,
+    ).toContainEqual({ key: "outcome", value: { stringValue: "ready" } });
+  }
   for (const span of [timing, discovery, query]) {
     const log = logs.find(
       (row) => row.traceId === span?.traceId && row.spanId === span?.spanId,
@@ -678,7 +800,9 @@ test("Pi phases keep traces content-free while opted-in native content reaches p
     "reviewKey",
   ])
     expect(ordinaryLogs).not.toContain(privateValue);
-  const parent = spans.find((s) => s.name === "computah.synthetic");
+  const parent = spans.find(
+    (s) => s.spanId === diagnosticsParent.traceparent?.split("-")[2],
+  );
   expect(parent?.spanId).toMatch(/^[a-f0-9]{16}$/);
   const web = spans.filter((s) =>
     ["computah.web.search", "computah.web.extract"].includes(s.name),

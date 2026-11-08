@@ -93,6 +93,33 @@ their own receipts, with omitted links counted explicitly. Private actor,
 conversation, receipt, input and answer identifiers are available to the authorized
 runtime tool, not exported as new Axiom attributes or public wire fields.
 
+### Causal admission tracing
+
+The pinned Pi Durable 1.5.0 pnpm patch adds an explicit host-only
+`SubmissionDraft.trace` parent carrier. Omitted carriers retain the vendor's
+independent-root behavior; no private Rivet imports or export-time reparenting
+are used. Gateway and Worker admission RPCs explicitly pass validated trace IDs,
+not request cancellation or baggage. Native admission stores its own child span
+carrier in the same transaction as the submission, receipt and source evidence.
+Task delegation freezes the actual tool invocation carrier with its intent;
+replay uses it without changing the admission fingerprint or original receipt.
+
+Native scheduling already persists task carriers. Resumed phase attempts are new
+finite spans under those stored parents, not one invented span across downtime.
+Busy follow-ups use their own stored admission carrier; coalesced execution uses
+its first input as parent and additional inputs as links. Independent later
+requests, steering and legacy records are never retroactively reparented.
+Local installed-package tests cover opt-in/default behavior, rollback, dedup,
+queued cancellation, busy follow-ups and fresh-storage recovery. An actual HTTP
+and Rivet/Pi run verifies Interaction discovery → Task → Worker discovery → final
+answer ancestry through sanitized trace/log export with a synthetic model.
+This is not a live Slack or production Axiom receipt.
+
+Existing `self_docs_discover`, `operations_discover`, `axiom_discover` and Worker
+`web_search` executions retain their fixed operation and tool identities. Pi's
+deferred-catalog `tool_search` extension is not installed; no empty search tool
+or change to direct tool availability is introduced to manufacture evidence.
+
 Dispatch uses submit/wait/history, not the adapter's ten-minute `prompt` helper.
 Native Pi compaction remains enabled by default. `compact()` appends a
 `pi.compaction` summary/head for active context; it does not replace or delete

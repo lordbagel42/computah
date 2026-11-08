@@ -104,6 +104,10 @@ export function createSelfDocs(
     return traceOperation(
       input.id === undefined ? "self_docs.discover" : "self_docs.read",
       async (span) => {
+        span.setAttribute(
+          "tool.name",
+          input.id === undefined ? "self_docs_discover" : "self_docs_read",
+        );
         const fail = (
           code: "invalid_input" | "unavailable" | "changed" | "cancelled",
         ) => {

@@ -208,6 +208,7 @@ type Delegation = {
   requestId: string;
   inputs: SubmissionId[];
   grants?: SourceGrant[];
+  carrier?: Record<string, string>;
   submissionId?: SubmissionId;
   reviewTaskId?: TaskId;
   reviewCarrier?: Record<string, string>;
@@ -839,7 +840,9 @@ export function createCore(options: CoreOptions) {
                   JSON.stringify(scopeKey(policy.scope)) ===
                   JSON.stringify(scopeKey(scope)),
               );
-              const carrier = currentTraceHeaders();
+              const carrier =
+                context.telemetry.propagation?.inject(context.telemetry) ??
+                currentTraceHeaders();
               const work = await api.commit(async (tx) => {
                 const state = await tx.doc(Delegations, api.conversationId);
                 const live = await tx.doc(LiveDoc, api.conversationId);
@@ -854,6 +857,7 @@ export function createCore(options: CoreOptions) {
                   requestId,
                   inputs: [...inputs],
                   grants: [...grants],
+                  carrier,
                 };
                 if (!selected || !sentinel || !live.run) return null;
                 state.calls[requestId].reviewCarrier ??= carrier.traceparent
@@ -944,10 +948,13 @@ export function createCore(options: CoreOptions) {
                   throw new CoreError("denied");
                 // Native safe replay must reuse the original admission fingerprint,
                 // even if another input has since added source lineage.
-                return (state.calls[requestId].grants ?? []).map((grant) => ({
-                  handle: grant.handle,
-                  version: grant.version,
-                }));
+                return {
+                  grants: (link.grants ?? []).map((grant) => ({
+                    handle: grant.handle,
+                    version: grant.version,
+                  })),
+                  carrier: { ...(link.carrier ?? carrier) },
+                };
               }, context);
               const result = await dispatch(
                 binding.scope,
@@ -961,7 +968,8 @@ export function createCore(options: CoreOptions) {
                       requestId
                     ].submissionId = submissionId;
                   }, context),
-                inherited,
+                inherited.grants,
+                inherited.carrier,
               );
               if (result.status !== "done") throw new CoreError("runtime");
               await sourceCheck(binding.scope, result.grants);
@@ -1230,6 +1238,7 @@ export function createCore(options: CoreOptions) {
         requestId: string,
         inherited: SourceGrant[] = [],
         privateEvidence = "",
+        parent: Record<string, string> = {},
       ) => {
         const scope = scopeOf(c.key);
         await permit(scope, "task.send");
@@ -1288,6 +1297,7 @@ export function createCore(options: CoreOptions) {
             content: text,
             requestId,
             whenBusy: "followUp",
+            trace: withTraceContext(parent, currentTraceHeaders),
           });
           if (preload?.text || privateEvidence)
             lineage.evidence[String(id)] = [privateEvidence, preload?.text]
@@ -1579,6 +1589,7 @@ export function createCore(options: CoreOptions) {
     signal?: AbortSignal,
     admittedCallback?: (id: SubmissionId) => Promise<unknown>,
     grants: SourceGrant[] = [],
+    parent = currentTraceHeaders(),
   ): Promise<PiPromptResult & { grants: SourceGrant[] }> {
     const actor = handle(
       controlClient(),
@@ -1586,7 +1597,7 @@ export function createCore(options: CoreOptions) {
       [...scopeKey(scope), label],
       signal,
     );
-    const admitted = await actor.admit(text, requestId, grants);
+    const admitted = await actor.admit(text, requestId, grants, "", parent);
     if ("conflict" in admitted) throw new CoreError("conflict");
     if ("cancelled" in admitted) throw new CoreError("denied");
     await admittedCallback?.(admitted.submissionId);
@@ -1730,6 +1741,7 @@ export function createCore(options: CoreOptions) {
               `source:${requestId}`,
               [grant],
               privateEvidence,
+              currentTraceHeaders(),
             );
             if ("conflict" in admitted) throw new CoreError("conflict");
             if ("cancelled" in admitted) throw new CoreError("denied");
@@ -1750,7 +1762,13 @@ export function createCore(options: CoreOptions) {
             )
               throw new CoreError("invalid");
             const actor = await resolve(id, "task.send", signal);
-            const admitted = await actor.admit(text, `input:${requestId}`);
+            const admitted = await actor.admit(
+              text,
+              `input:${requestId}`,
+              [],
+              "",
+              currentTraceHeaders(),
+            );
             if ("conflict" in admitted) throw new CoreError("conflict");
             if ("cancelled" in admitted) throw new CoreError("denied");
             return admitted;

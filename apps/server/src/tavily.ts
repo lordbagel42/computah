@@ -328,6 +328,10 @@ export function createTavily(options: {
           settlement = traceOperation(
             "query" in input ? "web.search" : "web.extract",
             async (span) => {
+              span.setAttribute(
+                "tool.name",
+                "query" in input ? "web_search" : "web_extract",
+              );
               const result = await execute(signal);
               span.setAttribute(
                 "outcome",

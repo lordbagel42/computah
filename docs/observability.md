@@ -252,11 +252,33 @@ coverage is an executable operation and its observable outcome/linkage.
 | Public observatory                 | `b3a507e` bounded positive-schema Worker HTTP/poll emitter; `480a953` fixes native fetch; owner-verified production query/render and 1000-row keyed correlation, documented in [observatory](public-observatory.md)                                                                                             | Optional edge ingest remains disabled/unproved; static/rejection paths use platform telemetry; browser interaction and actual visitor-disconnect export remain gaps                                   |
 | Deployment/setup/quality scripts   | Checks/logs, not application trace export                                                                                                                                                                                                                                                                       | Separate operational tracing policy; no host/process/SQL/socket/metrics/log pipeline coverage claim                                                                                                   |
 
-The pinned Pi package's caller-span bridge is internal, not exported publicly.
-Do not import private vendor files or weaken atomic admission/deduplication merely
-to manufacture a link. A supported bridge/upstream export and restart proof are
-needed. A complete repository-wide claim is **not established**. Export remains
-bounded best-effort: no sampling does not mean no loss or all paths instrumented.
+### Causal admission source update
+
+The ledger's earlier independent native-admission and bus receipt roots are
+superseded in source by explicit causal parenting. The pinned Pi Durable patch
+adds host-only `SubmissionDraft.trace`; gateway/Task RPCs opt in without private
+vendor imports, transaction changes or request cancellation inheritance. Native
+admission/task carriers remain the recovery source of truth. Task intent freezes
+its original invocation carrier; retries never reparent an existing submission.
+Independent requests retain their own contexts, while coalesced inputs use the
+first admission as parent and additional admissions as links.
+
+New bus receipts atomically persist the actual admission span carrier; append and
+dispatch restore it across retry/restart, while batch pumps remain independent
+and linked. The UDS timing client now sends active traceparent and the broker
+restores it for HTTP/lookup work; receipt IDs and trace IDs never grant authority.
+`createTraceCarrier(operation, links, parent?)` remains independent by default,
+with an explicit-parent same-trace child and SDK-off ID fallback. No timestamps
+or exported parents are rewritten and no spans are invented across downtime.
+
+Installed-package tests cover default/opt-in parenting, rollback, dedup, queued
+cancellation, busy follow-ups and fresh-storage recovery. Sanitized actual HTTP →
+Interaction discovery → Task → Worker discovery → final answer ancestry and
+matching outcome logs provide local proof, not a production Slack/Axiom receipt.
+Existing discover/search tools retain fixed actual identities; Pi's deferred
+`tool_search` is not installed or added merely to produce no-match evidence.
+A complete repository-wide claim is **not established**. Export remains bounded
+best-effort: no sampling does not mean no loss or all paths instrumented.
 
 ## Provisioning and secrets
 
@@ -347,8 +369,9 @@ operations and automatic bounded `operation.completed` logs. Each new durable re
 stores one fresh root carrier linked to the admitting operation. Retry/reopen drains
 restore that carrier and link the current pump, without exporting mailbox identity,
 source text, account handles or credentials. Existing pre-carrier receipts drain as
-new roots. Native `root.submit(tx, ...)` still uses `BACKGROUND_CONTEXT`; the pinned
-public Pi API supplies no supported caller-context bridge. Consequently receipt-to-
-native admission/Task trace parentage remains a documented gap, not inferred from
-ambient context. Atomic native admission/dedup and private grant lineage stay intact.
+new roots. Source admission explicitly passes its drain carrier through the
+patched native admission RPC independently of `BACKGROUND_CONTEXT` cancellation
+ownership. Gmail receipt roots remain independent of ingress; Gmail-specific
+end-to-end ancestry is not claimed here. Atomic admission/dedup and private grant
+lineage stay intact.
 Live Axiom ingestion of the deployed Gmail path remains a separate acceptance check.
