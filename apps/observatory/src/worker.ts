@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { Collector } from "./collector.ts";
+import { Collector, includeExporter } from "./collector.ts";
 import { Telemetry } from "./telemetry.ts";
 
 const headers = {
@@ -11,7 +11,7 @@ const headers = {
   "Strict-Transport-Security": "max-age=31536000",
 };
 
-// A single coordination atom is deliberate: one upstream query budget for the public feed.
+// One coordination atom bounds each of two fixed query modes, never per visitor.
 // Only the sanitized bounded snapshot is held in memory; nothing private is persisted.
 export class PublicTraceFeed extends DurableObject<Env> {
   private telemetry = new Telemetry(this.env.COMPUTAH_AXIOM_INGEST_TOKEN);
@@ -24,10 +24,24 @@ export class PublicTraceFeed extends DurableObject<Env> {
     Date.now,
     this.telemetry,
   );
+  private diagnostics = new Collector(
+    {
+      token: this.env.COMPUTAH_AXIOM_QUERY_TOKEN,
+      secret: this.env.PUBLIC_ID_SECRET,
+      includeExporter: true,
+    },
+    fetch,
+    Date.now,
+    this.telemetry,
+  );
   async fetch(request: Request): Promise<Response> {
     const trace = this.telemetry.start("computah.observatory.http");
     try {
-      const snapshot = await this.collector.get(trace.span);
+      const collector =
+        includeExporter(new URL(request.url)) === true
+          ? this.diagnostics
+          : this.collector;
+      const snapshot = await collector.get(trace.span);
       this.ctx.waitUntil(
         trace.end(
           request.signal.aborted
@@ -54,7 +68,10 @@ export default {
     const url = new URL(request.url);
     if (request.method !== "GET" && request.method !== "HEAD")
       return new Response("Method not allowed", { status: 405, headers });
-    if (url.search)
+    if (
+      url.search &&
+      (url.pathname !== "/api/traces" || includeExporter(url) === null)
+    )
       return new Response("Query parameters are not supported", {
         status: 400,
         headers,
@@ -63,7 +80,7 @@ export default {
     if (url.pathname === "/api/traces") {
       try {
         response = await env.TRACES.getByName("public-feed-v1").fetch(
-          "https://feed.internal/",
+          `https://feed.internal/${url.search}`,
           { signal: request.signal },
         );
       } catch {

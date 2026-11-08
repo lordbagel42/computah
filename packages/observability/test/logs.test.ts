@@ -131,6 +131,27 @@ test("structured logs preserve active correlation and approved scalars, never ar
   parent.end();
 });
 
+test("exporter self-telemetry does not generate log batches on idle ticks", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  let requests = 0;
+  const logger = createRuntimeLogger({
+    ...config,
+    fetch: async () => {
+      requests++;
+      return new Response("{}");
+    },
+  });
+  logger.emit("runtime.ready");
+  await logger.flush();
+  for (let index = 0; index < 3; index++) {
+    t.mock.timers.tick(1000);
+    await logger.flush();
+  }
+  assert.equal(requests, 1);
+  assert.equal(logger.stats().queued, 0);
+  await logger.close();
+});
+
 test("queue includes in-flight records, drops newest on overload, batches serially and closes admission", async () => {
   const batches: number[] = [];
   let release!: () => void;

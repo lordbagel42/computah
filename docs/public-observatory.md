@@ -6,14 +6,23 @@ tracker and does not expose the private backend or its reports.
 
 ## Disclosure and wire contract
 
-`GET /api/traces` accepts no query parameters or client-supplied IDs/APL. A single
-Durable Object coordinates all readers. Its fixed server-side Axiom query selects
-only timing/topology fields from `computah-prod-traces`, excludes observatory
-self-telemetry before limiting, and reads the newest 1,001 rows in 15 minutes.
+`GET /api/traces` hides `computah.logs.export` housekeeping by default, before
+the Axiom row limit so exporter batches cannot displace application activity.
+The **Include log exporter** diagnostics toggle selects the only supported query
+parameter, `?includeExporter=1`; all other query parameters and client-supplied
+IDs/APL are rejected. Exporter errors remain recorded and are visible in this
+diagnostic mode; application errors are never excluded by the housekeeping rule.
+A single Durable Object coordinates all readers with two fixed-mode caches;
+each mode has independent single-flight/backoff and at most one query per five
+seconds (two queries globally per five seconds if both are requested). Switching
+modes clears the browser snapshot, never relabeling old data as the new mode.
+Its fixed server-side Axiom queries select only timing/topology fields from
+`computah-prod-traces`, always exclude observatory self-telemetry before limiting,
+and read the newest 1,001 eligible rows in 15 minutes.
 At most 1,000 spans are returned. This is a rolling bounded view, not a lossless
 archive or a promise that every trace fits. Partial query results and overflow set
 `truncated`. Query deadline is eight seconds, response bound is 2 MiB, cadence is
-at least five seconds globally, failure backoff is capped at 30 seconds.
+at least five seconds per mode, failure backoff is capped at 30 seconds.
 
 An independent positive projection reconstructs each public span with only:
 `id`, `traceId`, `parentId`, `parentState`, `links`, `name`, `service`, `start`
@@ -70,6 +79,13 @@ traffic displacing application activity.
 
 ## Evidence and remaining gaps
 
+- Exporter-noise investigation on 2026-11-08 found 1,217 `computah.logs.export`
+  spans in a production 15-minute window. This operation records each nonempty
+  structured-log batch; the logger does not enqueue export-result logs, and the
+  trace processor only exports spans, not new structured logs. No recursive
+  exporter loop was demonstrated; instrumentation is retained. Local checks cover
+  fixed default/diagnostic queries, rejection of arbitrary query parameters,
+  isolated caches/failure state and retained application errors/truncation.
 - Public feed activated through Alchemy on 2026-11-08 after private query-token
   provisioning. The actual Worker returned `live`, 1,000 projected production
   spans and `truncated: true`; desktop and narrow Chromium rendered live data.

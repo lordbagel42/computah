@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { boundedJson, Collector, ENDPOINT, QUERY } from "../src/collector.ts";
+import {
+  boundedJson,
+  Collector,
+  DIAGNOSTIC_QUERY,
+  ENDPOINT,
+  includeExporter,
+  QUERY,
+} from "../src/collector.ts";
 import { LIMIT, project, readTable } from "../src/projection.ts";
 import { Telemetry } from "../src/telemetry.ts";
 
@@ -189,6 +196,74 @@ test("unconfigured collector makes no network calls and bounded body consumption
   });
   assert.equal((await collector.get()).state, "unconfigured");
   await assert.rejects(boundedJson(new Response("x".repeat(101)), 100));
+});
+
+test("exporter diagnostics are an explicit fixed query, isolated from the default cache", async () => {
+  assert.equal(
+    includeExporter(new URL("https://example.test/api/traces")),
+    false,
+  );
+  assert.equal(
+    includeExporter(
+      new URL("https://example.test/api/traces?includeExporter=1"),
+    ),
+    true,
+  );
+  for (const query of [
+    "?includeExporter=0",
+    "?includeExporter=1&apl=private",
+    "?includeExporter=1&includeExporter=1",
+    "?apl=private",
+  ])
+    assert.equal(
+      includeExporter(new URL(`https://example.test/api/traces${query}`)),
+      null,
+    );
+  assert.ok(QUERY.includes("isnull(name) or name != 'computah.logs.export'"));
+  assert.ok(
+    QUERY.indexOf("name != 'computah.logs.export'") < QUERY.indexOf("| take"),
+  );
+  assert.ok(!DIAGNOSTIC_QUERY.includes("name !="));
+  const calls: string[] = [];
+  let fail = false;
+  const transport: typeof fetch = async (_url, options) => {
+    const apl = JSON.parse(String(options?.body)).apl;
+    calls.push(apl);
+    if (fail) throw new Error("private");
+    return Response.json(
+      envelope(
+        [
+          row({
+            name: apl === QUERY ? "computah.http" : "computah.logs.export",
+            "status.code": "ERROR",
+          }),
+        ],
+        true,
+      ),
+    );
+  };
+  const normal = new Collector({ token: "synthetic", secret }, transport);
+  const diagnostics = new Collector(
+    { token: "synthetic", secret, includeExporter: true },
+    transport,
+  );
+  const first = await normal.get();
+  assert.equal(first.spans[0]?.name, "computah.http");
+  assert.equal(first.spans[0]?.status, "error");
+  assert.equal(first.truncated, true);
+  fail = true;
+  const disconnected = await diagnostics.get();
+  assert.equal(disconnected.state, "disconnected");
+  assert.deepEqual(disconnected.spans, []);
+  assert.equal(await normal.get(), first);
+  assert.deepEqual(calls, [QUERY, DIAGNOSTIC_QUERY]);
+  fail = false;
+  const included = await new Collector(
+    { token: "synthetic", secret, includeExporter: true },
+    transport,
+  ).get();
+  assert.equal(included.spans[0]?.name, "computah.logs.export");
+  assert.equal(included.spans[0]?.status, "error");
 });
 
 test("safe exporter records actual poll outcomes under the initiating HTTP trace and fails open", async () => {

@@ -15,6 +15,7 @@
   let timer = null;
   let generation = 0;
   let failures = 0;
+  let includeExporter = false;
   let selectedTrace = null;
   let selectedSpan = null;
   let traces = [];
@@ -113,12 +114,15 @@
     controller = request;
     const deadline = setTimeout(() => request.abort(), TIMEOUT_MS);
     try {
-      const response = await fetch("/api/traces", {
-        signal: request.signal,
-        cache: "no-store",
-        credentials: "omit",
-        headers: { Accept: "application/json" },
-      });
+      const response = await fetch(
+        includeExporter ? "/api/traces?includeExporter=1" : "/api/traces",
+        {
+          signal: request.signal,
+          cache: "no-store",
+          credentials: "omit",
+          headers: { Accept: "application/json" },
+        },
+      );
       if (!response.ok) throw new Error("Unavailable projection");
       const data = await response.json();
       if (!validProjection(data)) throw new Error("Invalid projection");
@@ -204,6 +208,8 @@
     $("pause").disabled = demo;
     $("demo").textContent = demo ? "Return to live" : "Explore demo";
     $("demo").setAttribute("aria-pressed", String(demo));
+    $("exporter").setAttribute("aria-pressed", String(includeExporter));
+    $("exporter").disabled = demo;
     let notice =
       "Live sanitized projection. Updates every 5 seconds. Filters find traces; all their spans remain visible for causal context.";
     let tone = "normal";
@@ -229,6 +235,10 @@
         "The source responded, but snapshot freshness is not current or cannot be established. Do not read this as live activity.";
       tone = "warning";
     }
+    if (!demo)
+      notice += includeExporter
+        ? " Diagnostics: log exporter included; it can crowd out application spans."
+        : " Log exporter housekeeping hidden at source; application errors remain included.";
     if (snapshot?.truncated)
       notice += ` Window truncated at ${snapshot.limit.toLocaleString()} spans; relationships and counts are incomplete.`;
     put("notice", notice);
@@ -787,6 +797,19 @@
     render();
   }
 
+  $("exporter").addEventListener("click", () => {
+    includeExporter = !includeExporter;
+    // Never relabel a retained snapshot from the other query mode.
+    snapshot = null;
+    liveSnapshot = null;
+    selectedTrace = null;
+    selectedSpan = null;
+    state = "connecting";
+    failures = 0;
+    paused = false;
+    restart();
+    render();
+  });
   $("pause").addEventListener("click", () => {
     paused = !paused;
     restart();

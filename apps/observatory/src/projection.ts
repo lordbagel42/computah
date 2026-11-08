@@ -34,6 +34,7 @@ const operations = new Set([
   "native.process",
   "native.core",
   "observatory.poll",
+  "logs.export",
 ]);
 const services = new Set([
   "computah-backend",
