@@ -1468,3 +1468,335 @@ test("input received during context preparation queues separately from the froze
     f.cleanup();
   }
 });
+
+test("agent selects only host-offered surfaces without changing the admitted principal", async () => {
+  for (const [dm, destination, expectedChannel, expectedThread] of [
+    [true, "thread", "DPRIVATE", "123.456"],
+    [true, "conversation", "DPRIVATE", null],
+    [false, "conversation", "CALLOWED", null],
+    [false, "sender_dm", "DPRIVATE", null],
+  ] as const) {
+    const f = fixture();
+    let requestId = "";
+    const request = f.transport.request;
+    f.transport.request = async (principal, path, body) => {
+      if (body) {
+        const text = (body as { text: string }).text;
+        requestId = JSON.parse(/requestId=("[^"]+")/.exec(text)?.[1] ?? '""');
+        assert.ok(requestId);
+        if (dm) assert.doesNotMatch(text, /"sender_dm"/);
+        return request(principal, path, body);
+      }
+      return {
+        submission: { outcome: "completed" },
+        messages: [
+          {
+            role: "tool",
+            blocks: [{ kind: "text", text: "not routing authority" }],
+          },
+          {
+            role: "assistant",
+            blocks: [
+              {
+                kind: "text",
+                text: JSON.stringify({
+                  requestId,
+                  destination,
+                  text: "Chosen answer",
+                }),
+              },
+            ],
+          },
+        ],
+      };
+    };
+    const adapter = new SlackAdapter(
+      f.path,
+      [binding],
+      "UBOT",
+      f.transport,
+      Date.now,
+      true,
+      0,
+      true,
+    );
+    try {
+      adapter.admit(
+        dm
+          ? {
+              ...mention,
+              event: {
+                ...mention.event,
+                type: "message",
+                channel_type: "im",
+                channel: "DPRIVATE",
+                ...(destination === "conversation"
+                  ? { thread_ts: "100.001" }
+                  : {}),
+              },
+            }
+          : mention,
+      );
+      await adapter.step();
+      await adapter.step();
+      assert.deepEqual(f.posts, [
+        [expectedChannel, "Chosen answer", expectedThread],
+      ]);
+      assert.equal(
+        f.calls[0]?.principal.agentId,
+        dm ? "agent" : "shared-agent",
+      );
+      await settle();
+      if (!dm) {
+        assert.deepEqual(f.statuses, [
+          ["CALLOWED", "123.456", "processing"],
+          ["CALLOWED", "123.456", "active"],
+        ]);
+      }
+    } finally {
+      adapter.close();
+      f.cleanup();
+    }
+  }
+});
+
+test("unoffered, quoted, tool, wrong-nonce and extra-field envelopes cannot select a route", async () => {
+  for (const variant of [
+    "unoffered",
+    "quoted",
+    "tool",
+    "nonce",
+    "extra",
+    "plain",
+  ] as const) {
+    const f = fixture();
+    let envelope = "";
+    const request = f.transport.request;
+    f.transport.request = async (principal, path, body) => {
+      if (body) {
+        const requestId = JSON.parse(
+          /requestId=("[^"]+")/.exec((body as { text: string }).text)?.[1] ??
+            '""',
+        );
+        envelope = JSON.stringify({
+          requestId: variant === "nonce" ? "another-request" : requestId,
+          destination: variant === "unoffered" ? "sender_dm" : "thread",
+          text: "answer",
+          ...(variant === "extra" ? { channel: "CARBITRARY" } : {}),
+        });
+        return request(principal, path, body);
+      }
+      return {
+        submission: { outcome: "completed" },
+        messages: [
+          { role: "tool", blocks: [{ kind: "text", text: envelope }] },
+          {
+            role: "assistant",
+            blocks: [
+              {
+                kind: "text",
+                text:
+                  variant === "quoted"
+                    ? `Example: ${envelope}`
+                    : variant === "tool" || variant === "plain"
+                      ? "ordinary answer"
+                      : envelope,
+              },
+            ],
+          },
+        ],
+      };
+    };
+    const adapter = new SlackAdapter(
+      f.path,
+      [binding],
+      "UBOT",
+      f.transport,
+      Date.now,
+      false,
+      0,
+      true,
+    );
+    try {
+      adapter.admit({
+        ...mention,
+        event: {
+          ...mention.event,
+          type: "message",
+          channel_type: "im",
+          channel: "DPRIVATE",
+        },
+      });
+      await adapter.step();
+      await adapter.step();
+      assert.equal(f.posts.length, 1);
+      assert.equal(f.posts[0]?.[0], "DPRIVATE");
+      assert.equal(f.posts[0]?.[2], null);
+    } finally {
+      adapter.close();
+      f.cleanup();
+    }
+  }
+});
+
+test("routing admission stays identical after lost response and restart; revoked audience cannot post", async () => {
+  const f = fixture();
+  const current = structuredClone(binding);
+  const requests: unknown[] = [];
+  let requestId = "";
+  f.transport.request = async (_principal, _path, body) => {
+    if (body) {
+      requests.push(body);
+      requestId = JSON.parse(
+        /requestId=("[^"]+")/.exec((body as { text: string }).text)?.[1] ??
+          '""',
+      );
+      if (requests.length === 1) throw new Error("lost admission response");
+      return { id: "same-core-submission" };
+    }
+    current.channelIds = [];
+    return {
+      submission: { outcome: "completed" },
+      messages: [
+        {
+          role: "assistant",
+          blocks: [
+            {
+              kind: "text",
+              text: JSON.stringify({
+                requestId,
+                destination: "sender_dm",
+                text: "shared answer",
+              }),
+            },
+          ],
+        },
+      ],
+    };
+  };
+  let adapter = new SlackAdapter(
+    f.path,
+    [current],
+    "UBOT",
+    f.transport,
+    Date.now,
+    false,
+    0,
+    true,
+  );
+  try {
+    adapter.admit(mention);
+    await adapter.step();
+    adapter.close();
+    adapter = new SlackAdapter(
+      f.path,
+      [current],
+      "UBOT",
+      f.transport,
+      Date.now,
+      false,
+      0,
+      true,
+    );
+    await adapter.step();
+    assert.deepEqual(requests[0], requests[1]);
+    await adapter.step();
+    assert.deepEqual(f.posts, []);
+    assert.deepEqual(adapter.counts(), { done: 1 });
+  } finally {
+    adapter.close();
+    f.cleanup();
+  }
+});
+
+test("chosen answer survives restart before dispatch; ambiguous chosen DM is not reposted", async () => {
+  const f = fixture();
+  let requestId = "";
+  let reads = 0;
+  f.transport.request = async (_binding, _path, body) => {
+    if (body) {
+      requestId = JSON.parse(
+        /requestId=("[^"]+")/.exec((body as { text: string }).text)?.[1] ??
+          '""',
+      );
+      return { id: "core-handle" };
+    }
+    reads++;
+    return {
+      submission: { outcome: "completed" },
+      messages: [
+        {
+          role: "assistant",
+          blocks: [
+            {
+              kind: "text",
+              text: JSON.stringify({
+                requestId,
+                destination: "sender_dm",
+                text: "durable chosen answer",
+              }),
+            },
+          ],
+        },
+      ],
+    };
+  };
+  let adapter = new SlackAdapter(
+    f.path,
+    [binding],
+    "UBOT",
+    f.transport,
+    Date.now,
+    false,
+    0,
+    true,
+  );
+  const db = new DatabaseSync(f.path);
+  try {
+    adapter.admit(mention);
+    await adapter.step();
+    // Simulate process interruption between durable selection and dispatch.
+    db.exec(
+      "CREATE TRIGGER stop_dispatch BEFORE UPDATE OF state ON jobs WHEN new.state='posting' BEGIN SELECT RAISE(ABORT,'simulated interruption'); END",
+    );
+    await adapter.step();
+    assert.deepEqual(f.posts, []);
+    adapter.close();
+    db.exec("DROP TRIGGER stop_dispatch");
+    adapter = new SlackAdapter(
+      f.path,
+      [binding],
+      "UBOT",
+      f.transport,
+      Date.now,
+      false,
+      0,
+      true,
+    );
+    f.transport.post = async (...args) => {
+      f.posts.push(args);
+      throw new Error("ambiguous send");
+    };
+    await adapter.step();
+    assert.deepEqual(f.posts, [["DPRIVATE", "durable chosen answer", null]]);
+    assert.equal(reads, 1);
+    assert.deepEqual(adapter.counts(), { uncertain: 1 });
+    adapter.close();
+    adapter = new SlackAdapter(
+      f.path,
+      [binding],
+      "UBOT",
+      f.transport,
+      Date.now,
+      false,
+      0,
+      true,
+    );
+    assert.equal(await adapter.step(), false);
+    assert.equal(f.posts.length, 1);
+  } finally {
+    adapter.close();
+    db.close();
+    f.cleanup();
+  }
+});

@@ -61,6 +61,13 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
   uncertain-send handling. Local synthetic checks are not a live Slack install
   or roundtrip. Dedicated app installation and private authorization are complete;
   runtime activation and a real message roundtrip remain separate.
+- **Agent-selected Slack routing implemented in source:** finite host-offered
+  destinations with durable choice and private/shared audience checks; no core
+  identity switch or arbitrary destination IDs. Live acceptance remains separate.
+- **Identifier-only DEBUGSHARE implemented in source:** the authenticated Slack
+  adapter generates an opaque UUID and replies privately without model/core
+  submission, thread creation, repair or diagnostic upload. No diagnostics lookup
+  record is created. See [Slack command semantics](slack.md).
 - **Imported reference material:** faithful [Figma-to-Rune plan](../ui/IMPORT-PLAN.md),
   recovered standalone Canvas study and source reference images. These are not an
   implemented native app or finished Figma port.
@@ -89,7 +96,8 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
   Earlier timer rollout and post-rollout real history preservation also passed.
   No public ingress is provisioned.
 - **Planned:** Composio/Gmail onboarding, live Slack setup, adaptive recall/Dreaming,
-  selected json-render native migration, Reflection and DEBUGSHARE/repair.
+  selected json-render native migration, Reflection, DEBUGSHARE diagnostic
+  correlation/repair and future Amp/Space handoff.
 - **Not claimed:** live integration-account onboarding, tested imported laptop
   build, production tenant isolation, exactly-once effects, forced OAuth refresh,
   backup restore or automatic runtime doc loading.

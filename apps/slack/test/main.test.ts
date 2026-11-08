@@ -39,7 +39,8 @@ globalThis.fetch=async(_url,options)=>{
   if(url.pathname==='/v1/submissions'){
     const body=JSON.parse(options.body);
     const correct=options.headers.authorization.endsWith('shared')&&Object.keys(body).sort().join(',')==='clientMutationId,text'&&body.clientMutationId.startsWith('slack:')&&
-      (process.env.TEST_CONTEXT==='granted'?body.text.includes('"author":"UPEER"')&&body.text.includes('synthetic thread root')&&body.text.endsWith('[Current request]\\ncurrent request'):body.text==='current request');
+      body.text.includes('[Slack reply protocol: host-offered destinations]')&&
+      (process.env.TEST_CONTEXT==='granted'?body.text.includes('"author":"UPEER"')&&body.text.includes('synthetic thread root')&&body.text.includes('[Current request]\\ncurrent request'):body.text.startsWith('current request\\n\\n[Slack reply protocol:'));
     if(!correct)throw new Error('Wrong core request');
     console.log('synthetic.core.correct');return new Response(JSON.stringify({id:'synthetic-signed-handle'}));
   }

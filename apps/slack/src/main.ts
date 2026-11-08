@@ -265,6 +265,7 @@ async function main() {
     Date.now,
     statusEnabled,
     1200,
+    true,
   );
   let stopping = false;
   socket.on("slack_event", async ({ body, ack }) => {

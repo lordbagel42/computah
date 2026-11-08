@@ -167,17 +167,60 @@ thread reply stays in its chosen thread. To opt in explicitly, start a message
 `Reply in thread: ...` (also accepts `Reply in a thread:` / `Reply in this thread:`
 and optional `Please`). To escape a thread for one answer, use `Reply top-level: ...`.
 These anchored, case-insensitive per-message instructions are stripped before
-submission; quoted/embedded requests do not change routing. They are not sticky
-preferences and are never interpreted from model output.
+submission and set the fallback preference, not a sticky setting. New runtime
+receipts also offer the Interaction a finite destination choice as described below.
 
-Mentions in explicitly allowlisted, **channel-bound** channels reply inside
-`thread_ts ?? ts`, never top-level broadcasts, even if their text asks otherwise.
+Mentions in explicitly allowlisted, **channel-bound** channels default to replying
+inside `thread_ts ?? ts`. The Interaction may instead select the same channel's
+top-level surface or a private DM to the already mapped sender, never another channel.
 They use the channel's separate trusted Interaction and Workers, not the owner's
 private primary history. Shared memory is **channel-wide, not thread-isolated**:
 thread timestamps route replies, not authority. Use separate preconfigured
 principals/audience policy before supporting narrower or dynamic audiences.
 Only the bounded first-mention thread context described below is fetched.
 Permissions alone do not declassify private history.
+
+### Agent-selected destination
+
+New runtime admissions persist host-offered symbolic destinations with a fresh
+request nonce. `thread` and `conversation` mean only the originating conversation's
+thread and top-level surface. Only shared-channel admissions additionally offer
+`sender_dm`, resolved by the host to the trusted mapped sender. Private DM inputs
+can never select a shared channel, arbitrary person, channel ID or unrelated thread.
+Channel-to-DM selection only reduces the audience of the channel agent's answer;
+it does not switch to or retrieve private Interaction/Worker history.
+
+Before the first core POST, the adapter freezes the complete input, optional
+quoted context and final-output instructions together. The core API remains
+exactly `{text,clientMutationId}`. The existing Interaction chooses via a whole
+final assistant JSON object with exactly `requestId`, `destination`, `text`.
+Only a matching request nonce **and** a persisted host-offered option is accepted;
+the nonce alone grants no authority. Tool/user blocks, fenced/embedded examples,
+extra fields and arbitrary IDs are not scanned for routing. Prompt instructions
+cannot guarantee model intent or prevent the model copying quoted text, so the
+host's finite audience checks remain the security boundary, not model obedience.
+Plain chat or invalid envelopes retain the original fallback destination.
+
+The selected destination and answer are persisted before opening a DM or posting.
+Restart before dispatch resumes that same selection without another model decision;
+ambiguous sends still become `uncertain`, never automatic duplicates. Posting
+rechecks the current trusted mapping/channel audience against the stored offer.
+Revoked audiences are dropped rather than redirected. Original job channel/thread
+remain unchanged for status cleanup. Legacy jobs have no options and retain their
+original behavior; the additive nullable `reply_options` journal column does not
+retroactively wrap inputs which may already have been admitted.
+
+This is source support, not live model/Slack acceptance. After the exact source
+upgrade, test a harmless DM such as "For this response, choose the thread on this
+message and say ROUTE-THREAD", a threaded DM asking naturally for a top-level
+answer, and an approved channel mention asking for a mapped-sender DM. Do not use
+the anchored `Reply in thread:` / `Reply top-level:` prefixes for this acceptance:
+they also exercise the old static preference, not necessarily model selection.
+Confirm destination and unchanged core audience without copying private history
+to a channel. No new grants or manifest sync are needed for DM choice; channel
+choice still requires the separately provisioned channel principal. Do not send
+extra verification messages or restart a live service outside the coordinated rollout.
+
 An admitted mention subscribes its thread under that exact trusted channel audience.
 Later ordinary replies in that thread from mapped participants with the same
 channel audience are admitted without another mention. Subscriptions survive restart,
@@ -187,6 +230,35 @@ still checks its sender, team, channel allowlist and channel binding. A changed
 principal does not inherit old subscriptions. No unrelated channel messages are
 admitted. Bot messages, edits, deletions, unmapped users/teams and nonallowlisted
 channels are ignored and ACKed. Oversized/empty inputs are ignored.
+
+## Identifier-only DEBUGSHARE
+
+Mapped users can DM `DEBUGSHARE` or `DEBUGSHARE optional note`, or mention
+Computah with that command in an authorized channel. The first token must be
+exactly uppercase `DEBUGSHARE`; leading whitespace is allowed. Quoted/code text,
+`DEBUGSHAREfoo`, and lowercase `debugshare` are not commands.
+
+The adapter, not a model, generates a cryptographically random UUID v4 and sends
+an identifier-only acknowledgment. Channel commands always reply in the mapped
+sender's private DM; DM commands retain their existing reply routing. Ordinary
+channel or agent-selected routing cannot redirect this acknowledgment. No core
+submission, Pi, Worker or Amp thread, repair, context fetch, processing status,
+diagnostic collection or upload is triggered. Commands are not debounced into
+neighboring chat and do not create or refresh channel-thread subscriptions.
+
+The existing private inbox retains command input and delivery receipts under its
+ordinary retention policy; no separate diagnostics record or identifier lookup
+is created. The identifier is not an access credential or a diagnostics lookup
+key. Duplicate events within receipt retention do not emit another identifier.
+Ambiguous sends remain uncertain and are not reposted automatically. A crash
+before a send attempt may generate a replacement for an unexposed identifier;
+this is not a durable incident-correlation contract.
+
+Future Amp/Space handoff, diagnostic correlation and repair remain design intent,
+not implemented behavior. Synthetic tests cover UUID generation/recognition,
+authorization, private channel-command delivery, restart/dedup, uncertain sends,
+burst isolation and absence of core/status/context calls. No live Slack command
+roundtrip is claimed by these local checks.
 
 ## First-mention thread context
 
