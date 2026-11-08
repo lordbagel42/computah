@@ -211,6 +211,67 @@ external posts. The one requested identification DM was handled separately; do
 not resend it on service startup. See [Slack setup](slack.md) for its exact wire,
 enterprise-install guard and unresolved delivery semantics.
 
+### Private timing broker bootstrap
+
+The nest-bagel stack mounts only `/run/computah-slack-timing` read-only into core,
+plus a separate read-only credential file. It never mounts the Slack journal or
+bindings. Before deploying this stack, provision dedicated group `computah-timing`
+with GID 27750 (first verify the ID is unused). The Slack unit owns a systemd
+runtime directory, Slack-service UID and that group, mode 2750; the socket is
+`timing.sock`, mode 0660. Core UID 1000 gets only supplementary GID 27750.
+Slack retains its original group as a supplementary group to traverse its
+existing private configuration directory. Apply checks the real directory,
+socket and core credential types, owners, modes and GID before candidate startup
+or production replacement; missing paths fail closed rather than allowing Docker
+to create them. This checks filesystem metadata, not broker readiness or identity.
+
+Generate a separate random broker credential of at least 32 characters privately.
+Keep the Slack copy `/var/lib/computah-slack/timing.token` service-owned 0600 and
+the core copy `/etc/computah/slack-timing.token` UID 1000-owned 0600, beneath the
+root-only configuration directory. Values never enter source, Alchemy state,
+arguments or logs. Slack's protected env sets `COMPUTAH_SLACK_TIMING_SOCKET` to
+`/run/computah-slack-timing/timing.sock` and `COMPUTAH_SLACK_TIMING_TOKEN_FILE` to
+its private copy; Alchemy supplies the matching socket path and the separate
+container credential path `/run/secrets/slack-timing.token`. Neither token file
+belongs inside the shared socket directory. Rotate both copies together during
+a serialized stopped-service maintenance window and replace the core container;
+atomic replacement of a host file alone does not refresh an existing file bind.
+
+`RuntimeDirectoryPreserve=yes` keeps the bind-mounted directory inode stable
+across Slack restarts. Normal graceful close unlinks its own socket. Startup
+never probes/unlinks an occupied or stale pathname. After an unclean crash,
+take `/run/lock/computah-deploy.lock`, stop Slack and confirm it is fully stopped,
+then inspect and remove **only** its exact service-owned socket pathname before
+restarting. Do not add automatic `rm`, broad directory cleanup, a second broker,
+TCP exposure or a database mount. The runtime directory is recreated by systemd
+after a host reboot; Docker supervision alone is not proof of boot ordering.
+Verify both services and a real lookup after reboot before claiming recovery.
+
+Receipt lookup requires the current private Slack mapping and exact stored
+scope. Core additionally requires current `operations.read`. Query-only Axiom
+access is a separate credential/grant gate; unavailable Axiom must not hide
+available durable transport phases or authorize broader roots.
+
+### Private operator dashboard
+
+`deploy/computah-dashboard.service` supervises the separately prepared immutable
+`/opt/computah-operator/current` source as unprivileged `computah-dashboard`.
+Install frozen dashboard dependencies **and root `tsx`** before activation. The
+root-only `/etc/computah-dashboard/runtime.env` supplies loopback host 127.0.0.1,
+port 8790, exact origin `http://127.0.0.1:8790`, core URL
+`http://127.0.0.1:8787`, the existing owner bearer with `operator.read` and
+`history.read`, and a distinct generated dashboard password of at least 32
+characters. Preserve canonical ingestion configuration and set the dashboard's
+actual source revision independently from core. It has no actor-data mount.
+
+Access is owner-authenticated SSH local forwarding with that exact loopback
+origin; this unit publishes no VPN/public listener or raw engine inspector.
+The password remains in the protected host file, never in a chat or URL.
+Check anonymous denial, authenticated snapshot, logout denial and independent
+core revision. A healthy BFF does not prove the core/model is ready. See
+[the dashboard contract](../apps/dashboard/README.md) for read-only wake effects,
+pagination and known-value redaction limits.
+
 ## Launch and inspect
 
 After the tested source and server entry point are on main, install the provided

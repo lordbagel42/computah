@@ -9,7 +9,11 @@ StartLimitBurst=3
 [Service]
 Type=simple
 User=computah-slack
-Group=computah-slack
+Group=computah-timing
+SupplementaryGroups=computah-slack
+RuntimeDirectory=computah-slack-timing
+RuntimeDirectoryMode=2750
+RuntimeDirectoryPreserve=yes
 WorkingDirectory=/opt/computah-slack/current/apps/slack
 EnvironmentFile=/etc/computah-slack/runtime.env
 ExecStart=/opt/computah/toolchain/bin/node --import tsx src/main.ts

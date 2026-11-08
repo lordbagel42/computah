@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   chmod,
   chown,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -17,6 +18,30 @@ import { Effect } from "effect";
 const image = process.env.COMPUTAH_IMAGE;
 if (!/^sha256:[a-f0-9]{64}$/.test(image ?? ""))
   throw new Error("An immutable local image ID is required");
+// Fail before replacement rather than letting Docker create missing bind sources.
+const slackUid = Number(
+  execFileSync("id", ["-u", "computah-slack"], { encoding: "utf8" }),
+);
+const [timingDirectory, timingSocket, timingCredential] = await Promise.all([
+  lstat("/run/computah-slack-timing"),
+  lstat("/run/computah-slack-timing/timing.sock"),
+  lstat("/etc/computah/slack-timing.token"),
+]);
+if (
+  !timingDirectory.isDirectory() ||
+  timingDirectory.uid !== slackUid ||
+  timingDirectory.gid !== 27750 ||
+  (timingDirectory.mode & 0o7777) !== 0o2750 ||
+  !timingSocket.isSocket() ||
+  timingSocket.uid !== slackUid ||
+  timingSocket.gid !== 27750 ||
+  (timingSocket.mode & 0o777) !== 0o660 ||
+  !timingCredential.isFile() ||
+  timingCredential.uid !== 1000 ||
+  (timingCredential.mode & 0o777) !== 0o600 ||
+  timingCredential.size < 32
+)
+  throw new Error("Private Slack timing bind sources are not ready");
 const candidate = `computah-preflight-${randomUUID()}`;
 process.umask(0o077);
 // The managed engine checks for 4 GiB free capacity, even for a tiny smoke store.

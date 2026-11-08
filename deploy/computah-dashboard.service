@@ -1,0 +1,33 @@
+[Unit]
+Description=Computah private read-only operator dashboard
+After=network-online.target docker.service
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=computah-dashboard
+Group=computah-dashboard
+WorkingDirectory=/opt/computah-operator/current
+EnvironmentFile=/etc/computah-dashboard/runtime.env
+ExecStart=/opt/computah/toolchain/bin/node --import tsx apps/dashboard/src/main.mjs
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=192M
+TasksMax=64
+LimitNOFILE=2048
+
+[Install]
+WantedBy=multi-user.target
