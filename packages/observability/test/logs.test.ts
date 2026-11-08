@@ -7,11 +7,12 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { registerContentSecrets } from "../src/content.js";
-import { sanitizeTraces } from "../src/index.js";
+import { runtimeSlackReplyLatency, sanitizeTraces } from "../src/index.js";
 import {
   createRuntimeLogger,
   type RuntimeLogFields,
   type RuntimeMetricSample,
+  type RuntimeSlackReplyLatency,
 } from "../src/logs.js";
 
 const sink = new InMemorySpanExporter();
@@ -299,6 +300,107 @@ test("missing or invalid protected configuration disables collection with no amb
     assert.equal(stats.enabled, false);
     assert.equal(stats.accepted, 0);
   }
+});
+
+test("Slack reply latency validates clocks and emits only correlated safe fields through the bounded queue", async () => {
+  let payload = "";
+  const logger = createRuntimeLogger({
+    ...config,
+    fetch: async (_, init) => {
+      payload = String(init?.body);
+      return new Response("{}");
+    },
+  });
+  const overdue: RuntimeSlackReplyLatency = {
+    messageId: "a".repeat(64),
+    phase: "overdue",
+    receivedAtMs: 0,
+    observedAtMs: 5001,
+    elapsedMs: 5001,
+    thresholdMs: 5000,
+  };
+  const confirmed: RuntimeSlackReplyLatency = {
+    ...overdue,
+    phase: "confirmed",
+    observedAtMs: 5100,
+    confirmedAtMs: 5000,
+    elapsedMs: 5000,
+  };
+  assert.equal(runtimeSlackReplyLatency(overdue), false); // No bootstrap.
+  const parent = provider.getTracer("test").startSpan("computah.synthetic");
+  const { context, trace } = await import("@opentelemetry/api");
+  context.with(trace.setSpan(context.active(), parent), () => {
+    assert.equal(logger.slackReplyLatency(overdue), true);
+    assert.equal(logger.slackReplyLatency(confirmed), true);
+  });
+  parent.end();
+  for (const invalid of [
+    { ...overdue, observedAtMs: 5000, elapsedMs: 5000 },
+    { ...overdue, observedAtMs: 5001.5, elapsedMs: 5001.5 },
+    { ...overdue, receivedAtMs: -1, elapsedMs: 5002 },
+    { ...overdue, observedAtMs: Number.POSITIVE_INFINITY },
+    { ...overdue, observedAtMs: Number.MAX_SAFE_INTEGER + 1 },
+    { ...overdue, elapsedMs: Number.NaN },
+    { ...overdue, thresholdMs: 5001 },
+    { ...overdue, messageId: "private-raw-message-id" },
+    { ...overdue, messageId: `${"a".repeat(64)}\n` },
+    { ...overdue, messageId: `${"a".repeat(64)}\r\n` },
+    { ...overdue, messageId: "A".repeat(64) },
+    { ...overdue, phase: "error" },
+    { ...overdue, text: "private-content-canary" },
+    { ...overdue, toString: "private-content-canary" },
+    { ...overdue, traceId: "b".repeat(32) },
+    { ...overdue, confirmedAtMs: 5001 },
+    { ...confirmed, confirmedAtMs: undefined },
+    { ...confirmed, confirmedAtMs: 5101, elapsedMs: 5101 },
+    { ...confirmed, receivedAtMs: 5001 },
+    { ...confirmed, elapsedMs: 4999 },
+    null,
+  ])
+    assert.equal(
+      logger.slackReplyLatency(invalid as RuntimeSlackReplyLatency),
+      false,
+    );
+  assert.equal(
+    logger.emit("slack.reply_latency" as "runtime.ready"),
+    undefined,
+  );
+  await logger.flush();
+  const rows = JSON.parse(payload).resourceLogs[0].scopeLogs[0].logRecords;
+  assert.equal(rows.length, 2);
+  for (const [index, sample] of [overdue, confirmed].entries()) {
+    const row = rows[index];
+    const attrs = Object.fromEntries(
+      row.attributes.map((attribute: { key: string; value: unknown }) => [
+        attribute.key,
+        attribute.value,
+      ]),
+    );
+    assert.ok(attrs["log.id"]);
+    delete attrs["log.id"];
+    assert.deepEqual(attrs, {
+      "slack.message_id": { stringValue: overdue.messageId },
+      "slack.reply.phase": { stringValue: sample.phase },
+      "slack.reply.received_at_ms": { doubleValue: 0 },
+      "slack.reply.observed_at_ms": { doubleValue: index === 0 ? 5001 : 5100 },
+      "slack.reply.elapsed_ms": { doubleValue: index === 0 ? 5001 : 5000 },
+      "slack.reply.threshold_ms": { doubleValue: 5000 },
+      ...(index === 1
+        ? { "slack.reply.confirmed_at_ms": { doubleValue: 5000 } }
+        : {}),
+    });
+    assert.equal(row.body.stringValue, "slack.reply_latency");
+    assert.equal(row.traceId, parent.spanContext().traceId);
+    assert.equal(row.spanId, parent.spanContext().spanId);
+  }
+  assert.ok(!payload.includes("private-"));
+  for (let index = 0; index < 512; index++) logger.emit("runtime.ready");
+  assert.equal(logger.slackReplyLatency(overdue), false);
+  await logger.close();
+  assert.equal(logger.slackReplyLatency(overdue), false);
+  const disabled = createRuntimeLogger({ ...config, token: "" });
+  assert.equal(disabled.slackReplyLatency(overdue), false);
+  await disabled.close();
 });
 
 test("analytics samples use only the fixed scalar catalog and distinct cost provenance through the same queue", async () => {

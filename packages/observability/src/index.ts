@@ -22,9 +22,11 @@ export {
   type RuntimeLogFields,
   type RuntimeMetricName,
   type RuntimeMetricSample,
+  type RuntimeSlackReplyLatency,
   runtimeContent,
   runtimeLog,
   runtimeMetric,
+  runtimeSlackReplyLatency,
   startRuntimeLogging,
 } from "./logs.js";
 

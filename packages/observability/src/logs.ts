@@ -161,6 +161,16 @@ export type RuntimeLogFields = {
   status_code?: number;
   resumed?: boolean;
 };
+export type RuntimeSlackReplyLatency = {
+  messageId: string;
+  receivedAtMs: number;
+  observedAtMs: number;
+  elapsedMs: number;
+  thresholdMs: 5000;
+} & (
+  | { phase: "overdue"; confirmedAtMs?: never }
+  | { phase: "confirmed"; confirmedAtMs: number }
+);
 type Attribute = {
   key: string;
   value:
@@ -173,7 +183,11 @@ type Record = {
   severityNumber: number;
   severityText: string;
   body: {
-    stringValue: RuntimeLogEvent | "analytics.sample" | "content.record";
+    stringValue:
+      | RuntimeLogEvent
+      | "analytics.sample"
+      | "content.record"
+      | "slack.reply_latency";
   };
   attributes: Attribute[];
   traceId?: string;
@@ -332,7 +346,11 @@ export function createRuntimeLogger(options: {
   });
 
   function enqueue(
-    event: RuntimeLogEvent | "analytics.sample" | "content.record",
+    event:
+      | RuntimeLogEvent
+      | "analytics.sample"
+      | "content.record"
+      | "slack.reply_latency",
     fields: RuntimeLogFields,
     level: "info" | "warn" | "error",
     extra: Attribute[] = [],
@@ -341,6 +359,7 @@ export function createRuntimeLogger(options: {
     if (
       (event !== "analytics.sample" &&
         event !== "content.record" &&
+        event !== "slack.reply_latency" &&
         !events.includes(event)) ||
       !["info", "warn", "error"].includes(level)
     ) {
@@ -429,6 +448,58 @@ export function createRuntimeLogger(options: {
       return undefined;
     }
     return enqueue(event, fields, level);
+  }
+
+  function slackReplyLatency(sample: RuntimeSlackReplyLatency): boolean {
+    if (!enabled || closed) return false;
+    try {
+      const clocks = {
+        receivedAtMs: "received_at_ms",
+        observedAtMs: "observed_at_ms",
+        elapsedMs: "elapsed_ms",
+        thresholdMs: "threshold_ms",
+        confirmedAtMs: "confirmed_at_ms",
+      } as const;
+      if (
+        Object.keys(sample).some(
+          (key) =>
+            key !== "messageId" &&
+            key !== "phase" &&
+            !Object.hasOwn(clocks, key),
+        ) ||
+        typeof sample.messageId !== "string" ||
+        !/^[a-f0-9]{64}$/.test(sample.messageId) ||
+        !["overdue", "confirmed"].includes(sample.phase) ||
+        sample.thresholdMs !== 5000 ||
+        sample.observedAtMs < sample.receivedAtMs ||
+        (sample.phase === "confirmed"
+          ? sample.confirmedAtMs < sample.receivedAtMs ||
+            sample.confirmedAtMs > sample.observedAtMs ||
+            sample.elapsedMs !== sample.confirmedAtMs - sample.receivedAtMs
+          : sample.confirmedAtMs !== undefined ||
+            sample.elapsedMs !== sample.observedAtMs - sample.receivedAtMs ||
+            sample.elapsedMs <= 5000)
+      )
+        throw new Error("invalid_latency_sample");
+      const attrs: Attribute[] = [
+        { key: "slack.message_id", value: { stringValue: sample.messageId } },
+        { key: "slack.reply.phase", value: { stringValue: sample.phase } },
+      ];
+      for (const [field, suffix] of Object.entries(clocks)) {
+        const value = sample[field as keyof typeof clocks];
+        if (field === "confirmedAtMs" && sample.phase === "overdue") continue;
+        if (!finiteScalar(value) || !Number.isSafeInteger(value))
+          throw new Error("invalid_latency_sample");
+        attrs.push({
+          key: `slack.reply.${suffix}`,
+          value: { doubleValue: value },
+        });
+      }
+      return Boolean(enqueue("slack.reply_latency", {}, "info", attrs));
+    } catch {
+      rejected++;
+      return false;
+    }
   }
 
   function content(kind: RuntimeContentKind, payload: unknown) {
@@ -756,6 +827,7 @@ export function createRuntimeLogger(options: {
   interval?.unref();
   return {
     emit,
+    slackReplyLatency,
     content,
     metric,
     flush,
@@ -789,6 +861,13 @@ export function runtimeLog(
 /** Emit one safe scalar observation only after local deduplication and commit. */
 export function runtimeMetric(sample: RuntimeMetricSample) {
   return runtime?.metric(sample);
+}
+
+/** Queue admission only, not remote delivery or proof of a successful answer. */
+export function runtimeSlackReplyLatency(
+  sample: RuntimeSlackReplyLatency,
+): boolean {
+  return runtime?.slackReplyLatency(sample) ?? false;
 }
 
 /** Explicitly opted-in private operation evidence; never a generic log bypass. */
