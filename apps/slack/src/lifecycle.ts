@@ -9,6 +9,55 @@ export class CoreDenied extends Error {
 
 export type Progress = "interaction" | "worker" | null;
 
+export type StreamEnd = "completed" | "cancelled" | "failed" | "unknown";
+export interface StreamUpdate {
+  channel: string;
+  thread: string;
+  phase: Exclude<Progress, null>;
+  ts?: string;
+  terminal?: StreamEnd;
+}
+export interface ProgressStream {
+  state: "starting" | "open" | "uncertain" | "closing" | "closed";
+  phase: Exclude<Progress, null>;
+  ts?: string;
+  next: number;
+  attempts: number;
+  terminal?: StreamEnd;
+}
+
+/** Fixed phase cards, never streamed answer envelopes, tool arguments or labels. */
+export function taskUpdates(phase: Exclude<Progress, null>, end?: StreamEnd) {
+  const status = !end
+    ? ("in_progress" as const)
+    : end === "completed"
+      ? ("complete" as const)
+      : ("error" as const);
+  const title =
+    end === "unknown"
+      ? "Observation ended; work may still be running"
+      : end === "cancelled"
+        ? "Core confirmed cancellation; external effects are not rolled back"
+        : end === "failed"
+          ? "Core reported failure"
+          : end === "completed"
+            ? "Core finished; answer delivery is separate"
+            : "Computah request (send stop at the request's source to cancel)";
+  return [
+    { type: "task_update" as const, id: "interaction", title, status },
+    ...(phase === "worker"
+      ? [
+          {
+            type: "task_update" as const,
+            id: "worker",
+            title: "Linked Worker phase",
+            status,
+          },
+        ]
+      : []),
+  ];
+}
+
 /** Read only the first bounded current snapshot; text and worker labels never
  * leave this boundary. SSE sequence numbers are not replay cursors. */
 export async function readProgress(

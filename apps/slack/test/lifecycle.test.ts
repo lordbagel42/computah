@@ -9,7 +9,11 @@ import {
   SlackAdapter,
   type Transport,
 } from "../src/adapter.js";
-import { CoreDenied, readProgress } from "../src/lifecycle.js";
+import {
+  CoreDenied,
+  readProgress,
+  type StreamUpdate,
+} from "../src/lifecycle.js";
 
 const owner: Binding = {
   teamId: "TTEST",
@@ -143,6 +147,260 @@ function fixture(bindings = [owner]) {
     },
   };
 }
+
+test("native phase cards survive reopen, append only observed Worker phase and close independently of the final answer", async () => {
+  const f = fixture();
+  const updates: StreamUpdate[] = [];
+  let phase: "interaction" | "worker" = "interaction";
+  f.transport.progress = async () => phase;
+  f.transport.stream = async (_binding, update) => {
+    updates.push(update);
+    return { status: "ok", ts: "15.001" };
+  };
+  try {
+    f.adapter.admit(input("1", "work", { thread_ts: "1.000" }));
+    f.advance();
+    await f.adapter.step();
+    await f.adapter.step();
+    assert.deepEqual(updates, [
+      { channel: "DOWNER", thread: "1.000", phase: "interaction" },
+    ]);
+    f.reopen();
+    f.advance();
+    phase = "worker";
+    await f.adapter.step();
+    assert.deepEqual(updates[1], {
+      channel: "DOWNER",
+      thread: "1.000",
+      phase: "worker",
+      ts: "15.001",
+    });
+    f.reopen();
+    f.advance();
+    await f.adapter.step();
+    assert.equal(updates.length, 2, "same snapshot must not replay an append");
+    f.outcome("completed");
+    await f.adapter.step();
+    assert.equal(f.posts.length, 1);
+    assert.equal(f.posts[0][1], "final answer");
+    f.reopen();
+    await f.adapter.step();
+    assert.equal(updates[2].terminal, "completed");
+    assert.equal(updates[2].ts, "15.001");
+    f.reopen();
+    await f.adapter.step();
+    assert.equal(updates.length, 3);
+    assert.equal(f.posts.length, 1);
+  } finally {
+    f.close();
+  }
+});
+
+test("ambiguous native starts never replay or fall back; explicit unsupported starts fall back once", async () => {
+  for (const unsupported of [false, true]) {
+    const f = fixture();
+    let starts = 0;
+    f.transport.stream = async () => {
+      starts++;
+      if (!unsupported) throw new Error("lost stream handle");
+      return { status: "unsupported" };
+    };
+    try {
+      f.adapter.admit(input("1", "work", { thread_ts: "1.000" }));
+      f.advance();
+      await f.adapter.step();
+      await f.adapter.step();
+      f.reopen();
+      f.advance();
+      await f.adapter.step();
+      assert.equal(starts, 1);
+      assert.equal(f.posts.length, unsupported ? 1 : 0);
+      f.outcome("completed");
+      await f.adapter.step();
+      await f.adapter.step();
+      assert.equal(f.posts.at(-1)?.[1], "final answer");
+      assert.equal(starts, 1);
+    } finally {
+      f.close();
+    }
+  }
+});
+
+test("card cleanup is bounded, restart-safe and does not block failed or cancelled final delivery", async () => {
+  for (const terminal of ["failed", "cancelled"]) {
+    const f = fixture();
+    let closes = 0;
+    f.transport.stream = async (_binding, update) => {
+      if (update.ts) {
+        assert.equal(update.ts, "15.001");
+        assert.equal(update.terminal, terminal);
+        closes++;
+        throw new Error("lost close response");
+      }
+      return { status: "ok", ts: "15.001" };
+    };
+    try {
+      f.adapter.admit(input("1", "work", { thread_ts: "1.000" }));
+      f.advance();
+      await f.adapter.step();
+      await f.adapter.step();
+      if (terminal === "cancelled") {
+        f.adapter.admit(input("2", "stop", { thread_ts: "1.000" }));
+        await f.adapter.step();
+        assert.match(f.posts[0][1], /Core confirmed cancellation/);
+      }
+      f.outcome(terminal);
+      await f.adapter.step();
+      assert.match(
+        f.posts.at(-1)?.[1] ?? "",
+        new RegExp(`status: ${terminal}`),
+      );
+      for (let i = 0; i < 5; i++) {
+        f.reopen();
+        f.advance(30_001);
+        await f.adapter.step();
+      }
+      assert.equal(closes, 3);
+      assert.equal(
+        f.calls.filter((c) => c.path.endsWith("/cancel")).length,
+        terminal === "cancelled" ? 1 : 0,
+      );
+    } finally {
+      f.close();
+    }
+  }
+});
+
+test("top-level source never becomes a native stream even when reply preference is threaded", async () => {
+  const f = fixture();
+  f.transport.stream = async () => {
+    throw new Error("must not stream top-level origin");
+  };
+  try {
+    f.adapter.admit(input("1", "reply in thread: work"));
+    f.advance();
+    await f.adapter.step();
+    await f.adapter.step();
+    assert.equal(f.posts.length, 1);
+    assert.equal(f.posts[0][2], null);
+  } finally {
+    f.close();
+  }
+});
+
+test("ambiguous final delivery remains unreplayed while its known card is cleaned up", async () => {
+  const f = fixture();
+  const updates: StreamUpdate[] = [];
+  f.transport.stream = async (_binding, update) => {
+    updates.push(update);
+    return { status: "ok", ts: "15.001" };
+  };
+  try {
+    f.adapter.admit(input("1", "work", { thread_ts: "1.000" }));
+    f.advance();
+    await f.adapter.step();
+    await f.adapter.step();
+    f.failPost();
+    f.outcome("completed");
+    await f.adapter.step();
+    f.reopen();
+    await f.adapter.step();
+    f.reopen();
+    await f.adapter.step();
+    assert.equal(f.posts.length, 1);
+    assert.equal(updates.length, 2);
+    assert.equal(updates[1].terminal, "completed");
+    assert.equal(updates[1].ts, "15.001");
+  } finally {
+    f.close();
+  }
+});
+
+test("requested cancellation remains nonterminal and card shutdown does not cancel native work", async () => {
+  const f = fixture();
+  const ends: StreamUpdate[] = [];
+  f.transport.stream = async (_binding, update) => {
+    if (update.terminal) ends.push(update);
+    return { status: "ok", ts: "15.001" };
+  };
+  try {
+    f.adapter.admit(input("1", "work", { thread_ts: "1.000" }));
+    f.advance();
+    await f.adapter.step();
+    await f.adapter.step();
+    f.cancel({ submissionId: "signed-handle", status: "requested" });
+    f.adapter.admit(input("2", "stop", { thread_ts: "1.000" }));
+    await f.adapter.step();
+    assert.match(
+      f.posts[0][1],
+      /accepted the cancellation request; completion is not yet confirmed/,
+    );
+    assert.match(f.posts[0][1], /effects may still be running/);
+    assert.equal(ends.length, 0);
+    f.reopen();
+    f.cancel({ submissionId: "signed-handle", status: "cancelled" });
+    f.adapter.admit(input("3", "stop", { thread_ts: "1.000" }));
+    await f.adapter.step();
+    assert.match(f.posts[1][1], /Core confirmed cancellation/);
+    assert.equal(f.calls.filter((c) => c.path.endsWith("/cancel")).length, 2);
+    await f.adapter.stop();
+    assert.equal(
+      ends[0].terminal,
+      "cancelled",
+      "shutdown must not overwrite confirmed terminal intent",
+    );
+    assert.equal(f.calls.filter((c) => c.path.endsWith("/cancel")).length, 2);
+  } finally {
+    f.close();
+  }
+});
+
+test("ambiguous appends are not replayed; user-stopped display is not cancellation authority", async () => {
+  for (const stopped of [true, false]) {
+    const f = fixture();
+    let phase: "interaction" | "worker" = "interaction";
+    let appends = 0;
+    let closes = 0;
+    f.transport.progress = async () => phase;
+    f.transport.stream = async (_binding, update) => {
+      if (update.terminal) {
+        closes++;
+        return { status: "ok" };
+      }
+      if (update.ts) {
+        appends++;
+        if (!stopped) throw new Error("lost append response");
+        return { status: "closed" };
+      }
+      return { status: "ok", ts: "15.001" };
+    };
+    try {
+      f.adapter.admit(input("1", "work", { thread_ts: "1.000" }));
+      f.advance();
+      await f.adapter.step();
+      await f.adapter.step();
+      phase = "worker";
+      f.advance();
+      await f.adapter.step();
+      f.reopen();
+      f.advance();
+      await f.adapter.step();
+      assert.equal(appends, 1);
+      assert.equal(
+        f.calls.some((c) => c.path.endsWith("/cancel")),
+        false,
+      );
+      await f.adapter.stop();
+      assert.equal(closes, stopped ? 0 : 1);
+      assert.equal(
+        f.calls.some((c) => c.path.endsWith("/cancel")),
+        false,
+      );
+    } finally {
+      f.close();
+    }
+  }
+});
 
 test("stop freezes its target before ACK, bypasses batching and withdraws without model work after reopen", async () => {
   const f = fixture();

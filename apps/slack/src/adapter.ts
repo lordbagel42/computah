@@ -18,7 +18,14 @@ import {
   redactDiagnostic,
   serializeDiagnostic,
 } from "./debugshare.js";
-import { CoreDenied, isStop, type Progress } from "./lifecycle.js";
+import {
+  CoreDenied,
+  isStop,
+  type Progress,
+  type ProgressStream,
+  type StreamEnd,
+  type StreamUpdate,
+} from "./lifecycle.js";
 import { projectTiming } from "./timing.js";
 
 export interface Binding {
@@ -120,6 +127,10 @@ const bindingsSecrets = (bindings: Binding[]) =>
 export interface Transport {
   request(binding: Binding, path: string, body?: unknown): Promise<unknown>;
   progress?(binding: Binding, submission: string): Promise<Progress>;
+  stream?(
+    binding: Binding,
+    update: StreamUpdate,
+  ): Promise<{ status: "ok" | "unsupported" | "closed"; ts?: string }>;
   openDm(user: string): Promise<string>;
   post(channel: string, text: string, thread: string | null): Promise<void>;
   diagnosticContext?(
@@ -249,6 +260,14 @@ export class SlackAdapter {
     INSERT OR IGNORE INTO job_lifecycle(job,kind)
       SELECT id,'work' FROM jobs WHERE state IN ('queued','preparing','admitting','submitted')
       AND id NOT IN (SELECT job FROM debugshares);`);
+    if (
+      !(
+        this.db.prepare("PRAGMA table_info(job_lifecycle)").all() as {
+          name: string;
+        }[]
+      ).some((column) => column.name === "stream")
+    )
+      this.db.exec("ALTER TABLE job_lifecycle ADD COLUMN stream TEXT");
     // Scope sharing is sticky: removing a binding or pruning a receipt does not
     // prove the retired sender's native run has settled. Never clear this fence
     // automatically, including when a formerly private scope becomes shared.
@@ -736,10 +755,21 @@ export class SlackAdapter {
         `slack.${phase}`,
         async (span) => {
           if (attempt !== undefined) span.setAttribute("attempt", attempt);
-          const result = await body();
-          outcome = resultOutcome?.() ?? "success";
-          span.setAttribute("outcome", outcome);
-          return result;
+          try {
+            const result = await body();
+            outcome = resultOutcome?.() ?? "success";
+            span.setAttribute("outcome", outcome);
+            return result;
+          } catch (error) {
+            outcome =
+              error instanceof Error && error.name === "AbortError"
+                ? "cancelled"
+                : error instanceof Error && error.name === "TimeoutError"
+                  ? "timeout"
+                  : "error";
+            span.setAttribute("outcome", outcome);
+            throw error;
+          }
         },
         parent,
         [currentTraceHeaders()],
@@ -784,9 +814,10 @@ export class SlackAdapter {
     }
   }
 
-  /** One bounded network step; startup resumes queued/submitted receipts. */
+  /** Bounded work and optional card cleanup; startup resumes saved receipts. */
   async step(): Promise<boolean> {
     this.pumpStatus();
+    await this.cleanupStream();
     if (!this.lastStepWasUpload) {
       this.lastStepWasUpload = await this.syncDebugshare();
       if (this.lastStepWasUpload) return true;
@@ -1004,6 +1035,7 @@ export class SlackAdapter {
         return true;
       }
       if (this.now() - job.created > 5 * 60_000) {
+        this.endStream(job.id, "unknown");
         await this.deliver(
           job,
           binding,
@@ -1112,6 +1144,7 @@ export class SlackAdapter {
       this.db
         .prepare("UPDATE job_lifecycle SET terminal=1 WHERE job=?")
         .run(job.id);
+      this.endStream(job.id, outcome as StreamEnd);
       const text =
         outcome === "completed"
           ? result.messages
@@ -1274,8 +1307,11 @@ export class SlackAdapter {
             )) as { status?: unknown; submissionId?: unknown };
             if (result.submissionId !== target.submission)
               throw new Error("Invalid cancellation");
+            if (result.status === "requested")
+              return "Core accepted the cancellation request; completion is not yet confirmed and work or external effects may still be running. Cancellation affects the coalesced run; external effects are not rolled back.";
             if (result.status === "cancelled") {
               outcome = "cancelled";
+              this.endStream(target.id, "cancelled");
               this.db
                 .prepare("UPDATE job_lifecycle SET terminal=1 WHERE job=?")
                 .run(target.id);
@@ -1320,29 +1356,195 @@ export class SlackAdapter {
       .get(job.id) as
       | { progress: number; origin: string | null; origin_known: number }
       | undefined;
-    if (!lifecycle || lifecycle.progress || !lifecycle.origin_known) return;
+    if (!lifecycle?.origin_known) return;
+    const stream = this.readStream(job.id);
+    if (stream?.state === "open") {
+      if (stream.next > this.now()) return;
+      stream.next = this.now() + 5000;
+      this.saveStream(job.id, stream);
+      let outcome: PhaseOutcome = "success";
+      try {
+        await this.phase(
+          job.id,
+          "status",
+          async () => {
+            const phase = await this.transport.progress?.(
+              binding,
+              job.submission ?? "",
+            );
+            // Worker phase is monotonic for this aggregate card. Do not replay
+            // snapshots or oscillate back to Interaction between Worker runs.
+            if (phase !== "worker" || stream.phase === "worker") return;
+            stream.phase = phase;
+            stream.state = "uncertain";
+            this.saveStream(job.id, stream);
+            const result = await this.transport.stream?.(binding, {
+              channel: job.channel,
+              thread: lifecycle.origin ?? "",
+              ts: stream.ts,
+              phase,
+            });
+            if (result?.status !== "ok")
+              outcome = result?.status === "unsupported" ? "denied" : "error";
+            stream.state = result?.status === "ok" ? "open" : "closed";
+            this.saveStream(job.id, stream);
+          },
+          undefined,
+          () => outcome,
+        );
+      } catch {
+        // A known handle can still be closed, but an uncertain append is not replayed.
+      }
+      return;
+    }
+    if (lifecycle.progress) return;
     // Reserve the only attempt before any external effect. Reconnect/reopen can
     // omit a marker, never duplicate it or replay final delivery.
     this.db
       .prepare("UPDATE job_lifecycle SET progress=1 WHERE job=?")
       .run(job.id);
+    let outcome: PhaseOutcome = "success";
     try {
-      await this.phase(job.id, "status", async () => {
-        const phase = await this.transport.progress?.(
-          binding,
-          job.submission ?? "",
-        );
-        if (!phase) return;
-        await this.transport.post(
-          job.channel,
-          phase === "worker"
-            ? "Computah's linked Worker is still working. Send stop here to request cancellation."
-            : "Computah is still working on your request. Send stop here to request cancellation.",
-          lifecycle.origin,
-        );
-      });
+      await this.phase(
+        job.id,
+        "status",
+        async () => {
+          const phase = await this.transport.progress?.(
+            binding,
+            job.submission ?? "",
+          );
+          if (!phase) return;
+          if (lifecycle.origin && this.transport.stream) {
+            const stream: ProgressStream = {
+              state: "starting",
+              phase,
+              next: this.now() + 5000,
+              attempts: 0,
+            };
+            this.saveStream(job.id, stream);
+            const result = await this.transport.stream(binding, {
+              channel: job.channel,
+              thread: lifecycle.origin,
+              phase,
+            });
+            if (result.status === "ok" && result.ts) {
+              stream.ts = result.ts;
+              stream.state = "open";
+              this.saveStream(job.id, stream);
+              return;
+            }
+            stream.state = "closed";
+            this.saveStream(job.id, stream);
+            outcome = result.status === "unsupported" ? "denied" : "error";
+            if (result.status !== "unsupported") return;
+          }
+          await this.transport.post(
+            job.channel,
+            phase === "worker"
+              ? "Computah's linked Worker is still working. Send stop here to request cancellation."
+              : "Computah is still working on your request. Send stop here to request cancellation.",
+            lifecycle.origin,
+          );
+        },
+        undefined,
+        () => outcome,
+      );
     } catch {
       // Optional/ambiguous progress never changes final delivery or retries a send.
+    }
+  }
+
+  private readStream(id: string): ProgressStream | undefined {
+    const row = this.db
+      .prepare("SELECT stream FROM job_lifecycle WHERE job=?")
+      .get(id) as { stream: string | null } | undefined;
+    return row?.stream ? (JSON.parse(row.stream) as ProgressStream) : undefined;
+  }
+
+  private saveStream(id: string, stream: ProgressStream) {
+    this.db
+      .prepare("UPDATE job_lifecycle SET stream=? WHERE job=?")
+      .run(JSON.stringify(stream), id);
+  }
+
+  private endStream(id: string, terminal: StreamEnd) {
+    const stream = this.readStream(id);
+    if (!stream?.ts || stream.state === "closed" || stream.terminal) return;
+    stream.state = "closing";
+    stream.terminal = terminal;
+    stream.next = 0;
+    this.saveStream(id, stream);
+  }
+
+  /** Close known handles, including after a crash. Closing a display never
+   * cancels core work, and an ambiguous start is never repeated. */
+  private async cleanupStream(): Promise<void> {
+    if (!this.transport.stream) return;
+    const rows = this.db
+      .prepare(
+        `SELECT j.*,l.stream,l.origin FROM jobs j JOIN job_lifecycle l ON l.job=j.id
+       WHERE l.stream IS NOT NULL AND json_extract(l.stream,'$.ts') IS NOT NULL
+       AND json_extract(l.stream,'$.state')!='closed'
+       AND json_extract(l.stream,'$.next')<=?
+       AND (json_extract(l.stream,'$.terminal') IS NOT NULL OR j.state!='submitted' OR j.created<?)
+       ORDER BY j.created LIMIT 1`,
+      )
+      .all(this.now(), this.now() - 5 * 60_000) as unknown as (Job & {
+      stream: string;
+      origin: string;
+    })[];
+    for (const job of rows) {
+      const stream = JSON.parse(job.stream) as ProgressStream;
+      if (stream.state === "closed" || !stream.ts || stream.next > this.now())
+        continue;
+      if (
+        !stream.terminal &&
+        (job.state !== "submitted" || this.now() - job.created > 5 * 60_000)
+      )
+        this.endStream(job.id, "unknown");
+      const current = this.readStream(job.id);
+      if (!current?.terminal) continue;
+      const binding = this.bindings.get(job.binding);
+      if (current.attempts >= 3) {
+        current.state = "closed";
+        this.saveStream(job.id, current);
+        continue;
+      }
+      current.attempts++;
+      current.next = this.now() + 30_000;
+      this.saveStream(job.id, current);
+      let outcome: PhaseOutcome =
+        current.terminal === "cancelled"
+          ? "cancelled"
+          : current.terminal === "failed" || current.terminal === "unknown"
+            ? "error"
+            : "success";
+      try {
+        await this.phase(
+          job.id,
+          "status",
+          async () => {
+            const result = binding
+              ? await this.transport.stream?.(binding, {
+                  channel: job.channel,
+                  thread: job.origin,
+                  ts: current.ts,
+                  phase: current.phase,
+                  terminal: current.terminal,
+                })
+              : { status: "unsupported" };
+            if (result?.status !== "ok")
+              outcome = result?.status === "unsupported" ? "denied" : "error";
+            current.state = "closed";
+            this.saveStream(job.id, current);
+          },
+          undefined,
+          () => outcome,
+        );
+      } catch {
+        // Bounded retries target the saved handle only; canonical delivery proceeds.
+      }
+      return;
     }
   }
 
@@ -1590,6 +1792,14 @@ export class SlackAdapter {
   async stop() {
     this.stopping = true;
     this.pumpStatus();
+    for (const row of this.db
+      .prepare(
+        "SELECT job FROM job_lifecycle WHERE json_extract(stream,'$.ts') IS NOT NULL AND json_extract(stream,'$.state')!='closed'",
+      )
+      .all() as { job: string }[])
+      this.endStream(row.job, "unknown");
+    // One bounded card call on shutdown; any remaining close intent survives.
+    await this.cleanupStream();
     // One total budget, not one timeout per marker. Remaining cleanup is durable.
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([

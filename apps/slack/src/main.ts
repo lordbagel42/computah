@@ -11,9 +11,14 @@ import {
 } from "@computah/observability";
 import { SocketModeClient } from "@slack/socket-mode";
 import { LogLevel, WebClient } from "@slack/web-api";
-import { type Binding, type Ingress, SlackAdapter } from "./adapter.js";
+import {
+  type Binding,
+  type Ingress,
+  SlackAdapter,
+  type Transport,
+} from "./adapter.js";
 import type { DebugReport } from "./debugshare.js";
-import { CoreDenied, readProgress } from "./lifecycle.js";
+import { CoreDenied, readProgress, taskUpdates } from "./lifecycle.js";
 import { presentSlack } from "./presentation.js";
 import { startTimingBroker } from "./timing-broker.js";
 
@@ -151,6 +156,16 @@ async function run() {
     );
   if (process.env.COMPUTAH_SLACK_STATUS_ENABLED === "true" && !statusEnabled)
     console.info("computah.slack.status_disabled_missing_grants");
+  // Streaming uses the existing observed chat:write grant, not assistant:write
+  // or interactivity. Keep optional card calls shorter than ordinary posts.
+  const streamWeb = auth.response_metadata?.scopes?.includes("chat:write")
+    ? new WebClient(required("SLACK_BOT_TOKEN"), {
+        logger,
+        retryConfig: { retries: 0 },
+        rejectRateLimitedCalls: true,
+        timeout: 2000,
+      })
+    : undefined;
   const diagnosticSecrets = Object.entries(process.env)
     .filter(
       ([key, value]) =>
@@ -280,6 +295,72 @@ async function run() {
     auth.user_id,
     {
       request,
+      ...(streamWeb
+        ? ({
+            async stream(binding, update) {
+              return traceOperation("slack.api", async (span) => {
+                const chunks = taskUpdates(update.phase, update.terminal);
+                try {
+                  if (!update.ts) {
+                    const result = await streamWeb.chat.startStream({
+                      channel: update.channel,
+                      thread_ts: update.thread,
+                      chunks,
+                      task_display_mode: "plan",
+                      ...(!update.channel.startsWith("D")
+                        ? {
+                            recipient_user_id: binding.slackUserId,
+                            recipient_team_id: binding.teamId,
+                          }
+                        : {}),
+                    });
+                    if (
+                      !result.ok ||
+                      typeof result.ts !== "string" ||
+                      !/^\d{1,12}\.\d{1,6}$/.test(result.ts)
+                    )
+                      throw new Error("Invalid stream response");
+                    return { status: "ok" as const, ts: result.ts };
+                  }
+                  const args = {
+                    channel: update.channel,
+                    ts: update.ts,
+                    chunks,
+                  };
+                  if (update.terminal) await streamWeb.chat.stopStream(args);
+                  else await streamWeb.chat.appendStream(args);
+                  return { status: "ok" as const };
+                } catch (error) {
+                  const code = (error as { data?: { error?: string } }).data
+                    ?.error;
+                  if (
+                    [
+                      "missing_scope",
+                      "unknown_method",
+                      "not_allowed_token_type",
+                      "feature_not_enabled",
+                      "not_in_channel",
+                    ].includes(code ?? "")
+                  ) {
+                    span.setAttribute("outcome", "denied");
+                    return { status: "unsupported" as const };
+                  }
+                  if (
+                    [
+                      "message_not_in_streaming_state",
+                      "stopped_by_user",
+                    ].includes(code ?? "")
+                  ) {
+                    span.setAttribute("outcome", "error");
+                    return { status: "closed" as const };
+                  }
+                  span.setAttribute("outcome", "error");
+                  throw error;
+                }
+              });
+            },
+          } satisfies Pick<Transport, "stream">)
+        : {}),
       async progress(binding, submission) {
         return traceOperation("slack.core", async () => {
           const response = await fetch(
