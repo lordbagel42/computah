@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ import {
   SlackAdapter,
   type Transport,
 } from "../src/adapter.js";
+import { readTimingSnapshot } from "../src/timing.js";
 
 const binding: Binding = {
   teamId: "TTEST",
@@ -42,6 +44,172 @@ const mention: Ingress = {
   },
 };
 const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test("auxiliary timing write failures cannot suppress ACK or turn an unsent reply uncertain", async () => {
+  for (const operation of ["INSERT", "UPDATE"]) {
+    const f = fixture();
+    const adapter = new SlackAdapter(f.path, [binding], "UBOT", f.transport);
+    const db = new DatabaseSync(f.path);
+    try {
+      db.exec(
+        `CREATE TRIGGER timing_failure BEFORE ${operation} ON job_phases BEGIN SELECT RAISE(FAIL,'synthetic diagnostic write failure'); END`,
+      );
+      assert.equal(adapter.admit(mention), "accepted");
+      let acked = false;
+      await adapter.acknowledge(mention, async () => {
+        acked = true;
+      });
+      assert.ok(acked);
+      await adapter.step();
+      await adapter.step();
+      assert.deepEqual(adapter.counts(), { done: 1 });
+      assert.equal(f.posts.length, 1);
+      assert.equal(f.posts[0][1], "Private answer <@everyone>");
+    } finally {
+      adapter.close();
+      db.close();
+      f.cleanup();
+    }
+  }
+});
+
+test("job timing survives retries/reopen, retains real boundaries and denies foreign scope", async () => {
+  const f = fixture();
+  let now = 10_000;
+  let adapter = new SlackAdapter(
+    f.path,
+    [binding],
+    "UBOT",
+    f.transport,
+    () => now,
+  );
+  const requestId = `input:slack:${createHash("sha256")
+    .update(JSON.stringify([mention.team_id, mention.event_id]))
+    .digest("hex")}`;
+  const sharedScope = { ...binding, ...binding.channelBindings?.[0] };
+  try {
+    adapter.admit(mention, 9_997);
+    await adapter.acknowledge(mention, async () => {
+      now += 2;
+    });
+    const admitted = adapter.readTiming(requestId, sharedScope);
+    assert.ok(admitted);
+    assert.match(
+      admitted.traceparent ?? "",
+      /^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/,
+    );
+    assert.equal(admitted.receivedAt, 9_997);
+    assert.equal(admitted.senderTs, "123.456");
+    assert.equal(admitted.admittedAt, 10_000);
+    assert.equal(admitted.firstDequeuedAt, null);
+    assert.equal(adapter.readTiming(requestId, binding), null);
+    assert.equal(
+      adapter.readTiming(admitted.traceparent ?? "", sharedScope),
+      null,
+    );
+    f.transport.request = async () => {
+      now += 13;
+      throw new Error("synthetic timeout");
+    };
+    now = 10_070;
+    await adapter.step();
+    const failed = adapter.readTiming(requestId, sharedScope);
+    assert.equal(failed?.firstDequeuedAt, 10_070);
+    assert.deepEqual(
+      failed?.phases
+        .filter((phase) => phase.phase === "submit")
+        .map((phase) => ({ ...phase })),
+      [
+        {
+          phase: "submit",
+          attempt: 1,
+          started: 10_070,
+          completed: 10_083,
+          outcome: "error",
+        },
+      ],
+    );
+    adapter.close();
+    adapter = new SlackAdapter(
+      f.path,
+      [binding],
+      "UBOT",
+      f.transport,
+      () => now,
+    );
+    assert.equal(
+      adapter.readTiming(requestId, sharedScope)?.traceparent,
+      admitted.traceparent,
+    );
+    f.transport.request = async (_binding, _path, body) => {
+      now += body ? 7 : 19;
+      return body
+        ? { id: "signed-handle" }
+        : { submission: { outcome: "cancelled" } };
+    };
+    f.transport.post = async () => {
+      now += 3;
+      throw new Error("unknown Slack result");
+    };
+    await adapter.step();
+    await adapter.step();
+    const done = adapter.readTiming(requestId, sharedScope);
+    assert.equal(done?.traceparent, admitted.traceparent);
+    assert.equal(done?.firstDequeuedAt, 10_070);
+    assert.equal(done?.state, "uncertain");
+    assert.deepEqual(
+      done?.phases
+        .filter((phase) => phase.phase === "submit")
+        .map((phase) => phase.attempt),
+      [1, 2],
+    );
+    assert.equal(
+      done?.phases.find((phase) => phase.phase === "delivery")?.outcome,
+      "error",
+    );
+    assert.deepEqual(readTimingSnapshot(f.path, requestId, sharedScope), done);
+    assert.equal(readTimingSnapshot(f.path, requestId, binding), null);
+    assert.equal(await adapter.step(), false);
+    // A second admitted job has its own root, even without source receive timing.
+    adapter.admit({
+      ...mention,
+      event_id: "Ev2",
+      event: { ...mention.event, ts: "124.000" },
+    });
+    const secondId = `input:slack:${createHash("sha256")
+      .update(JSON.stringify([mention.team_id, "Ev2"]))
+      .digest("hex")}`;
+    assert.notEqual(
+      adapter.readTiming(secondId, sharedScope)?.traceparent,
+      admitted.traceparent,
+    );
+    assert.equal(adapter.readTiming(secondId, sharedScope)?.receivedAt, null);
+    // Legacy rows are not assigned roots or inferred arrival/admission times.
+    const db = new DatabaseSync(f.path);
+    db.prepare("UPDATE jobs SET state='posting' WHERE id=?").run(
+      requestId.slice(6),
+    );
+    assert.equal(
+      readTimingSnapshot(f.path, requestId, sharedScope)?.state,
+      "posting",
+    );
+    assert.equal(
+      (
+        db
+          .prepare("SELECT state FROM jobs WHERE id=?")
+          .get(requestId.slice(6)) as { state: string }
+      ).state,
+      "posting",
+    );
+    db.prepare("DELETE FROM job_timing WHERE job=?").run(requestId.slice(6));
+    db.close();
+    assert.equal(adapter.readTiming(requestId, sharedScope)?.traceparent, null);
+    assert.equal(adapter.readTiming(requestId, sharedScope)?.admittedAt, null);
+  } finally {
+    adapter.close();
+    f.cleanup();
+  }
+});
 async function within<T>(promise: Promise<T>, ms: number) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

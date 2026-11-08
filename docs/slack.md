@@ -484,6 +484,70 @@ Persona-based routing preferences, public-text streaming, signals,
 attachment download/vision/transcription and validated semantic rich output remain
 separate follow-on slices. No attachment or rich core fields are invented here.
 
+## Durable transport timing (source support)
+
+Each new job receives an independent host-generated W3C carrier, committed with
+its inbox admission. Duplicate events and coalesced burst members reuse that
+job's carrier; later core submission, polling, ACK attempts, optional status,
+delivery and DEBUGSHARE upload retries retain it across restart. No message,
+channel, sender, job or receipt identifiers enter transport telemetry. The
+separate opaque DEBUGSHARE UUID is an explicitly registered capture attribute.
+The authenticated report persists its real transport carrier and actual first
+capture span association before upload; a retry does not invent new report IDs.
+
+Additive `job_timing`, `receipt_timing` and `job_phases` tables preserve the inbox
+and existing DEBUGSHARE journal. Epoch-ms `receivedAt` is the host Socket Mode
+callback observation, **not** Slack sender time; `senderTs` is Slack's supplied
+timestamp string. `admittedAt` observes the completed admission commit;
+`firstDequeuedAt` observes the first selected queue step. Each phase records its
+attempt, start and completion independently. A crashed/in-flight phase has null
+completion/outcome. Old rows keep missing timing/root fields null. No timestamp
+is inferred from job creation or backfilled from adjacent messages. Queue spans
+use persisted admission/dequeue boundaries, not instantaneous dequeue duration.
+ACK and post completion mean the respective SDK/API call resolved; no Slack
+client-delivery timestamp is available. Never sum nested spans as wall-clock.
+After mandatory inbox/root admission commits, auxiliary phase-write failures
+emit only a fixed storage-failure category; they cannot suppress ACK/post or turn
+a known unsent/successful transport result into delivery uncertainty. Missing
+phase completion stays null rather than replacing the real result.
+
+`apps/slack/src/timing.ts` exports the host-only read-only SQLite helper
+`readTimingSnapshot(path, requestId, scope)` and `SlackTimingSnapshot` DTO. It
+selects one exact `input:slack:<sha256>` and revalidates its stored binding against
+the caller's already-authorized `{tenantId,userId,agentId}`. The running adapter
+also revalidates its current bindings. A root ID alone is never lookup authority.
+No content, principal IDs, credentials or submission handles enter this positive
+timing projection. Reads use a snapshot transaction, 250ms SQLite busy timeout,
+and a 2048-phase response bound; oversize snapshots fail rather than imply
+complete evidence. This helper does not resume or repair jobs on open.
+
+An optional **default-disabled UNIX-socket-only** broker serves
+`POST /v1/timing`, with JSON `{requestId,scope}` and a separate bearer token. Set
+both `COMPUTAH_SLACK_TIMING_SOCKET` and `COMPUTAH_SLACK_TIMING_TOKEN_FILE` (absolute
+paths); the token file must be private 0600 and contain at least 32 characters.
+It must not contain Slack/core/provider credentials. Response is
+`{timing:SlackTimingSnapshot}`; missing/revoked/foreign scope returns 404 without
+content. Invalid input is 400, unauthorized 401, size bound 413, capacity/rate
+bound 429 and unavailable lookup 503. Limits: 2KiB request, 256KiB response,
+2-second absolute connection deadline (including incomplete headers), four active
+authenticated requests, 60/minute total.
+The broker ignores incoming trace headers and never accepts a DB path or root ID.
+
+Provision a **separate** socket directory owned by the Slack service user, mode
+2750, with a dedicated shared group that includes the core container's UID1000
+principal (or equivalent explicit group ACL). The broker creates socket mode
+0660 with the inherited group. Mount only this directory into core, never the
+Slack DB/bindings/secrets directory. Give each service a private copy of the
+separate broker credential; do not place either copy in the shared directory.
+The runtime rejects shared directories containing its configured journal,
+binding or broker token file. No existing pathname is removed on startup;
+including a stale socket causes startup to fail closed. Serialized runtime-owner
+cleanup of its confirmed stopped service is required after an unclean crash.
+This avoids check/unlink races with a concurrently starting listener. The core needs an
+explicit UDS client wired from its frozen native authorization, not model scope.
+Source support is not proof of a configured mount, client, broker activation or
+live Axiom timeline. Native `message_timing` currently queries native roots only.
+
 Sources: [Socket Mode](https://docs.slack.dev/apis/events-api/using-socket-mode/),
 [Agent development](https://docs.slack.dev/ai/developing-agents/),
 [session status](https://docs.slack.dev/reference/methods/agents.sessions.setStatus/),

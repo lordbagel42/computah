@@ -31,7 +31,10 @@ registerHooks({resolve(specifier,context,next){
 }});
 globalThis.fetch=async(_url,options)=>{
   const url=new URL(_url);
-  if(url.hostname==='api.axiom.co')return new Response('{}');
+  if(url.hostname==='api.axiom.co'){
+    if(url.pathname==='/v1/traces'&&JSON.parse(options.body).resourceSpans.some(r=>r.scopeSpans.some(s=>s.spans.some(span=>span.name==='computah.start.failed'))))console.log('synthetic.start_failed.flushed');
+    return new Response('{}');
+  }
   if(url.hostname==='slack.com'){
     if(options.headers.traceparent)throw new Error('External trace propagation');
     if(process.env.TEST_CONTEXT!=='granted'||url.pathname!=='/api/conversations.replies'||url.searchParams.get('channel')!=='CALLOWED'||url.searchParams.get('ts')!=='100.001'||url.searchParams.get('latest')!=='105.001'||url.searchParams.get('limit')!=='15'||url.searchParams.get('inclusive')!=='false'||url.searchParams.has('cursor'))throw new Error('Unexpected context access');
@@ -105,9 +108,11 @@ async function run(
           SLACK_BOT_TOKEN: "synthetic",
           COMPUTAH_CORE_URL: "http://127.0.0.1:1",
           COMPUTAH_SLACK_DB: join(dir, "inbox.sqlite"),
+          COMPUTAH_SLACK_TIMING_SOCKET: "",
+          COMPUTAH_SLACK_TIMING_TOKEN_FILE: "",
           COMPUTAH_SLACK_STATUS_ENABLED: statusRequested ? "true" : "false",
           COMPUTAH_SLACK_BINDINGS_FILE: join(dir, "bindings.json"),
-          COMPUTAH_AXIOM_INGEST_TOKEN: contextScenario ? "synthetic-only" : "",
+          COMPUTAH_AXIOM_INGEST_TOKEN: "synthetic-only",
         },
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -183,6 +188,7 @@ test("installation mismatch cannot reach Socket Mode startup", async () => {
     const result = await run(auth, enterpriseId);
     assert.equal(result.code, 1, result.output);
     assert.match(result.output, /computah.slack.start_failed/);
+    assert.match(result.output, /synthetic.start_failed.flushed/);
     assert.doesNotMatch(result.output, /synthetic.socket.starting/);
   }
 });

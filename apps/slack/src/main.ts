@@ -1,9 +1,10 @@
 import { createHmac } from "node:crypto";
 import { mkdir, readFile, stat } from "node:fs/promises";
-import { dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, relative } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   currentTraceHeaders,
+  runtimeLog,
   startObservability,
   traceEvent,
   traceOperation,
@@ -12,9 +13,23 @@ import { SocketModeClient } from "@slack/socket-mode";
 import { LogLevel, WebClient } from "@slack/web-api";
 import { type Binding, type Ingress, SlackAdapter } from "./adapter.js";
 import type { DebugReport } from "./debugshare.js";
+import { startTimingBroker } from "./timing-broker.js";
 
 async function main() {
   const telemetry = await startObservability("slack");
+  try {
+    await run();
+  } catch {
+    traceEvent("start.failed");
+    runtimeLog("runtime.start_failed", { outcome: "error" }, "error");
+    throw new Error("Slack runtime failed");
+  } finally {
+    // Includes config/auth/viewer failures before the socket loop is constructed.
+    await telemetry.close();
+  }
+}
+
+async function run() {
   process.umask(0o077);
   const required = (name: string) => {
     const value = process.env[name];
@@ -90,9 +105,11 @@ async function main() {
     info() {},
     warn() {
       traceEvent("report");
+      runtimeLog("runtime.report", { outcome: "error" }, "warn");
     },
     error() {
       traceEvent("report");
+      runtimeLog("runtime.report", { outcome: "error" }, "error");
     },
     setLevel() {},
     getLevel: () => LogLevel.ERROR,
@@ -138,6 +155,36 @@ async function main() {
         /TOKEN|SECRET|API_KEY/.test(key) && value && value.length >= 8,
     )
     .map(([, value]) => value as string);
+  const timingSocket = process.env.COMPUTAH_SLACK_TIMING_SOCKET;
+  const timingTokenFile = process.env.COMPUTAH_SLACK_TIMING_TOKEN_FILE;
+  let timingToken: string | undefined;
+  if (timingSocket || timingTokenFile) {
+    if (
+      !timingSocket ||
+      !timingTokenFile ||
+      !isAbsolute(timingSocket) ||
+      !isAbsolute(timingTokenFile)
+    )
+      throw new Error("Complete private timing broker configuration required");
+    if (
+      [statePath, configPath, timingTokenFile].some((path) => {
+        const location = relative(dirname(timingSocket), path);
+        return (
+          location !== ".." &&
+          !location.startsWith("../") &&
+          !isAbsolute(location)
+        );
+      })
+    )
+      throw new Error(
+        "Timing socket directory must not contain private state or credentials",
+      );
+    if ((await stat(timingTokenFile)).mode & 0o077)
+      throw new Error("Private timing credential file required");
+    timingToken = (await readFile(timingTokenFile, "utf8")).trim();
+    if (timingToken.length < 32) throw new Error("Invalid timing credential");
+    diagnosticSecrets.push(timingToken);
+  }
   const uploadConfig = [
     process.env.COMPUTAH_DEBUGSHARE_INGEST_URL,
     process.env.COMPUTAH_DEBUGSHARE_SIGNING_SECRET,
@@ -383,19 +430,39 @@ async function main() {
   );
   let stopping = false;
   socket.on("slack_event", async ({ body, ack }) => {
+    const receivedAt = Date.now();
     try {
       await traceOperation("slack.receive", async () => {
         if (stopping) return;
-        adapter.admit(body as Ingress);
-        await ack();
+        const outcome = adapter.admit(body as Ingress, receivedAt);
+        runtimeLog("slack.receive", {
+          operation: "receive",
+          outcome:
+            outcome === "accepted"
+              ? "queued"
+              : outcome === "duplicate"
+                ? "success"
+                : "denied",
+        });
+        await adapter.acknowledge(body as Ingress, ack);
       });
     } catch {
       console.error("computah.slack.admission_failed");
+      runtimeLog(
+        "slack.receive",
+        { operation: "receive", outcome: "error" },
+        "error",
+      );
     }
   });
   socket.on("error", () => {
     console.error("computah.slack.connection_error");
     traceEvent("report");
+    runtimeLog(
+      "runtime.report",
+      { outcome: "error", reason: "transport" },
+      "error",
+    );
   });
   let shutdownDeadline: ReturnType<typeof setTimeout> | undefined;
   const stopped = new Promise<void>((resolve) => {
@@ -409,24 +476,42 @@ async function main() {
     process.once("SIGTERM", stop);
     process.once("SIGINT", stop);
   });
+  let timingBroker: Awaited<ReturnType<typeof startTimingBroker>> | undefined;
   try {
+    if (timingSocket && timingToken)
+      timingBroker = await startTimingBroker({
+        socketPath: timingSocket,
+        token: timingToken,
+        read: (requestId, scope) => adapter.readTiming(requestId, scope),
+      });
     await Promise.race([socket.start(), stopped]);
     if (!stopping) {
       console.info("computah.slack.ready");
       traceEvent("ready");
+      runtimeLog("runtime.ready", { outcome: "ready" });
     }
     while (!stopping) {
       await traceOperation("slack.step", () => adapter.step());
       await delay(1000);
     }
   } finally {
-    await socket.disconnect();
-    await adapter.stop();
-    adapter.close();
-    clearTimeout(shutdownDeadline);
-    console.info("computah.slack.stopped");
-    traceEvent("stopped");
-    await telemetry.close();
+    try {
+      await socket.disconnect();
+    } finally {
+      try {
+        try {
+          await timingBroker?.close();
+        } finally {
+          await adapter.stop();
+        }
+      } finally {
+        adapter.close();
+        clearTimeout(shutdownDeadline);
+        console.info("computah.slack.stopped");
+        traceEvent("stopped");
+        runtimeLog("runtime.stopped", { outcome: "stopped" });
+      }
+    }
   }
 }
 
