@@ -1,20 +1,35 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  chown,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { Effect } from "effect";
 
 // Prove the artifact boots before stopping the only production storage writer.
-// No real env files, mounts, network or host ports enter this disposable process.
+// No real env files, production mounts, network or host ports enter this process.
 const image = process.env.COMPUTAH_IMAGE;
 if (!/^sha256:[a-f0-9]{64}$/.test(image ?? ""))
   throw new Error("An immutable local image ID is required");
 const candidate = `computah-preflight-${randomUUID()}`;
+process.umask(0o077);
+// The managed engine checks for 4 GiB free capacity, even for a tiny smoke store.
+// Use the disk filesystem, never a large RAM reservation or production data.
+const candidateHome = await mkdtemp("/var/lib/computah/preflight-");
+let cleanupFailed = false;
 try {
+  await chown(candidateHome, 1000, 1000);
+  await chmod(candidateHome, 0o700);
   execFileSync(
     "docker",
     [
       "run",
-      "--rm",
       "--name",
       candidate,
       "--network",
@@ -30,9 +45,8 @@ try {
       "768m",
       "--pids-limit",
       "256",
-      "--tmpfs",
-      // Native depot preallocates two 64 MiB segments before any actor data.
-      "/data:rw,uid=1000,gid=1000,mode=0700,size=256m",
+      "--mount",
+      `type=bind,src=${candidateHome},dst=/data`,
       "--env",
       "HOME=/data",
       "--env",
@@ -72,8 +86,20 @@ try {
   // Only our unique disposable container, including after a preflight timeout.
   try {
     execFileSync("docker", ["rm", "--force", candidate], { stdio: "ignore" });
-  } catch {}
+  } catch {
+    // A failed create may never have produced a container. Confirm absence
+    // before deleting storage; if Docker is unavailable, retain it for recovery.
+    const remaining = execFileSync(
+      "docker",
+      ["ps", "--all", "--quiet", "--filter", `name=^/${candidate}$`],
+      { encoding: "utf8" },
+    ).trim();
+    cleanupFailed = remaining.length > 0;
+  }
+  if (!cleanupFailed) await rm(candidateHome, { recursive: true, force: true });
 }
+if (cleanupFailed)
+  throw new Error("Candidate cleanup failed; isolated HOME retained");
 console.info(
   "Candidate isolated startup, submission/result and graceful stop passed",
 );

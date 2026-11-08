@@ -45,10 +45,18 @@ live copy as a candidate, or split auth/checkpoints from the actor store.
 Image build and deploy dependency installation already happen while the old
 backend serves. Each release's `apply.ts` now runs that exact immutable image in
 a disposable `--network none` container with no host ports, no real env files,
-no persistent mounts and a UID 1000 tmpfs HOME. It checks actual native startup,
+no production mounts and a fresh UID 1000 disk-backed HOME under the unique
+`/var/lib/computah/preflight-*` path. It checks actual native startup,
 authenticated faux submission → completed result, then clean
 SIGTERM exit, before invoking Alchemy. A 120-second outer deadline removes only
-that uniquely named candidate on timeout. A failed preflight leaves the old
+that uniquely named candidate on timeout; its disposable HOME is removed only
+after container removal/confirmed absence. If Docker cannot confirm cleanup,
+retain that isolated HOME for operator recovery, never delete live storage.
+The managed engine validates 4 GiB of free filesystem capacity for its configured
+log shard even when the smoke records are tiny. Small tmpfs mounts fail
+that validation; do not reserve gigabytes of RAM on the small host or change
+production engine storage sizing to make a candidate test pass.
+A failed preflight leaves the old
 backend serving; it does not relax the conservative activation high-water mark
 already advanced by the installed updater. This is artifact validation, **not**
 a production-storage migration rehearsal, provider authentication check or proof
