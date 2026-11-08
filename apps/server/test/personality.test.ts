@@ -147,6 +147,7 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
         "edit",
         "self_docs_discover",
         "self_docs_read",
+        "procedure_draft",
       ]);
       expect(request.model).toBe(
         request.text.includes("previous heading")

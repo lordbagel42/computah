@@ -141,6 +141,8 @@ cores decline compaction until its retry boundary can enforce current source gra
   explicit principal grants, current-versus-reusable source and verification limits.
 - [Gmail runtime and source authority](gmail.md): protected account setup, GET-only
   history reconciliation, private retrieval, native grant fences and acceptance limits.
+- [Local delayed-email Procedure](procedures.md): durable versioned holds, edit/cancel
+  and exact local eligibility; always UNSENT, without external-send enforcement.
 
 The detailed [research plan](https://ampcode.com/artifacts/computah-architecture-and-phased-implementation-plan-cc4c2e58-8a38-4977-9a06-c1c55aadbc13)
 is design context, not proof those features exist.

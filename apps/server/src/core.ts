@@ -57,6 +57,11 @@ import {
   operationalInstructions,
 } from "./operations.js";
 import { interactionInstructions, workerInstructions } from "./personality.js";
+import {
+  createProcedures,
+  type DraftRequest,
+  ProcedureError,
+} from "./procedures.js";
 import { createSelfDocs, selfDocsInstructions } from "./self-docs.js";
 import {
   type SentinelDecision,
@@ -902,6 +907,20 @@ export function createCore(options: CoreOptions) {
   });
   const workerTools = createRegistry();
   workerTools.install(sourceHooks);
+  const procedures = createProcedures({
+    current: async (api, context) => {
+      const binding = await api.snapshot(Binding, context);
+      if (!binding?.scope) throw new CoreError("denied");
+      await permit(binding.scope, "task.send");
+      await permit(binding.scope, "history.read");
+      await sourceCheck(
+        binding.scope,
+        (await api.snapshot(SourceLineage, api.conversationId, context))
+          ?.grants ?? [],
+      );
+    },
+  });
+  workerTools.install(procedures.extension);
   if (options.tavily) workerTools.install(tavilyExtension);
   const files = createFileTools({
     authorize: options.authorize,
@@ -1086,6 +1105,41 @@ export function createCore(options: CoreOptions) {
     },
     actions: {
       captureAnalytics,
+      procedureDraft: async (
+        c: { key: string[]; pi: Harness },
+        request: DraftRequest,
+        parent: Record<string, string>,
+      ) => {
+        if (c.key.length !== 4) throw new CoreError("denied");
+        return procedures
+          .run(
+            request,
+            c.pi,
+            async () => {
+              const scope = scopeOf(c.key);
+              await permit(scope, "task.send");
+              await permit(scope, "history.read");
+              const root = await c.pi.root(BACKGROUND_CONTEXT);
+              await sourceCheck(
+                scope,
+                (
+                  await c.pi.snapshot(
+                    SourceLineage,
+                    root.id,
+                    BACKGROUND_CONTEXT,
+                  )
+                )?.grants ?? [],
+              );
+            },
+            "trusted-host",
+            BACKGROUND_CONTEXT,
+            parent,
+          )
+          .catch((error: unknown) => {
+            if (error instanceof ProcedureError) return { error: error.code };
+            throw error;
+          });
+      },
       sleep: (c: { sleep(): void }) => {
         c.sleep();
       },
@@ -1379,6 +1433,7 @@ export function createCore(options: CoreOptions) {
             ...fileTools,
             ...sourceTools,
             ...(selfDocs.extension.tools ?? []),
+            procedures.tool,
           ],
           instructions: `${workerInstructions}\n\n${selfDocsInstructions}`,
           model: modelRef(options.workerModel ?? options.model),
@@ -1544,6 +1599,17 @@ export function createCore(options: CoreOptions) {
       return {
         interactionId: interactionId(scope),
         workerId: (label = "primary") => workerId(scope, label),
+        /** Trusted local-only draft control; no public HTTP authority or egress. */
+        procedureDraft: (id: string, request: DraftRequest) =>
+          traceOperation("procedures.draft", async () => {
+            const actor = await resolve(id, "task.send");
+            const result = await actor.procedureDraft(
+              request,
+              currentTraceHeaders(),
+            );
+            if ("error" in result) throw new ProcedureError(result.error);
+            return result;
+          }),
         /** Host-only source admission. Never expose through public request DTOs. */
         submitSource: (
           text: string,

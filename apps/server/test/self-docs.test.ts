@@ -172,8 +172,9 @@ test("canonical bytes page without Unicode damage, pin changes and reject paths,
       ids.push(...page.entries.map((entry) => entry.id));
       next = page.nextOffset;
     }
-    expect(new Set(ids).size).toBe(21);
+    expect(new Set(ids).size).toBe(22);
     expect(ids).toContain("self-docs");
+    expect(ids).toContain("procedures");
   } finally {
     await rm(base, { recursive: true, force: true });
   }
@@ -369,6 +370,7 @@ async function native(context: TestContext) {
             typeof user?.content === "string"
               ? user.content
               : JSON.stringify(user?.content);
+          const documentId = command === "procedures" ? "procedures" : "index";
           let response = fauxAssistantMessage("done");
           if (last?.role === "toolResult") {
             if (last.toolName !== "Task") {
@@ -388,13 +390,13 @@ async function native(context: TestContext) {
                   ? fauxAssistantMessage("invalid input rejected")
                   : last.toolName === "self_docs_discover"
                     ? fauxAssistantMessage(
-                        fauxToolCall("self_docs_read", { id: "index" }),
+                        fauxToolCall("self_docs_read", { id: documentId }),
                         { stopReason: "toolUse" },
                       )
                     : result.nextOffset !== null
                       ? fauxAssistantMessage(
                           fauxToolCall("self_docs_read", {
-                            id: "index",
+                            id: documentId,
                             offset: result.nextOffset,
                             sha256: result.sha256,
                           }),
@@ -414,7 +416,9 @@ async function native(context: TestContext) {
                   ? { worker: "primary", text: "read docs" }
                   : command === "invalid"
                     ? { id: "unknown" }
-                    : {},
+                    : command === "procedures"
+                      ? { offset: 8 }
+                      : {},
               ),
               { stopReason: "toolUse" },
             );
@@ -433,6 +437,7 @@ async function native(context: TestContext) {
     });
     for (const [id, command] of [
       ["first", "read"],
+      ["procedures", "procedures"],
       ["worker", "delegate"],
       ["reopen", "read"],
       ["worker-reopen", "delegate"],
@@ -457,8 +462,17 @@ async function native(context: TestContext) {
       expect(results[0].role).toBe(
         command === "delegate" ? "worker" : "interaction",
       );
+      if (command === "procedures")
+        expect(results[0].result.entries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: "procedures", available: true }),
+          ]),
+        );
       const bytes = await readFile(
-        new URL("../../../docs/index.md", import.meta.url),
+        new URL(
+          `../../../docs/${command === "procedures" ? "procedures" : "index"}.md`,
+          import.meta.url,
+        ),
       );
       const pages = results.filter((r) => r.name === "self_docs_read");
       expect(pages.map((p) => p.result.text).join("")).toBe(

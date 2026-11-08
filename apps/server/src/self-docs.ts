@@ -18,6 +18,7 @@ const documents = [
   "model-policy",
   "sentinel",
   "gmail",
+  "procedures",
   "tavily",
   "bus",
   "events",

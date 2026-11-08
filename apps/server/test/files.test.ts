@@ -258,6 +258,7 @@ test("native Task/Worker read-write-edit uses isolated durable DB files, not hos
       "read",
       "self_docs_discover",
       "self_docs_read",
+      "procedure_draft",
     ]);
     const history = JSON.stringify(
       (await alice.history(alice.workerId())).items,
