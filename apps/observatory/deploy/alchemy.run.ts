@@ -27,6 +27,7 @@ export default Alchemy.Stack(
         flags: ["nodejs_compat", "enable_request_signal"],
       },
       workersDev: { enabled: true, previewsEnabled: false },
+      domain: "observe.raygen.dev",
       env: {
         TRACES: Cloudflare.DurableObject("PublicTraceFeed", {
           className: "PublicTraceFeed",

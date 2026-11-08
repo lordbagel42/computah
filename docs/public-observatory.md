@@ -1,6 +1,7 @@
 # Public trace observatory
 
-Independent public HTTPS Worker: https://computah-observatory.enderium42.workers.dev
+Canonical public HTTPS Worker: https://observe.raygen.dev
+The same Worker remains available at https://computah-observatory.enderium42.workers.dev.
 Source: `apps/observatory`. This is not the authenticated internal DEBUGSHARE
 tracker and does not expose the private backend or its reports.
 
@@ -68,6 +69,24 @@ rotation changes public identifiers. Code-only reconciliation without these valu
 refuses to proceed. `COMPUTAH_OBSERVATORY_BOOTSTRAP=1` deliberately deploys an
 unconfigured shell and can clear existing bindings: use only for initial bootstrap
 or intentional deactivation, never routine redeployment.
+
+The canonical `observe.raygen.dev` custom domain is managed by this existing
+Alchemy Worker, including Cloudflare DNS and TLS; it is not a second deployment.
+Keep the existing state, Durable Object namespace, HMAC and secret bindings on
+every update. Domain configuration must not bootstrap or rotate them.
+
+Permission inspection on 2026-11-08 found that the installed Worker query token
+returned HTTP 200 for count-only queries to both `computah-prod-traces` and
+`computah-prod-logs`. The public query remains fixed to traces, but this is **not
+dataset permission isolation**. A separately provisioned token with QueryRead only
+on `computah-prod-traces` subsequently replaced only the Worker query binding.
+Valid count-only controls using that exact installed binding returned traces HTTP
+200 and logs HTTP 400 (`unable to find dataset`), not HTTP 403; the same logs query
+had succeeded with the previous credential. The dedicated native grant evidence
+corroborates dataset inaccessibility rather than a malformed-query failure.
+The shared backend credential and grants were not narrowed or rotated. Retain the
+new dedicated Worker credential for redeployment; do not restore a broader ambient
+token. Private-content activation remains a separate content/deployment decision.
 
 Optional `COMPUTAH_AXIOM_INGEST_TOKEN` enables an isolated fixed-schema edge OTLP
 emitter, not the Node bootstrap. It emits only HTTP/poll lifetimes, fixed outcomes,
