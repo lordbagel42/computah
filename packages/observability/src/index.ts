@@ -9,6 +9,7 @@ import {
   SpanStatusCode,
   trace,
 } from "@opentelemetry/api";
+import { LiveSpanProcessor } from "./live.js";
 import {
   type RuntimeLogFields,
   runtimeLog,
@@ -585,6 +586,7 @@ async function start(service: string) {
     sampler: new AlwaysOnSampler(),
     resource: resourceFromAttributes({ "service.name": `computah-${service}` }),
     spanProcessors: [
+      new LiveSpanProcessor(service, name),
       new BatchSpanProcessor(
         new OTLPTraceExporter({
           url: endpoint,

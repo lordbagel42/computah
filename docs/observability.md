@@ -437,3 +437,30 @@ ownership. Gmail receipt roots remain independent of ingress; Gmail-specific
 end-to-end ancestry is not claimed here. Atomic admission/dedup and private grant
 lineage stay intact.
 Live Axiom ingestion of the deployed Gmail path remains a separate acceptance check.
+
+## Live public timing channel
+
+The Node SDK also supports an independent `LiveSpanProcessor`, enabled only with
+protected `OBSERVATORY_LIVE_URL` (HTTPS ingestion endpoint) and a dedicated
+`OBSERVATORY_LIVE_TOKEN`. It observes the registered JavaScript provider's actual
+SDK start/end callbacks, including vendor spans. The existing literal operation
+sanitizer runs before delivery; no attributes, events, resources, error text,
+messages or histories are read into this channel. The Worker repeats its own
+positive projection and HMAC mapping. This is separate from private content capture.
+
+The live channel holds at most 512 active operations and 1,024 queued latest
+records, posts batches of at most 128/120 KiB with one request in flight, a two-second
+deadline and at most five attempts/second (outside bounded shutdown flushing).
+Active operations update once/second. Short operations can coalesce directly to
+their end state. Failed batches are dropped rather than blocking runtime work;
+later updates and settled Axiom history reconcile gaps. Shutdown closes admission
+and drains at most eight batches. Fixed outcome/count logs accompany delivery;
+`computah.logs.export` is excluded from this channel to avoid a logging feedback loop.
+
+This is source-supported, not yet a claim of enabled production collection or
+live acceptance. Native Rust/Effect providers not using this Node provider still
+arrive as settled Axiom history; native start/update delivery is not implemented.
+The existing settled OTLP path is unchanged. Browser interaction tracing and
+full batch-to-source exporter causal links remain gaps. The optional edge Axiom
+export binding is still deployment-owner controlled, not implicitly enabled here.
+See [public observatory](public-observatory.md) for stream replay and bounds.
