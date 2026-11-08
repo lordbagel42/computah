@@ -16,8 +16,19 @@ import {
   type Webhook,
   type WebhookContext,
 } from "apps";
-import { isDebugshareId } from "./ids.js";
-import { Detail, Report, Summary, statuses } from "./schema.js";
+import { debugshareIdPattern, isDebugshareId } from "./ids.js";
+import {
+  Detail,
+  Explore,
+  type FeedEvent,
+  type IndexRow,
+  Inspection,
+  Report,
+  SearchInput,
+  SearchResult,
+  Summary,
+  statuses,
+} from "./schema.js";
 
 // This account identifies the uploader, not an upstream API credential.
 // The webhook's separate generated signing secret is the only upload authority.
@@ -151,6 +162,330 @@ export const getIssue = query(
     };
   },
 );
+// Explorer reads. All are bounded, read-only and covered by the same Executor
+// app access as getIssue; none returns more than one full snapshot.
+const indexSql = `SELECT id,title,status,assignee,revision,created,updated,
+  length(CAST(report AS BLOB)) AS bytes,
+  json_extract(report,'$.requestedAt') AS requestedAt,
+  json_extract(report,'$.requestedBy') AS requestedBy,
+  json_extract(report,'$.source.team') AS team,
+  json_extract(report,'$.source.channel') AS channel,
+  json_extract(report,'$.source.message') AS message,
+  json_extract(report,'$.source.thread') AS thread,
+  json_extract(report,'$.scope.tenantId') AS tenantId,
+  json_extract(report,'$.scope.userId') AS userId,
+  json_extract(report,'$.scope.agentId') AS agentId,
+  json_extract(report,'$.transport.requestId') AS requestId,
+  json_extract(report,'$.transport.traceId') AS transportTrace,
+  json_extract(report,'$.transport.spanId') AS transportSpan,
+  json_extract(report,'$.capture.traceId') AS captureTrace,
+  json_extract(report,'$.capture.spanId') AS captureSpan,
+  json_extract(report,'$.participants') AS participants,
+  json_extract(report,'$.submissions') AS submissions,
+  json_array_length(report,'$.messages') AS messageCount,
+  json_array_length(report,'$.submissions') AS submissionCount,
+  json_array_length(report,'$.activity') AS activityCount,
+  json_array_length(report,'$.limitations') AS limitationCount,
+  (SELECT count(*) FROM issue_events e WHERE e.issue=issues.id) AS eventCount,
+  (SELECT min(created) FROM issue_events e WHERE e.issue=issues.id AND e.actor<>'capture') AS firstResponse,
+  (SELECT actor FROM issue_events e WHERE e.issue=issues.id ORDER BY created DESC,id DESC LIMIT 1) AS lastActor,
+  (SELECT substr(note,1,280) FROM issue_events e WHERE e.issue=issues.id ORDER BY created DESC,id DESC LIMIT 1) AS lastNote
+  FROM issues ORDER BY updated DESC,id LIMIT 500`;
+const feedSql = `SELECT e.id,e.issue,i.title,e.status,e.actor,e.note,e.created
+  FROM issue_events e JOIN issues i ON i.id=e.issue`;
+type FeedRow = Infer<typeof FeedEvent>;
+
+export const explore = query(
+  {
+    description:
+      "Explorer index: up to 500 newest-updated issues with extracted report metadata (source, scope, trace correlation, counts, latest event), the 500 newest history events and table totals",
+    input: object({}),
+    output: Explore,
+  },
+  async ({ sql }: Read) => {
+    const issues = sql
+      .exec<Record<string, string | number | null>>(indexSql)
+      .toArray()
+      .map((row) => ({
+        ...row,
+        participants: JSON.parse(String(row.participants ?? "[]")),
+        submissions: JSON.parse(String(row.submissions ?? "[]")),
+        lastActor: row.lastActor ?? "",
+        lastNote: row.lastNote ?? "",
+      }));
+    const totals = sql
+      .exec<{ issues: number; messages: number; bytes: number }>(
+        "SELECT count(*) AS issues, coalesce(sum(json_array_length(report,'$.messages')),0) AS messages, coalesce(sum(length(CAST(report AS BLOB))),0) AS bytes FROM issues",
+      )
+      .one();
+    const events = sql
+      .exec<{ n: number }>("SELECT count(*) AS n FROM issue_events")
+      .one().n;
+    return {
+      issues: issues as unknown as Infer<typeof IndexRow>[],
+      events: sql
+        .exec<FeedRow>(`${feedSql} ORDER BY e.created DESC,e.id LIMIT 500`)
+        .toArray(),
+      totals: { ...totals, events },
+    };
+  },
+);
+
+export const search = query(
+  {
+    description:
+      "Search stored reports and history. text matches issue IDs, titles, assignees, full snapshot JSON, message text and event notes (case-insensitive); author/channel/submission/trace/actor are exact filters. Empty strings mean no filter. Messages are deduplicated across overlapping snapshots (max 200).",
+    input: SearchInput,
+    output: SearchResult,
+  },
+  async ({ sql }: Read, input) => {
+    const f = {
+      text: input.text.trim(),
+      author: input.author.trim(),
+      channel: input.channel.trim(),
+      submission: input.submission.trim(),
+      trace: input.trace.trim(),
+      actor: input.actor.trim(),
+    };
+    if (Object.values(f).some((v) => v.length > 200))
+      throw new Error("Search terms are limited to 200 characters");
+    if (!Object.values(f).some(Boolean))
+      return { issues: [], messages: [], events: [] };
+    const text = f.text.toLowerCase() || null;
+    const issues = sql
+      .exec<{ id: string }>(
+        `SELECT id FROM issues WHERE
+          (?1 IS NULL OR instr(lower(id||' '||title||' '||assignee||' '||report),?1)>0)
+          AND (?2='' OR EXISTS(SELECT 1 FROM json_each(report,'$.participants') p WHERE p.value=?2))
+          AND (?3='' OR json_extract(report,'$.source.channel')=?3)
+          AND (?4='' OR EXISTS(SELECT 1 FROM json_each(report,'$.submissions') s WHERE s.value=?4))
+          AND (?5='' OR json_extract(report,'$.capture.traceId')=?5 OR json_extract(report,'$.transport.traceId')=?5
+               OR EXISTS(SELECT 1 FROM issue_events e WHERE e.issue=issues.id AND instr(e.note,?5)>0))
+          AND (?6='' OR EXISTS(SELECT 1 FROM issue_events e WHERE e.issue=issues.id AND e.actor=?6))
+          ORDER BY updated DESC,id LIMIT 500`,
+        text,
+        f.author,
+        f.channel,
+        f.submission,
+        f.trace,
+        f.actor,
+      )
+      .toArray()
+      .map((row) => row.id);
+    const messages = new Map<
+      string,
+      {
+        channel: string;
+        ts: string;
+        author: string;
+        text: string;
+        issues: string[];
+      }
+    >();
+    if (!f.submission && !f.trace && !f.actor)
+      for (const row of sql
+        .exec<{
+          issue: string;
+          channel: string;
+          ts: string;
+          author: string;
+          text: string;
+        }>(
+          `SELECT i.id AS issue, json_extract(i.report,'$.source.channel') AS channel,
+            json_extract(m.value,'$.ts') AS ts, json_extract(m.value,'$.author') AS author,
+            substr(json_extract(m.value,'$.text'),1,4000) AS text
+          FROM issues i, json_each(i.report,'$.messages') m
+          WHERE (?1 IS NULL OR instr(lower(json_extract(m.value,'$.text')),?1)>0)
+            AND (?2='' OR json_extract(m.value,'$.author')=?2)
+            AND (?3='' OR json_extract(i.report,'$.source.channel')=?3)
+          ORDER BY ts DESC LIMIT 1000`,
+          text,
+          f.author,
+          f.channel,
+        )
+        .toArray()) {
+        const key = `${row.channel}\u0000${row.ts}`;
+        const seen = messages.get(key);
+        if (seen) seen.issues.push(row.issue);
+        else if (messages.size < 200)
+          messages.set(key, {
+            channel: row.channel,
+            ts: row.ts,
+            author: row.author,
+            text: row.text,
+            issues: [row.issue],
+          });
+      }
+    const events =
+      f.author || f.channel || f.submission
+        ? []
+        : sql
+            .exec<FeedRow>(
+              `${feedSql} WHERE (?1 IS NULL OR instr(lower(e.note||' '||e.actor),?1)>0)
+                AND (?2='' OR instr(e.note,?2)>0) AND (?3='' OR e.actor=?3)
+                ORDER BY e.created DESC,e.id LIMIT 200`,
+              text,
+              f.trace,
+              f.actor,
+            )
+            .toArray();
+    return { issues, messages: [...messages.values()], events };
+  },
+);
+
+export const inspectIssue = query(
+  {
+    description:
+      "getIssue plus snapshot provenance (stored byte size and SHA-256 of the immutable stored JSON) and related issues with explicit reasons: same conversation, shared captured messages or submission handles, same trace, or exact ID mentions",
+    input: object({ id: string() }),
+    output: Inspection,
+  },
+  async ({ sql }: Read, { id }) => {
+    if (!isDebugshareId(id)) throw new Error("Invalid issue ID");
+    const row = sql
+      .exec<IssueRow>("SELECT * FROM issues WHERE id=?", id)
+      .toArray()[0];
+    if (!row)
+      throw new Error(
+        "No captured report for that issue ID. Older identifier-only DEBUGSHAREs have no retained context.",
+      );
+    const report = Report.parse(JSON.parse(row.report));
+    const bytes = new TextEncoder().encode(row.report);
+    const sha256 = [
+      ...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+    ]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const reasons = new Map<string, string[]>();
+    const add = (other: string, reason: string) => {
+      if (other === id) return;
+      reasons.set(other, [...(reasons.get(other) ?? []), reason]);
+    };
+    const thread =
+      typeof report.source.thread === "string" ? report.source.thread : null;
+    for (const r of sql
+      .exec<{ id: string }>(
+        `SELECT id FROM issues WHERE id<>?1 AND json_extract(report,'$.source.team')=?2
+          AND json_extract(report,'$.source.channel')=?3 AND json_extract(report,'$.source.thread') IS ?4 LIMIT 100`,
+        id,
+        report.source.team,
+        report.source.channel,
+        thread,
+      )
+      .toArray())
+      add(r.id, "same conversation");
+    const counted = (label: string, query: string, ...params: string[]) => {
+      if (params.at(-1) === "[]") return;
+      for (const r of sql
+        .exec<{ id: string; n: number }>(query, id, ...params)
+        .toArray())
+        add(r.id, `${r.n} shared ${label}${r.n === 1 ? "" : "s"}`);
+    };
+    counted(
+      "captured message",
+      `SELECT i.id, count(*) AS n FROM issues i, json_each(i.report,'$.messages') m
+        WHERE i.id<>?1 AND json_extract(i.report,'$.source.channel')=?2
+          AND json_extract(m.value,'$.ts') IN (SELECT value FROM json_each(?3))
+        GROUP BY i.id LIMIT 100`,
+      report.source.channel,
+      JSON.stringify(report.messages.map((m) => m.ts)),
+    );
+    counted(
+      "submission handle",
+      `SELECT i.id, count(*) AS n FROM issues i, json_each(i.report,'$.submissions') s
+        WHERE i.id<>?1 AND s.value IN (SELECT value FROM json_each(?2))
+        GROUP BY i.id LIMIT 100`,
+      JSON.stringify(report.submissions),
+    );
+    const traces = [report.capture?.traceId, report.transport?.traceId].filter(
+      (t): t is string => Boolean(t),
+    );
+    for (const trace of new Set(traces))
+      for (const r of sql
+        .exec<{ id: string }>(
+          `SELECT id FROM issues WHERE id<>?1 AND (json_extract(report,'$.capture.traceId')=?2
+            OR json_extract(report,'$.transport.traceId')=?2) LIMIT 100`,
+          id,
+          trace,
+        )
+        .toArray())
+        add(r.id, "same trace");
+    for (const r of sql
+      .exec<{ id: string }>(
+        `SELECT id FROM issues WHERE id<>?1 AND instr(report,?1)>0
+          UNION SELECT issue AS id FROM issue_events WHERE issue<>?1 AND instr(note,?1)>0 LIMIT 100`,
+        id,
+      )
+      .toArray())
+      add(r.id, "mentions this issue");
+    const pattern = new RegExp(debugshareIdPattern, "gu");
+    const mentioned = new Set(
+      [
+        ...row.report.matchAll(pattern),
+        ...sql
+          .exec<{ note: string }>(
+            "SELECT note FROM issue_events WHERE issue=? LIMIT 200",
+            id,
+          )
+          .toArray()
+          .flatMap((e) => [...e.note.matchAll(pattern)]),
+      ].map((m) => m[0]),
+    );
+    mentioned.delete(id);
+    const known = mentioned.size
+      ? sql
+          .exec<{ id: string }>(
+            "SELECT id FROM issues WHERE id IN (SELECT value FROM json_each(?))",
+            JSON.stringify([...mentioned].slice(0, 100)),
+          )
+          .toArray()
+      : [];
+    for (const r of known) add(r.id, "mentioned here");
+    const summaries = reasons.size
+      ? sql
+          .exec<{
+            id: string;
+            title: string;
+            status: string;
+            created: string;
+          }>(
+            "SELECT id,title,status,created FROM issues WHERE id IN (SELECT value FROM json_each(?)) ORDER BY created DESC",
+            JSON.stringify([...reasons.keys()]),
+          )
+          .toArray()
+      : [];
+    return {
+      issue: {
+        id: row.id,
+        title: row.title,
+        status: row.status,
+        assignee: row.assignee,
+        revision: row.revision,
+        created: row.created,
+        updated: row.updated,
+      },
+      report,
+      events: sql
+        .exec<{
+          id: string;
+          status: string;
+          actor: string;
+          note: string;
+          created: string;
+        }>(
+          "SELECT id,status,actor,note,created FROM issue_events WHERE issue=? ORDER BY created,id LIMIT 200",
+          id,
+        )
+        .toArray(),
+      snapshot: { bytes: bytes.byteLength, sha256 },
+      related: summaries.map((s) => ({
+        ...s,
+        reasons: reasons.get(s.id) ?? [],
+      })),
+    };
+  },
+);
+
 export const receiveIssue = mutation(
   {
     description:
@@ -312,10 +647,18 @@ const capture = {
 
 export default defineApp(requirements, {
   tools: router(
-    { listIssues, getIssue, receiveIssue, updateIssue },
+    {
+      listIssues,
+      getIssue,
+      explore,
+      search,
+      inspectIssue,
+      receiveIssue,
+      updateIssue,
+    },
     {
       instructions:
-        "Use exact DEBUGSHARE issue ID lookup (new computah_bug_ IDs or legacy UUIDs). Reports show actual bounded messages and location. Use updateIssue with current revision and concise investigation evidence; do not claim repair from status alone. Actor attribution is self-declared; Executor authenticates callers and controls app access. Never insert credentials or hidden model reasoning. This app is an operator boundary, not a multi-tenant public service.",
+        "Use exact DEBUGSHARE issue ID lookup (new computah_bug_ IDs or legacy UUIDs). explore, search and inspectIssue are bounded read-only views for cross-issue navigation. Reports show actual bounded messages and location. Use updateIssue with current revision and concise investigation evidence; do not claim repair from status alone. Actor attribution is self-declared; Executor authenticates callers and controls app access. Never insert credentials or hidden model reasoning. This app is an operator boundary, not a multi-tenant public service.",
     },
   ),
   webhooks: { capture },

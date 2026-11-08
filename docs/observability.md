@@ -588,6 +588,13 @@ boundaries; the separately authorized private content lane now adds actual bound
 normal-operation evidence. DEBUGSHARE remains a separate explicit diagnostic
 capture, not permission for automatic history export or backfill.
 
+The private [issue tracker](../integrations/debugshare/README.md) runs inside
+Executor, outside Computah's runtime and export path. Its read-only explorer
+queries (`explore`, `search`, `inspectIssue`) and page navigation emit no Computah
+spans or logs; Executor's own tool-call audit is the only record. The tracker
+links to Axiom with query URLs built from IDs it already stores; it holds no Axiom
+credential and runs no Axiom query itself. This is a known, documented gap.
+
 The separate [public observatory](public-observatory.md) uses a second positive
 projection and opaque IDs, not DEBUGSHARE content or a public query proxy. Its
 edge exporter is isolated from the Node bootstrap and explicitly credential-gated.

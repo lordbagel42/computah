@@ -16,9 +16,11 @@ span's trace/span IDs. Older reports without these fields remain valid. Capture
 spans carry the internal queryable `computah.debugshare.id`; the public observatory
 projection excludes that attribute and remaps trace/span identities.
 
-The report's **Axiom traces** section opens recorded capture and Slack transport
-trace IDs in the private `bagel-w3ue` Axiom organization / `computah-prod-traces`
-dataset. Matching IDs share one link; distinct IDs get separate links. These are
+The issue page's **Correlation** panel opens recorded capture and Slack transport
+trace IDs in the private `bagel-w3ue` Axiom organization: spans in
+`computah-prod-traces`, logs in `computah-prod-logs`, each span by `span_id`, and
+"Open in Axiom" for capture spans tagged with the issue ID. All links come from
+`ui/axiom.ts` (exact validated IDs only; synthetic reports get none). These are
 the diagnostic command's traces, not guessed correlations to an earlier reported
 conversation. The links select the exact validated nonzero trace ID and a bounded
 window one day before/after report time. Widen Axiom's time range for delayed
@@ -60,6 +62,16 @@ pending report is not a hosted report and does not get a fabricated link.
 - `listIssues({})`: latest 100 summaries, newest update first.
 - `getIssue({id})`: exact immutable snapshot plus up to 200 earliest history
   entries. Older identifier-only UUIDs truthfully return not found.
+- `explore({})`: explorer index. Up to 500 newest-updated issues with metadata
+  extracted by SQL from the stored snapshot (source, scope, trace/span IDs,
+  participants, submission handles, counts, latest event), the 500 newest
+  history events and table totals.
+- `search({text,author,channel,submission,trace,actor})`: case-insensitive text
+  over IDs, titles, assignees, full snapshot JSON and notes, plus exact entity
+  filters. Messages are deduplicated across overlapping snapshots (max 200).
+- `inspectIssue({id})`: `getIssue` plus stored byte size, SHA-256 of the stored
+  snapshot and related issues with explicit reasons (same conversation, shared
+  messages or submission handles, same trace, exact ID mentions).
 - `receiveIssue(report)`: authorized operator import. Exact duplicate is
   idempotent; conflicting snapshot for an existing issue ID is rejected.
 - `updateIssue({id,expectedRevision,status,assignee,actor,note})`: authenticated
@@ -74,11 +86,30 @@ scanner; authorized imports and evidence notes must not contain credentials.
 HMAC delivery checks raw bytes and timestamp, validates bounded schema and source
 scope, then commits before returning `{id}`. Retries cannot overwrite snapshots.
 
+## Explorer UI
+
+A dark Axiom-style React SPA using shadcn/ui-pattern components (Radix, cmdk,
+lucide, Geist), built by Executor with its built-in Tailwind v4. Routes are hash
+fragments so existing `#<issue id>` links keep working; `#<id>/<section>` and
+`#<id>/m/<slack ts>` deep-link to a section or a captured message. Other routes:
+`#/issues`, `#/activity`, `#/search/<text>`, `#/tables/<table>` and entity pages
+`#/people|channels|traces|submissions|actors[/<value>]`. `/` or ⌘K opens a
+jump/search palette; `j`/`k` move through issues.
+
+Every identifier in stored text becomes a destination: issue IDs, Slack user and
+conversation IDs, trace and span IDs, Computah commit SHAs, Amp thread IDs and
+URLs. Axiom links are query URLs over `computah-prod-traces`/`-logs` (sign-in
+required); Slack links use `slack://` and `app_redirect` with team and channel.
+Slack message permalinks need `chat.getPermalink`, so messages link within the
+tracker instead. Synthetic reports (`SYNTHETIC` workspace) get no external links.
+The browser never sends SQL; all reads are the bounded queries above.
+
 ## Verification
 
 Install the exact package dependencies in this directory without changing the
-root workspace lockfile. Typecheck `index.ts`, `schema.ts`, `ui/main.tsx` and
-`ui/assets.d.ts` with TypeScript strict, NodeNext, ES2022 and react-jsx. Root
+root workspace lockfile (`npm install --no-package-lock`). Typecheck `index.ts`,
+`ui/main.tsx` and `ui/assets.d.ts` with TypeScript strict, NodeNext, ES2022,
+react-jsx and the DOM lib. Deploy only source files: never `node_modules`. Root
 formatter/linter cover this source; root tests cover Slack durable capture.
 Run `pnpm exec tsx --test scripts/test-debugshare-traces.test.ts` from the repository
 root for exact query/time-window construction and invalid-ID rejection.
@@ -96,5 +127,5 @@ browser acceptance. Genuine new-format Slack-to-hosted capture was verified for
 `computah_bug_sezwk4oezhoi4y3lqmgtto2v` at 2026-11-08T10:21:56.893Z on source
 `855a7c0`: exact stored capture trace/span matched Axiom, with successful upload,
 delivery and finalization. No historical IDs were rewritten. Source-local SQLite
-capture remains independent of that upload setup. Axiom-link UI rendering and
-hosted adoption are verified separately from this capture receipt.
+capture remains independent of that upload setup. Explorer rendering and hosted
+adoption are verified separately from this capture receipt.

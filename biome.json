@@ -5,6 +5,7 @@
     "includes": ["**", "!ui/pixel-presence.html", "!**/target", "!.amp"]
   },
   "formatter": { "indentStyle": "space" },
+  "css": { "parser": { "tailwindDirectives": true } },
   "linter": { "enabled": true, "rules": { "preset": "recommended" } },
   "assist": { "actions": { "source": { "organizeImports": "on" } } }
 }
