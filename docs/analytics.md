@@ -1,18 +1,22 @@
 # Operational analytics
 
-Status: additive source and local checks only. `apps/server/src/analytics.ts`
-does not alter core/main/Slack or enable an exporter. Integration owns those
-hooks and the operator wire contract. No dashboard endpoint, collector, paid
-service, budget enforcement, or host/container inspection is introduced.
+Status: backend runtime collection is wired in source. Main composes the model
+observer outside the existing priority runtime, constructs a private SQLite
+projection, and sends committed increments through the shared typed
+`runtimeMetric` log sink. Core observes native committed task metadata and usage,
+Task invocations, and gateway lifetimes. Deployment and genuine Axiom ingestion
+must be verified separately for the consumed revision. No new dashboard endpoint,
+collector, paid service, budget enforcement, or host/container inspection is
+introduced. Slack-specific analytics hooks remain unwired here.
 
 ## Inventory of the actual pinned stack
 
 Inspected installed Pi AI/Durable/telemetry 1.5.0, Rivet Pi 0.5.6 and current
 Computah core/main/Slack source, not an assumed GenAI schema:
 
-- Effect already wraps gateway operations with `computah.<operation>` spans.
-  `onReport` currently logs a fixed category only. No SDK/exporter is configured
-  in this baseline; a span API is not evidence of exported telemetry.
+- Effect wraps gateway operations with `computah.<operation>` spans. The shared
+  observability package owns the existing OTel backend and sanitized Axiom relay;
+  analytics does not replace it. Its structured-log route is distinct from traces.
 - Rivet Pi maps durable `pi.durable.submit` and `pi.durable.phase` spans into
   OTel and strips exception messages. Native phase attributes include invocation
   attempt, resumed, tool name, phase and outcome. Events include replay, reports,
@@ -24,8 +28,9 @@ Computah core/main/Slack source, not an assumed GenAI schema:
 - `main.ts` supplies the official custom `ModelRuntime`. Rivet's default
   `traceModelRequests` wrapper is applied only when it constructs the runtime;
   an application-supplied runtime is left alone. Do not assume the configured
-  provider therefore emits the default model spans. This packet does not patch
-  dependency internals or install another tracing stack.
+  provider therefore emits the default model spans. The existing priority wrapper
+  supplies model tracing; the outer analytics observer neither replaces nor
+  duplicates it. No dependency internals or replacement tracing stack are added.
 - Pi Durable atomically records assistant usage and compaction summarization
   attempts in `pi.usage`. `harness.usage()` sums the session's conversations.
   Entries/history alone miss compaction spend. The latest native ledger is the
@@ -67,7 +72,7 @@ private data volume if retention across process/container replacement is wanted.
   daily spend series and are never added to request-attempt rollups.
 - `captureHarness(actor, dimensions, harness, correlation?)` reads only native usage and
   inspection metadata, refreshes that ledger and samples running tasks/queued
-  submissions at most once per actor/minute. These are point samples, not a
+  submissions at most once per actor/minute/distinct active-and-queued pair. These are point samples, not a
   concurrency integral or a complete high-water mark. Captures can be stale and
   no observation means unknown, not zero. Read failures are counted as dropped.
 - `observeModels(runtime, analytics)` works with the configured ModelRuntime.
@@ -112,6 +117,15 @@ private data volume if retention across process/container replacement is wanted.
 - `settledTask(...)` accepts scalar metadata only, deduplicating native terminal
   duration by actor/task/end timestamp. Native restarts are labelled a restart
   streak, never billed as total retries. Missing timestamps mean unavailable.
+- `watchHarness(...)` follows the supported native task-graph observation API,
+  serializes committed metadata captures and reads terminal metadata only for
+  tasks that disappear from the live graph. Native watch updates can fold very
+  short tasks out of view, and interrupted observers can miss completions. These
+  durations are observed samples, not a complete task census. Observer attachment
+  records a runtime wake; this is not proof of a process restart. Native usage is
+  also refreshed on wake and after gateway wait/result/compact settlement, never
+  from precommit answer/yield callbacks. Shutdown joins observers before closing
+  the local store. Collection and transport errors remain fail-open.
 - `consumeSpan(StoredSpan, dimensions?)` can attach to the existing backend once
   configured. It only recognizes durable Pi submit/phase names and picks scalar
   duration/replay/resumed/report counts; model spans are ignored to avoid double
@@ -131,8 +145,10 @@ not inferred from model token totals or success status.
 
 ## Exact metric catalog
 
-`ANALYTICS_METRICS` is the source of truth. Optional exporter names have the
-`computah.` prefix. Local rollups retain the names below and their units.
+`ANALYTICS_METRICS` is the source of truth. Optional native metric adapter names
+have the `computah.` prefix; no MeterProvider is configured by this module.
+The active shared log route uses `analytics.sample` with `analytics.<metric>`
+scalar fields. Local rollups retain the names below and their units.
 
 | Metrics                                                                         | Unit                   | Source in this packet                                               |
 | ------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------- |
@@ -151,7 +167,8 @@ not inferred from model token totals or success status.
 | worker.duration, task.queue_wait, operation.retries                             | ms/ms/attempt          | Reserved scalar hook vocabulary; no automatic source wired          |
 | slack.admissions, slack.delivery, slack.rate_limits                             | event/attempt/response | Reserved transport/admission hooks; no Slack edits in this packet   |
 | slack.delivery_duration, slack.retry_after, slack.queue_age                     | ms                     | Reserved transport/journal hooks; no Slack edits in this packet     |
-| memory.context_tokens, runtime.wakes                                            | token/activation       | Reserved native metadata/lifecycle hooks; no automatic source wired |
+| runtime.wakes                                                                   | activation             | Native onWake observer attachment                                   |
+| memory.context_tokens                                                           | token                  | Reserved native metadata vocabulary; no automatic source wired      |
 
 The reserved vocabulary is not a claim that these signals are collected. There
 is no source here for provider invoices, subscription allocation, unreported
@@ -194,46 +211,51 @@ Only an authenticated operator projection may serve this snapshot. It grants no
 tenant identity, permission or cross-user read authority. The dashboard should
 render the server values without accumulating on refresh or deriving new costs.
 
-## Narrow wiring handoff (not applied to other owners' files)
+## Runtime wiring and shared export
 
-1. Main: privately construct one OperationalAnalytics store on the existing data
-   volume; allowlist the unique values of `config.model` and `config.workerModel`.
-   Compose `observeModels(priorityModels(models, report), analytics)` in real
-   mode when passing Models to createCore; do not remove or shadow the current
-   priority wrapper. In faux mode wrap the configured faux runtime directly.
-   Keep the original ModelRuntime for startup authentication/catalog checks.
-   Drain core before closing the projection. Faux mode remains explicitly faux.
-   The existing private connection secret can supply the domain-separated HMAC
-   key; no new credential is required. If projection construction fails, disable
-   analytics with a fixed categorical diagnostic, not a new agent startup gate.
-2. CoreOptions: optional analytics instance. Preserve Effect.withSpan; wrap its
-   existing run body with analytics.measure and bounded operation dimensions;
-   pass trusted scope only through its separate correlation argument. Do not
-   expose the instance or raw native harness in any tenant endpoint.
-3. Add a private actor action that calls captureHarness with `c.actorId`, trusted
-   scope from actor key, role and `c.pi`. Invoke after native wait/result/compact
-   settlement, and onWake for recovery. **Do not capture cumulative usage from
-   onAnswer/onYield:** that hook precedes appendAssistant/recordUsage commit and
-   would lag the current response. Do not read harness inside a Pi commit.
-4. Task tool execute: measure the actual invocation; after native task settlement
-   pass only task id/timestamps/restart streak/outcome to settledTask. Give each
-   actual dispatch/retry a distinct observation ID; stored result replay is not
-   a new model call. Unknown cancellation outcomes remain unknown.
-5. Slack owner: record admission decision after durable commit, per actual
-   transport attempt duration/status, explicit 429 and numeric retry-after only
-   where the SDK reports them. Never log channel/user/text/error payloads. Keep
-   delivery uncertainty separate from known failure; no blind resend.
-6. Integrator may add the safe snapshot to its existing canonical operator
-   projection. No extra route or shared contract change is authored here.
-   Existing telemetry backend can supply TelemetryMetrics and native spans;
-   no exporter setup is implied by this module.
+Main constructs `$HOME/.computah/analytics.sqlite` under umask 0077, on the
+existing private data volume, with the connection secret as domain-separated
+HMAC key. Failure disables the projection with a fixed diagnostic, not an agent
+startup gate. The configured real Models boundary remains priority-enforced and
+then analytics-observed. Faux mode explicitly constructs its synthetic provider;
+it is not relabelled as a production model.
+
+Only after an observation's dedup receipt and rollups commit does `onObservation`
+invoke the existing `runtimeMetric(RuntimeMetricSample)` sink. Duplicate receipts
+and cumulative ledger replacement emit nothing. The sink owns its bounded queue,
+OTLP `/v1/logs` transport and separate `COMPUTAH_AXIOM_LOG_DATASET`; no cost enters
+the trace relay. It is disabled without the existing protected ingest token and
+log dataset configuration. This is structured-log analytics, not native OTel
+metrics ingestion. Local commit and remote delivery remain non-atomic and
+best-effort; a crash between them can lose export, not justify blind replay.
+
+The exported sample has a fixed metric map and closed role/operation/outcome,
+model/provider catalog, plus `sdk: pi-ai@1.5.0`. Only the supported Terra/Sol pair
+is named remotely; other explicitly configured local models become unknown.
+Finite nonnegative scalar values are bounded by MAX_SAFE_INTEGER. Reported cost
+requires the explicit provider flag and is labelled not-invoice. Estimated cost
+requires the selected numeric USD rate card with exact version
+`pi-ai@1.5.0/runtime-model` and is labelled base-catalog-only, excluding service-tier
+and account adjustments. Neither is subscription/invoice/spend assurance. Rates
+are event provenance, never grouping labels. Principal/actor/task/receipt IDs,
+including local HMACs, are excluded. The logger's own log ID and active trace
+context are separate transport metadata, not exported usage receipt identity.
+
+Gateway scalar receipts retain trusted principal correlation only in the private
+store; native task receipts retain actor/task correlation there. Model request
+correlation is unavailable at the shared runtime boundary. No tenant endpoint or
+shared wire schema exposes the store. Slack transport/admission hooks and an
+authenticated operator projection remain separate work; reserved catalog keys
+do not establish collection.
 
 All manual `record`, `replaceUsage`, `settledTask` and `consumeSpan` hooks must
 catch local sink errors at the call site; unlike `measure`/`captureHarness`/the
 model observer these explicit APIs can throw on storage failure. Do not make
 task completion, cancellation or Slack delivery depend on projection availability.
-The current main baseline reviewed for this packet is `49fda85`. No runtime hook
-in this list has been applied by the packet itself.
+The runtime wiring deliberately preserves existing priority Models and native
+authorization hooks. It does not grant source access or override source-enabled
+compaction restrictions; attempted compaction is not a claim of successful
+compaction or universal coverage.
 
 ## Verification
 
@@ -247,8 +269,23 @@ first-output observation. The installed official Codex adapter with synthetic
 OAuth and intercepted HTTP proves composition with priority/high for Terra and
 Sol across stream/simple/completion boundaries, exactly one receipt per request,
 and preservation of custom completion behavior. An actual Rivet/Pi actor with a faux provider checks
-native usage capture and actor sleep/wake without accumulating snapshots.
+native usage capture and actor sleep/wake without accumulating snapshots. The
+integrated core suite enables the private projection and exercises real native
+Task/Worker terminal timing, Task invocation timing, native compaction and both
+roles' cumulative ledgers. Callback checks distinguish committed increments from
+duplicate receipts/cumulative refresh and preserve cost provenance without
+identity export.
 
-This is not a live model call, live Slack delivery, configured exporter test,
-process-kill recovery test, dashboard proof or deployed instrumentation claim.
-The core/main/Slack hook adoption must be verified in the integrated checkout.
+A separate temporary actual-main executable check used isolated HOME and the
+explicit faux provider with the real native Task/Worker runtime. It completed one
+delegation with exactly three model requests; refreshing its result did not add
+requests. Two native ledgers persisted, the database mode was 0600, and SIGTERM
+drained successfully. Intercepting only the shared OTLP destination captured 20
+`analytics.sample` rows and 41 spans, including HTTP and native phase spans, with
+the configured version and no content/identity/token canaries. Synthetic models
+exported no production cost or rate claims. This validates the executable wiring
+and sanitized transport shape, not remote delivery or real-provider spend.
+
+These local checks are not live model traffic, live Slack delivery, process-kill
+recovery, a dashboard proof or deployed ingestion evidence. Verify the consumed
+revision and redacted real `analytics.sample` rows independently after rollout.

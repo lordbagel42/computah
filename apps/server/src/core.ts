@@ -35,6 +35,11 @@ import {
 import { Effect } from "effect";
 import { type Client, setup } from "rivetkit";
 import { createClient } from "rivetkit/client";
+import type {
+  AnalyticsCorrelation,
+  AnalyticsDimensions,
+  OperationalAnalytics,
+} from "./analytics.js";
 import {
   axiomInstructions,
   createAxiomMcp,
@@ -253,6 +258,8 @@ export interface CoreOptions {
   axiomMcp?: { pat?: string; orgId?: string; fetch?: typeof fetch };
   models?: PiOptions["models"];
   settings?: PiOptions["settings"];
+  /** Private scalar projection; never exposed to tenant actions. */
+  analytics?: OperationalAnalytics;
 }
 
 async function stopSubmission(pi: Harness, submissionId: SubmissionId) {
@@ -283,6 +290,32 @@ async function stopSubmission(pi: Harness, submissionId: SubmissionId) {
 export function createCore(options: CoreOptions) {
   if (Buffer.byteLength(options.connectionSecret) < 32)
     throw new CoreError("invalid");
+  const analyticsWatches = new Map<
+    string,
+    Awaited<ReturnType<OperationalAnalytics["watchHarness"]>>
+  >();
+  const measure = <T>(
+    dimensions: AnalyticsDimensions,
+    body: () => Promise<T>,
+    correlation?: AnalyticsCorrelation,
+  ) =>
+    options.analytics
+      ? options.analytics.measure(dimensions, body, correlation)
+      : body();
+  const captureAnalytics = async (c: {
+    actorId: string;
+    key: string[];
+    pi: Harness;
+  }) => {
+    await options.analytics?.captureHarness(
+      c.actorId,
+      {
+        role: c.key.length === 4 ? "worker" : "interaction",
+      },
+      c.pi,
+      { principal: scopeKey(scopeOf(c.key)) as [string, string, string] },
+    );
+  };
   const permit = async (scope: Scope, capability: Capability) => {
     if (!(await options.authorize(Object.freeze({ ...scope }), capability))) {
       throw new CoreError("denied");
@@ -496,127 +529,128 @@ export function createCore(options: CoreOptions) {
           parameters: obj({ worker: str(), text: str() }),
           // Replaying this RPC is safe because the Worker durably deduplicates this tool task ID.
           replay: "safe",
-          execute: async (args, api, context) => {
-            const binding = await api.snapshot(Binding, context);
-            if (!binding?.scope) throw new CoreError("denied");
-            const scope = binding.scope;
-            const sentinel = options.sentinel;
-            await permit(binding.scope, "task.send");
-            workerId(binding.scope, args.worker);
-            const requestId = `task:${api.taskId}`;
-            const selected = sentinel?.reviews.find(
-              (policy) =>
-                JSON.stringify(scopeKey(policy.scope)) ===
-                JSON.stringify(scopeKey(scope)),
-            );
-            const carrier = currentTraceHeaders();
-            const work = await api.commit(async (tx) => {
-              const state = await tx.doc(Delegations, api.conversationId);
-              const live = await tx.doc(LiveDoc, api.conversationId);
-              const inputs = live.run?.inputs ?? [];
-              if (
-                !inputs.length ||
-                inputs.some((id) => state.cancelled[String(id)])
-              )
-                throw new CoreError("denied");
-              state.calls[requestId] ??= {
-                worker: args.worker,
-                requestId,
-                inputs: [...inputs],
-              };
-              if (!selected || !sentinel || !live.run) return null;
-              state.calls[requestId].reviewCarrier ??= carrier.traceparent
-                ? carrier
-                : createTraceCarrier("sentinel.review");
-              const work: SentinelWork = {
-                scope,
-                conversationId: api.conversationId,
-                requestId,
-                carrier: { ...state.calls[requestId].reviewCarrier },
-                mode: selected.mode,
-                input: {
-                  reviewId: requestId,
-                  stage: "tool-intent",
-                  policy:
-                    selected.mode === "preflight"
-                      ? "risky-effect"
-                      : "benign-monitor",
-                  principal:
-                    JSON.stringify(scopeKey(sentinel.ownerScope)) ===
-                    JSON.stringify(scopeKey(scope))
-                      ? "owner"
-                      : "other-user",
-                  evidence:
-                    args.text.length <= 12_000
-                      ? [{ id: "task", source: "assistant", text: args.text }]
-                      : [],
-                },
-              };
-              if (
-                selected.mode === "monitor" &&
-                !state.calls[requestId].reviewTaskId
-              )
-                state.calls[requestId].reviewTaskId = await tx.createTask(
-                  sentinelTask,
-                  work,
-                  { ownership: { kind: "conversation" }, background: true },
-                );
-              return work;
-            }, context);
-            if (work?.mode === "preflight") {
-              const previous = (
-                await api.snapshot(Delegations, api.conversationId, context)
-              )?.reviews?.[requestId];
-              if (!previous) {
-                const decision = await reviewWork(work);
-                await traceOperation(
-                  "sentinel.enforce",
-                  async (span) => {
-                    const receipt = await api.commit(
-                      (tx) => recordReview(tx, work, decision),
-                      BACKGROUND_CONTEXT,
-                    );
-                    span.setAttributes({
-                      action: receipt.action,
-                      reason: receipt.reason,
-                      outcome: receipt.enforcement,
-                      mode: receipt.mode,
-                    });
+          execute: (args, api, context) =>
+            measure({ role: "interaction", operation: "Task" }, async () => {
+              const binding = await api.snapshot(Binding, context);
+              if (!binding?.scope) throw new CoreError("denied");
+              const scope = binding.scope;
+              const sentinel = options.sentinel;
+              await permit(binding.scope, "task.send");
+              workerId(binding.scope, args.worker);
+              const requestId = `task:${api.taskId}`;
+              const selected = sentinel?.reviews.find(
+                (policy) =>
+                  JSON.stringify(scopeKey(policy.scope)) ===
+                  JSON.stringify(scopeKey(scope)),
+              );
+              const carrier = currentTraceHeaders();
+              const work = await api.commit(async (tx) => {
+                const state = await tx.doc(Delegations, api.conversationId);
+                const live = await tx.doc(LiveDoc, api.conversationId);
+                const inputs = live.run?.inputs ?? [];
+                if (
+                  !inputs.length ||
+                  inputs.some((id) => state.cancelled[String(id)])
+                )
+                  throw new CoreError("denied");
+                state.calls[requestId] ??= {
+                  worker: args.worker,
+                  requestId,
+                  inputs: [...inputs],
+                };
+                if (!selected || !sentinel || !live.run) return null;
+                state.calls[requestId].reviewCarrier ??= carrier.traceparent
+                  ? carrier
+                  : createTraceCarrier("sentinel.review");
+                const work: SentinelWork = {
+                  scope,
+                  conversationId: api.conversationId,
+                  requestId,
+                  carrier: { ...state.calls[requestId].reviewCarrier },
+                  mode: selected.mode,
+                  input: {
+                    reviewId: requestId,
+                    stage: "tool-intent",
+                    policy:
+                      selected.mode === "preflight"
+                        ? "risky-effect"
+                        : "benign-monitor",
+                    principal:
+                      JSON.stringify(scopeKey(sentinel.ownerScope)) ===
+                      JSON.stringify(scopeKey(scope))
+                        ? "owner"
+                        : "other-user",
+                    evidence:
+                      args.text.length <= 12_000
+                        ? [{ id: "task", source: "assistant", text: args.text }]
+                        : [],
                   },
-                  work.carrier,
-                );
+                };
+                if (
+                  selected.mode === "monitor" &&
+                  !state.calls[requestId].reviewTaskId
+                )
+                  state.calls[requestId].reviewTaskId = await tx.createTask(
+                    sentinelTask,
+                    work,
+                    { ownership: { kind: "conversation" }, background: true },
+                  );
+                return work;
+              }, context);
+              if (work?.mode === "preflight") {
+                const previous = (
+                  await api.snapshot(Delegations, api.conversationId, context)
+                )?.reviews?.[requestId];
+                if (!previous) {
+                  const decision = await reviewWork(work);
+                  await traceOperation(
+                    "sentinel.enforce",
+                    async (span) => {
+                      const receipt = await api.commit(
+                        (tx) => recordReview(tx, work, decision),
+                        BACKGROUND_CONTEXT,
+                      );
+                      span.setAttributes({
+                        action: receipt.action,
+                        reason: receipt.reason,
+                        outcome: receipt.enforcement,
+                        mode: receipt.mode,
+                      });
+                    },
+                    work.carrier,
+                  );
+                }
               }
-            }
-            await permit(binding.scope, "task.send");
-            // Close review/revocation/cancellation races before the remote admit;
-            // the existing cancelRequest tombstone closes the later RPC race.
-            await api.commit(async (tx) => {
-              const state = await tx.doc(Delegations, api.conversationId);
-              const link = state.calls[requestId];
-              const live = await tx.doc(LiveDoc, api.conversationId);
-              if (
-                !live.run ||
-                !link.inputs.every((id) => live.run?.inputs.includes(id)) ||
-                link.inputs.some((id) => state.cancelled[String(id)])
-              )
-                throw new CoreError("denied");
-            }, context);
-            const result = await dispatch(
-              binding.scope,
-              args.worker,
-              args.text,
-              requestId,
-              context.abortSignal,
-              (submissionId) =>
-                api.commit(async (tx) => {
-                  (await tx.doc(Delegations, api.conversationId)).calls[
-                    requestId
-                  ].submissionId = submissionId;
-                }, context),
-            );
-            if (result.status !== "done") throw new CoreError("runtime");
-            return { output: [{ type: "text", text: result.text ?? "" }] };
-          },
+              await permit(binding.scope, "task.send");
+              // Close review/revocation/cancellation races before the remote admit;
+              // the existing cancelRequest tombstone closes the later RPC race.
+              await api.commit(async (tx) => {
+                const state = await tx.doc(Delegations, api.conversationId);
+                const link = state.calls[requestId];
+                const live = await tx.doc(LiveDoc, api.conversationId);
+                if (
+                  !live.run ||
+                  !link.inputs.every((id) => live.run?.inputs.includes(id)) ||
+                  link.inputs.some((id) => state.cancelled[String(id)])
+                )
+                  throw new CoreError("denied");
+              }, context);
+              const result = await dispatch(
+                binding.scope,
+                args.worker,
+                args.text,
+                requestId,
+                context.abortSignal,
+                (submissionId) =>
+                  api.commit(async (tx) => {
+                    (await tx.doc(Delegations, api.conversationId)).calls[
+                      requestId
+                    ].submissionId = submissionId;
+                  }, context),
+              );
+              if (result.status !== "done") throw new CoreError("runtime");
+              return { output: [{ type: "text", text: result.text ?? "" }] };
+            }),
         }),
       ],
     }),
@@ -766,7 +800,7 @@ export function createCore(options: CoreOptions) {
     models: options.models,
     settings: options.settings,
     // No host environment or whole CodingTools extension: files remain in each actor DB.
-    onWake: async (c: { key: string[]; pi: Harness }) => {
+    onWake: async (c: { actorId: string; key: string[]; pi: Harness }) => {
       const scope = scopeOf(c.key);
       await c.pi.commit(async (tx) => {
         const binding = await tx.doc(Binding);
@@ -778,6 +812,31 @@ export function createCore(options: CoreOptions) {
         }
         binding.scope = scope;
       }, BACKGROUND_CONTEXT);
+      if (options.analytics) {
+        try {
+          await analyticsWatches.get(c.actorId)?.stop();
+          const observer = await options.analytics.watchHarness(
+            c.actorId,
+            {
+              role: c.key.length === 4 ? "worker" : "interaction",
+            },
+            c.pi,
+            { principal: scopeKey(scope) as [string, string, string] },
+          );
+          analyticsWatches.set(c.actorId, observer);
+          void observer.closed
+            .then(async () => {
+              await observer.stop();
+              if (analyticsWatches.get(c.actorId) === observer)
+                analyticsWatches.delete(c.actorId);
+            })
+            .catch(() => {
+              /* Optional observation never fails actor recovery. */
+            });
+        } catch {
+          traceEvent("report", { reason: "storage_failed" });
+        }
+      }
     },
     // Log categories only; SDK reports can contain model/tool content.
     onReport: () => {
@@ -785,6 +844,7 @@ export function createCore(options: CoreOptions) {
       traceEvent("report");
     },
     actions: {
+      captureAnalytics,
       sleep: (c: { sleep(): void }) => {
         c.sleep();
       },
@@ -1133,10 +1193,25 @@ export function createCore(options: CoreOptions) {
           });
         return handle(client, role as "interaction" | "worker", key, signal);
       };
-      const run = <T>(operation: string, body: () => Promise<T>) =>
+      const run = <T>(
+        operation:
+          | NonNullable<AnalyticsDimensions["operation"]>
+          | "operator.history",
+        body: () => Promise<T>,
+      ) =>
         Effect.runPromise(
           Effect.tryPromise({
-            try: body,
+            try: () =>
+              measure(
+                {
+                  operation:
+                    operation === "operator.history" ? "history" : operation,
+                },
+                body,
+                {
+                  principal: scopeKey(scope) as [string, string, string],
+                },
+              ),
             catch: (error) =>
               error instanceof CoreError ? error : new CoreError("runtime"),
           }).pipe(
@@ -1177,6 +1252,7 @@ export function createCore(options: CoreOptions) {
               throw new CoreError("denied");
             const settled = await actor.submission.wait(submissionId);
             await actor.awaitCancellation(submissionId);
+            await actor.captureAnalytics().catch(() => {});
             return settled;
           }),
         result: (
@@ -1210,6 +1286,7 @@ export function createCore(options: CoreOptions) {
                   ).items
                 : [];
             await permit(scope, "history.read");
+            await actor.captureAnalytics().catch(() => {});
             return { submission, entries };
           }),
         /** Private native views. Never send these objects across the public boundary. */
@@ -1457,7 +1534,9 @@ export function createCore(options: CoreOptions) {
             const actor = await resolve(id, "core.maintain");
             const root = await actor.harness.root();
             const task = await actor.conversation.compact(root.id);
-            return actor.harness.waitForTask(task);
+            const settled = await actor.harness.waitForTask(task);
+            await actor.captureAnalytics().catch(() => {});
+            return settled;
           }),
         sleep: (id: string) =>
           run("sleep", async () => {
@@ -1471,6 +1550,10 @@ export function createCore(options: CoreOptions) {
     attach,
     close: async () => {
       await registry.shutdown();
+      await Promise.allSettled(
+        [...analyticsWatches.values()].map((observer) => observer.stop()),
+      );
+      analyticsWatches.clear();
       await internalClient?.dispose();
     },
   };

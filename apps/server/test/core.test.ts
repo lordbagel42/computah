@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import type { SubmissionObservationEvent } from "@computah/contracts";
+import type { RuntimeMetricSample } from "@computah/observability";
 import {
   createFauxCore,
   fauxAssistantMessage,
@@ -12,6 +13,7 @@ import {
 import type { PiProviderConfig } from "@rivet-dev/pi";
 import { setupTest } from "rivetkit/test";
 import { afterAll, expect, test } from "vitest";
+import { OperationalAnalytics } from "../src/analytics.js";
 import { principalKey, readConfig, tokenHash } from "../src/config.js";
 import { type Capability, createCore, type Scope } from "../src/core.js";
 import { closeHttp, createHttpServer } from "../src/http.js";
@@ -114,7 +116,17 @@ const reviewPolicies: { scope: Scope; mode: "monitor" | "preflight" }[] = [];
 let review: (input: SentinelInput) => Promise<SentinelDecision> = async () => {
   throw new Error("No review expected");
 };
+const observations: RuntimeMetricSample[] = [];
+const analytics = new OperationalAnalytics({
+  path: ":memory:",
+  secret: "synthetic-analytics-connection-secret-at-least-32-bytes",
+  models: ["computah-test/deterministic"],
+  onObservation: (fields) => {
+    observations.push(fields);
+  },
+});
 const coreOptions = {
+  analytics,
   connectionSecret: randomBytes(32).toString("hex"),
   authorize: (scope, capability) =>
     grants.get(key(scope))?.has(capability) ?? false,
@@ -134,6 +146,7 @@ let replacement: ReturnType<typeof createCore> | undefined;
 afterAll(async () => {
   await core.close();
   await replacement?.close();
+  analytics.close();
   if (process.env.HOME?.includes("computah-core-engine-"))
     await rm(process.env.HOME, { recursive: true, force: true });
 });
@@ -196,6 +209,30 @@ test("real Rivet/Pi Task delegation, deduplication, Worker reuse, native compact
   expect(
     requests.every((request) => request.tools.every((name) => name === "Task")),
   ).toBe(true);
+  await expect
+    .poll(() =>
+      analytics
+        .snapshot()
+        .rollups.some(
+          (row) =>
+            row.metric === "task.duration" && row.dimensions.role === "worker",
+        ),
+    )
+    .toBe(true);
+  expect(
+    analytics.snapshot().rollups.some((row) => row.metric === "tool.duration"),
+  ).toBe(true);
+  expect(
+    analytics
+      .snapshot()
+      .rollups.some((row) => row.metric === "memory.compactions"),
+  ).toBe(true);
+  expect(
+    new Set(analytics.snapshot().usage.map((entry) => entry.dimensions.role)),
+  ).toEqual(new Set(["interaction", "worker"]));
+  expect(JSON.stringify(observations)).not.toMatch(
+    /alpha-739|omega-281|alice|tenant-one|principal|correlation|restarts/,
+  );
 });
 
 test("authenticated HTTP delegates through real actors, reuses the Worker, projects safe text and denies foreign handles", async (context) => {

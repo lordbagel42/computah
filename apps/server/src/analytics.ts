@@ -1,5 +1,6 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import type { RuntimeMetricSample } from "@computah/observability";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type {
   AssistantMessage,
@@ -111,6 +112,8 @@ export interface AnalyticsOptions {
   models: readonly string[];
   /** Optional existing backend; this module never creates an exporter. */
   metrics?: TelemetryMetrics;
+  /** Existing sanitized operational sink. No IDs/correlation or cumulative snapshots. */
+  onObservation?: (observation: RuntimeMetricSample) => void;
   now?: () => number;
 }
 
@@ -131,7 +134,10 @@ const outcomes = new Set<AnalyticsOutcome>([
   "rate_limited",
 ]);
 const finite = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0;
+  typeof value === "number" &&
+  Number.isFinite(value) &&
+  value >= 0 &&
+  value <= Number.MAX_SAFE_INTEGER;
 // SDK-initialized zero usage is indistinguishable from missing provider usage.
 const hasUsage = (usage: Usage) =>
   usage.cost.totalFromProvider === true ||
@@ -288,7 +294,11 @@ export class OperationalAnalytics {
     id: string,
     dimensions: AnalyticsDimensions,
     values: Partial<Record<Metric, number>>,
-    receipt?: { correlation?: AnalyticsCorrelation; rate?: RateCard },
+    receipt?: {
+      correlation?: AnalyticsCorrelation;
+      rate?: RateCard;
+      reportedFromProvider?: true;
+    },
   ): boolean {
     this.prune();
     const at = this.now();
@@ -350,6 +360,48 @@ export class OperationalAnalytics {
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
+    }
+    try {
+      // The local catalog may include explicitly configured synthetic/custom
+      // models. The shared remote schema has a stricter closed production catalog.
+      const model =
+        labels.model === "openai-codex/gpt-6.1-terra" ||
+        labels.model === "openai-codex/gpt-6.1-sol"
+          ? labels.model
+          : "unknown";
+      this.options.onObservation?.({
+        measurements: Object.fromEntries(measurements),
+        role: labels.role as RuntimeMetricSample["role"],
+        operation: labels.operation as RuntimeMetricSample["operation"],
+        outcome: labels.outcome as RuntimeMetricSample["outcome"],
+        model,
+        provider: model === "unknown" ? "unknown" : "openai-codex",
+        sdk: "pi-ai@1.5.0",
+        ...(receipt?.reportedFromProvider
+          ? { reportedFromProvider: true }
+          : {}),
+        ...(validRate(receipt?.rate) &&
+        receipt.rate.version === "pi-ai@1.5.0/runtime-model"
+          ? {
+              rate: {
+                version: "pi-ai@1.5.0/runtime-model",
+                currency: "USD",
+                input: receipt.rate.input,
+                output: receipt.rate.output,
+                cacheRead: receipt.rate.cacheRead,
+                cacheWrite: receipt.rate.cacheWrite,
+                ...(receipt.rate.cacheWrite1h === undefined
+                  ? {}
+                  : { cacheWrite1h: receipt.rate.cacheWrite1h }),
+                ...(receipt.rate.inputTokensAbove === undefined
+                  ? {}
+                  : { inputTokensAbove: receipt.rate.inputTokensAbove }),
+              },
+            }
+          : {}),
+      });
+    } catch {
+      this.increment("export_failures");
     }
     // Local commit and remote delivery are deliberately not claimed atomic.
     // Never export principal/task IDs, including their pseudonyms.
@@ -443,7 +495,13 @@ export class OperationalAnalytics {
     }
     // Monetary sums may combine rate cards in one currency. Rates remain
     // receipt metadata, never per-rate metric labels or grouping keys.
-    return this.record(id, dimensions, values, { rate, correlation });
+    return this.record(id, dimensions, values, {
+      rate,
+      correlation,
+      ...(usage?.cost.totalFromProvider === true
+        ? { reportedFromProvider: true }
+        : {}),
+    });
   }
 
   /** Replace a cumulative Pi ledger, never add it again on refresh/recovery. */
@@ -517,16 +575,18 @@ export class OperationalAnalytics {
       const usage = await harness.usage(BACKGROUND_CONTEXT);
       this.replaceUsage(actor, dimensions, usage, observedAt, correlation);
       const inspection = await harness.inspect(BACKGROUND_CONTEXT);
+      const active = inspection.tasks.filter(
+        (task) => task.state.kind === "running",
+      ).length;
+      const queued = inspection.submissions.filter(
+        (submission) => submission.status === "queued",
+      ).length;
       this.record(
-        `sample:${actor}:${Math.floor(observedAt / 60_000)}`,
+        `sample:${actor}:${Math.floor(observedAt / 60_000)}:${active}:${queued}`,
         dimensions,
         {
-          "task.active": inspection.tasks.filter(
-            (task) => task.state.kind === "running",
-          ).length,
-          "task.queued": inspection.submissions.filter(
-            (submission) => submission.status === "queued",
-          ).length,
+          "task.active": active,
+          "task.queued": queued,
         },
         { correlation },
       );
@@ -538,6 +598,82 @@ export class OperationalAnalytics {
         /* Store may be unavailable. */
       }
     }
+  }
+
+  /** Serialized committed metadata only; folded short-lived tasks can be missed. */
+  async watchHarness(
+    actor: string,
+    dimensions: AnalyticsDimensions,
+    harness: Harness,
+    correlation?: AnalyticsCorrelation,
+  ) {
+    const watch = await harness.watchTaskGraph(BACKGROUND_CONTEXT);
+    let previous = watch.value;
+    let pending = Promise.resolve();
+    try {
+      this.record(`wake:${actor}:${randomUUID()}`, dimensions, {
+        "runtime.wakes": 1,
+      });
+    } catch {
+      /* Recovery cannot depend on a projection. */
+    }
+    await this.captureHarness(actor, dimensions, harness, correlation);
+    watch.start(async (call) => {
+      pending = (async () => {
+        try {
+          if (call.kind !== "value") {
+            this.increment("dropped");
+            return;
+          }
+          const removed = Object.values(previous.tasks).filter(
+            (task) => !call.value.tasks[String(task.id)],
+          );
+          previous = call.value;
+          for (const removedTask of removed) {
+            const task = await harness.getTask(
+              removedTask.id,
+              BACKGROUND_CONTEXT,
+            );
+            if (task?.state.status !== "terminal") continue;
+            this.settledTask(
+              actor,
+              dimensions,
+              {
+                id: task.id,
+                startedAt: task.startedAt,
+                endedAt: task.endedAt,
+                restarts: task.restarts,
+                outcome:
+                  task.state.outcome.status === "completed"
+                    ? "ok"
+                    : task.state.outcome.status === "aborted"
+                      ? "aborted"
+                      : task.state.outcome.status === "faulted"
+                        ? "error"
+                        : "unknown",
+              },
+              correlation,
+            );
+          }
+          // Task graph publishes committed changes, unlike precommit answer hooks.
+          await this.captureHarness(actor, dimensions, harness, correlation);
+        } catch {
+          try {
+            this.increment("dropped");
+          } catch {
+            /* Fail open, including shutdown. */
+          }
+        }
+      })();
+      await pending;
+    });
+    return {
+      closed: watch.closed,
+      stop: async () => {
+        await watch.stop();
+        await pending;
+      },
+    };
   }
 
   /** Scalar durable receipts; callers must not pass task inputs/checkpoints/results. */

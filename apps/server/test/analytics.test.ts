@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
+import type { RuntimeMetricSample } from "@computah/observability";
 import {
   createAssistantMessageEventStream,
   fauxAssistantMessage,
@@ -287,7 +288,13 @@ test("cost provenance, optional reasoning and cache subsets never inflate totals
 
 test("exporter labels exclude identity/task/provenance; exporter failure cannot undo local commit", async () => {
   const metrics = new InMemoryTelemetryContext();
-  const analytics = store({ metrics });
+  const events: RuntimeMetricSample[] = [];
+  const analytics = store({
+    metrics,
+    onObservation: (event) => {
+      events.push(event);
+    },
+  });
   analytics.record(
     "id",
     {
@@ -312,7 +319,81 @@ test("exporter labels exclude identity/task/provenance; exporter failure cannot 
     role: "runtime",
     operation: "unknown",
   });
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({
+    measurements: { "tool.duration": 7 },
+    outcome: "ok",
+    model: "unknown",
+    provider: "unknown",
+    sdk: "pi-ai@1.5.0",
+  });
+  expect(JSON.stringify(events)).not.toMatch(
+    /private-tenant|private-user|private-task|correlation|principal/,
+  );
+  expect(analytics.record("id", { model }, { "tool.duration": 90 })).toBe(
+    false,
+  );
+  analytics.replaceUsage(
+    "actor",
+    {},
+    { models: { [model]: usage }, tools: {} },
+  );
+  expect(events).toHaveLength(1);
+  const production = store({
+    models: [workerModel],
+    onObservation: (event) => {
+      events.push(event);
+    },
+  });
+  const rate = {
+    version: "pi-ai@1.5.0/runtime-model",
+    currency: "USD" as const,
+    input: 3,
+    output: 11,
+    cacheRead: 0.5,
+    cacheWrite: 4,
+  };
+  production.modelAttempt(
+    "estimate",
+    { model: workerModel },
+    { durationMs: 19, usage, rate },
+  );
+  expect(events[1]).toMatchObject({
+    model: workerModel,
+    provider: "openai-codex",
+    rate,
+    measurements: {
+      "model.cost.estimated":
+        (130 * 3 + 37 * 11 + 90 * 0.5 + 11 * 4) / 1_000_000,
+    },
+  });
+  expect(events[1]?.reportedFromProvider).toBeUndefined();
+  production.modelAttempt(
+    "reported",
+    { model: workerModel },
+    {
+      durationMs: 23,
+      usage: { ...usage, cost: { ...usage.cost, totalFromProvider: true } },
+      rate,
+    },
+  );
+  expect(events[2]).toMatchObject({
+    reportedFromProvider: true,
+    measurements: { "model.cost.reported": 10 },
+  });
+  expect(events[2]?.measurements["model.cost.estimated"]).toBeUndefined();
+  expect(
+    production.record(
+      "oversize",
+      {},
+      { "model.requests": Number.MAX_SAFE_INTEGER + 1 },
+    ),
+  ).toBe(false);
+  expect(events).toHaveLength(3);
   const broken = store({
+    onObservation() {
+      throw new Error("private sink details");
+    },
     metrics: {
       histogram() {
         throw new Error("private exporter details");
@@ -328,7 +409,7 @@ test("exporter labels exclude identity/task/provenance; exporter failure cannot 
   expect(
     await broken.measure({ operation: "submit" }, async () => "done"),
   ).toBe("done");
-  expect(broken.snapshot().diagnostics.export_failures).toBe(1);
+  expect(broken.snapshot().diagnostics.export_failures).toBe(2);
   expect(JSON.stringify(broken.snapshot())).not.toContain(
     "private exporter details",
   );

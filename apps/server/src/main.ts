@@ -1,4 +1,8 @@
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
+  runtimeMetric,
   startObservability,
   traceEvent,
   traceHttp,
@@ -7,6 +11,7 @@ import {
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createClient } from "rivetkit/client";
+import { OperationalAnalytics, observeModels } from "./analytics.js";
 import { principalKey, readConfig } from "./config.js";
 import { createCore } from "./core.js";
 import { closeHttp, createHttpServer } from "./http.js";
@@ -18,43 +23,62 @@ async function main() {
   console.info("computah.lifecycle phase=bootstrap outcome=started");
   const telemetry = await startObservability("backend");
   const config = readConfig(process.env);
+  let analytics: OperationalAnalytics | undefined;
+  try {
+    process.umask(0o077);
+    const directory = join(homedir(), ".computah");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    analytics = new OperationalAnalytics({
+      path: join(directory, "analytics.sqlite"),
+      secret: config.secret,
+      models: [...new Set([config.model, config.workerModel])],
+      onObservation: runtimeMetric,
+    });
+  } catch {
+    traceEvent("report", { reason: "storage_failed" });
+  }
   // PORT belongs to this ingress, not to native child services.
   delete process.env.PORT;
   // Explicit mount only: never discover another application's local credentials.
   // The official runtime owns file locking, refresh and provider-specific auth.
-  const models =
-    config.mode === "real"
-      ? await traceLifecycle("models", () =>
-          ModelRuntime.create({
-            ...(config.authFile
-              ? { authPath: config.authFile }
-              : { credentials: new InMemoryCredentialStore() }),
-            modelsPath: null,
-          }),
-        )
-      : undefined;
-  if (models) {
+  const models = await traceLifecycle("models", () =>
+    ModelRuntime.create({
+      ...(config.mode === "real" && config.authFile
+        ? { authPath: config.authFile }
+        : { credentials: new InMemoryCredentialStore() }),
+      modelsPath: null,
+    }),
+  );
+  if (config.mode === "faux") {
+    models.registerProvider("computah-smoke", smokeProvider());
+    await models.setRuntimeApiKey("computah-smoke", "explicit-smoke");
+  } else {
     for (const [provider, key] of Object.entries(config.apiKeys ?? {}))
       await models.setRuntimeApiKey(provider, key);
   }
+  const priorityRuntime =
+    config.mode === "real"
+      ? priorityModels(models, (diagnostic) => {
+          console.info(`computah.model ${JSON.stringify(diagnostic)}`);
+          traceEvent("model", diagnostic);
+        })
+      : models;
+  const runtimeModels = analytics
+    ? observeModels(priorityRuntime, analytics)
+    : priorityRuntime;
   const byScope = new Map(
     [...config.principals.values()].map((principal) => [
       principalKey(principal),
       principal,
     ]),
   );
-  const runtimeModels = models
-    ? priorityModels(models, (diagnostic) => {
-        console.info(`computah.model ${JSON.stringify(diagnostic)}`);
-        traceEvent("model", diagnostic);
-      })
-    : undefined;
   const core = createCore({
     connectionSecret: config.secret,
     authorize: (scope, capability) =>
       byScope.get(principalKey(scope))?.capabilities.includes(capability) ??
       false,
     model: config.model,
+    analytics,
     workerModel: config.workerModel,
     thinkingLevel: config.mode === "real" ? "high" : undefined,
     tavily: process.env.COMPUTAH_TAVILY_API_KEY
@@ -98,6 +122,7 @@ async function main() {
         await traceLifecycle("http_drain", () => closeHttp(server));
       await traceLifecycle("registry_drain", () => core.close());
       await traceLifecycle("client_drain", async () => client?.dispose());
+      analytics?.close();
       traceEvent("stopped");
       await telemetry.close();
     })());
