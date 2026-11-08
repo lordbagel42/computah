@@ -147,8 +147,8 @@ Configuration (secrets belong in private operator env files, never Git/state):
 | `COMPUTAH_CONNECTION_SECRET` | Stable server-only random secret, at least 32 bytes; also signs scoped public handles                                                                     |
 | `COMPUTAH_AUTH_JSON`         | Secret nonempty array of `{token,tenantId,userId,agentId,capabilities,displayName?}`; tokens at least 32 characters and unique; duplicate scopes rejected |
 | `COMPUTAH_MODE`              | `real` (default), or explicit `faux`; no automatic faux fallback                                                                                          |
-| `COMPUTAH_INTERACTION_MODEL` | Optional real-mode role setting; defaults to and accepts only `openai-codex/gpt-6.1-terra`                                                                  |
-| `COMPUTAH_WORKER_MODEL`      | Optional real-mode role setting; defaults to and accepts only `openai-codex/gpt-6.1-sol`                                                                    |
+| `COMPUTAH_INTERACTION_MODEL` | Optional real-mode role setting; defaults to and accepts only `openai-codex/gpt-6.1-terra`                                                                |
+| `COMPUTAH_WORKER_MODEL`      | Optional real-mode role setting; defaults to and accepts only `openai-codex/gpt-6.1-sol`                                                                  |
 | `COMPUTAH_PI_AUTH_FILE`      | Explicit absolute private writable Pi `auth.json`, selected deployment path `/data/provider/auth.json`                                                    |
 | `COMPUTAH_PROVIDER_API_KEY`  | Optional explicit selected-provider key; native provider environment authentication remains supported                                                     |
 | `PORT`                       | Public HTTP port, default 3000                                                                                                                            |
