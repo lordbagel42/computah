@@ -729,6 +729,7 @@ test("native actor reopens pending outbox and recovers append-success/lost-ack w
     traceId: string;
     spanId: string;
     parentSpanId?: string;
+    links: { traceId: string; spanId: string }[];
     startTimeUnixNano: string;
     endTimeUnixNano: string;
     status: { code: number };
@@ -798,10 +799,7 @@ test("native actor reopens pending outbox and recovers append-success/lost-ack w
         attribute(span, "outcome")?.stringValue === "success",
     ),
   ).toBe(true);
-  for (const span of [
-    ...named("bus.stream.create"),
-    ...named("bus.stream.append"),
-  ]) {
+  for (const span of named("bus.stream.create")) {
     const parent = named("bus.pump").find(
       (pump) =>
         pump.spanId === span.parentSpanId && pump.traceId === span.traceId,
@@ -815,6 +813,21 @@ test("native actor reopens pending outbox and recovers append-success/lost-ack w
     ).toBeGreaterThanOrEqual(
       BigInt(span.endTimeUnixNano) - BigInt(span.startTimeUnixNano),
     );
+  }
+  for (const span of named("bus.stream.append")) {
+    const receipt = named("bus.admit").find(
+      (root) =>
+        root.traceId === span.traceId && root.spanId === span.parentSpanId,
+    );
+    expect(receipt).toBeDefined();
+    expect(
+      span.links.some((link) =>
+        named("bus.pump").some(
+          (pump) =>
+            pump.traceId === link.traceId && pump.spanId === link.spanId,
+        ),
+      ),
+    ).toBe(true);
   }
   const replays = named("bus.replay");
   for (const outcome of [

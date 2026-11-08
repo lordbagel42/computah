@@ -124,10 +124,10 @@ including authorization checks, upstream fetch/body consumption, downstream
 backpressure, response completion/disconnect and upstream cancellation cleanup.
 Only a `resumed` boolean describes replay position; no offset, cursor, URL,
 producer ID, scope, receipt handle or message content is exported. Supported active
-HTTP context parents the replay span; create/append attempts inherit their active
-pump context. Persisted receipt-to-pump causal carriers across restart are separate
-work, not established by these operational spans. Standalone dispatch remains
-disabled; no bus-to-backend run linkage is claimed.
+HTTP context parents the replay span; stream creation inherits its active
+pump context. Append attempts instead restore the
+persisted receipt root and link their pump as described below. Standalone dispatch
+remains disabled; no deployed bus-to-backend run linkage is claimed.
 
 The native recovery test verifies emitted spans through the actual Node exporter
 and sanitizing loopback relay into an intercepted synthetic Axiom sink. It checks
@@ -139,3 +139,64 @@ invalid input is not logged as success. This is local runtime/export proof, not
 enabled production collection or live Axiom ingestion. Existing bounded,
 best-effort fail-open export applies; no new exporter or per-message trace queue
 is introduced.
+
+## Durable receipt causality and timing
+
+Each newly admitted receipt gets a host-generated, independent
+`computah.bus.admit` root marker inside its admission transaction. It is an
+instantaneous identity marker, not the admission lifetime; native actor/SQL spans
+still measure admission work. Incoming HTTP context can be a validated ID-only
+link but cannot select the root or authorize a telemetry query. The carrier is
+saved atomically with the receipt and accepted outbox intent, including when the
+exporter is disabled. Duplicate admission retains that original carrier and dates.
+
+`computah.bus.stream.append` attempts restore the saved receipt parent and link
+the current `computah.bus.pump` span; a batch never merges different receipt roots.
+The optional deterministic `computah.bus.dispatch` seam restores that same parent,
+but standalone dispatch remains disabled. Stream creation stays parented to its
+pump. Replay remains HTTP-parented: one replay can contain multiple receipts, so
+it is not falsely assigned to any single receipt root. Offsets/cursors, producer
+identity/epoch/sequence and payloads are unchanged.
+
+Private actor SQLite records UTC Unix milliseconds:
+
+- `receivedAtMs`: HTTP handler entry, before auth/body waits, not sender time.
+  Direct actor admissions without HTTP timing retain null.
+- `admittedAtMs`: first admission transaction timestamp, not HTTP response time.
+- Per-output `enqueuedAtMs`: durable outbox intent timestamp.
+- `firstAttemptAtMs`: first initiated append attempt, saved before network I/O.
+- `acknowledgedAtMs`: when this host observed a successful DS append response,
+  saved atomically with `sent=1`; not original stream insertion or client delivery.
+- `attempts`: initiated append attempts, saved before POST. A crash before the
+  actual POST can count an initiated attempt that never reached the wire.
+
+The additive migration leaves historical dates, attempt totals and carriers
+unknown. Legacy sent/unsent payloads and sequence positions are not rewritten;
+resuming old work does not invent its original enqueue/first-attempt time or count.
+An ambiguous append retries the exact same producer sequence, retaining the
+original first-attempt timing and recording acknowledgement only after success.
+
+The native-only `session.timing(signedReceiptId)` action requires current
+`history.read` and the same audience-bound signed handle as receipt lookup. It
+returns the host-generated `traceId`, `receivedAtMs`, `admittedAtMs`, and bounded
+`outputs` containing the four per-output fields above. Legacy `traceId`/dates and
+`outputs` are null when no proven original metadata/linkage exists. No public HTTP
+timing endpoint or arbitrary trace-ID lookup is added. A caller-supplied trace ID
+is correlation, never query authority.
+
+Exported elapsed attributes are `queue.duration_ms` (saved first attempt minus
+enqueue), `delivery.duration_ms` (observed DS acknowledgement minus enqueue),
+`attempt.duration_ms` (monotonic local attempt lifetime), `attempt`, and
+`receipt.age_ms` on timing reads. Clock-reversed wall-clock intervals are omitted,
+not clamped into fabricated zero durations. Overlapping span durations must not
+be summed as end-to-end latency. UTC source dates stay in private storage.
+`bus.delivery` structured logs use the existing bounded logger and carry the same
+receipt/attempt trace context with fixed outcome, attempt/status and elapsed
+scalars, not receipt IDs, scope identities or content. Trace/log export remains
+bounded best-effort, separate from durable receipt correctness.
+
+Local native tests cover distinct roots, distrust of incoming IDs, cross-audience
+denial, restart, duplicate admission, lost acknowledgement/204 dedup retry,
+unchanged replay, saved timing and sanitized trace/log linkage. These tests are
+not evidence of exact production revision adoption or actual Axiom ingestion;
+those require an observed bus deployment and query result.

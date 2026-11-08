@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
-import { traceOperation } from "@computah/observability";
+import { currentTraceHeaders, traceOperation } from "@computah/observability";
 import type { Client } from "rivetkit/client";
 import { type Bus, type BusScope, busScopeKey, busStreamPath } from "./bus.js";
 
@@ -19,6 +19,8 @@ export function createBusHttp(
   principals: Map<string, BusPrincipal>,
 ) {
   return createServer(async (request, response) => {
+    const receivedAtMs = Date.now();
+    const transport = { ...currentTraceHeaders(), receivedAtMs };
     const reply = (status: number, value: unknown) => {
       response.writeHead(status, {
         "content-type": "application/json",
@@ -178,6 +180,7 @@ export function createBusHttp(
         await permit("task.send");
         const receipt = await session.admit(
           input as { text: string; clientMutationId: string },
+          transport,
         );
         await permit("task.send");
         reply(202, receipt);

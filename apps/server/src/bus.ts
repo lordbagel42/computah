@@ -4,7 +4,13 @@ import {
   type BusReceipt,
   BusSendRequest,
 } from "@computah/contracts";
-import { traceOperation } from "@computah/observability";
+import {
+  createTraceCarrier,
+  currentTraceHeaders,
+  runtimeLog,
+  traceOperation,
+  withTraceContext,
+} from "@computah/observability";
 import { Schema } from "effect";
 import { actor, setup, UserError } from "rivetkit";
 import { type Client, createClient } from "rivetkit/client";
@@ -67,6 +73,33 @@ export function createBus(options: {
     agentId: key[2],
     audience: key[3],
   });
+  const carrierOf = (row: Record<string, unknown>): Record<string, string> =>
+    typeof row.traceparent === "string" ? { traceparent: row.traceparent } : {};
+  const numberOf = (value: unknown): number | null =>
+    value === null || value === undefined ? null : Number(value);
+  const readReceipt = async (
+    c: { key: string[]; db: RawAccess },
+    id: string,
+  ) => {
+    const scope = scopeOf(c.key);
+    await permit(scope, "history.read");
+    if (typeof id !== "string" || id.length > 1000)
+      throw new UserError("invalid-request");
+    const [encoded, signature, extra] = id.split(".");
+    if (
+      !encoded ||
+      extra !== undefined ||
+      seal(scope, Buffer.from(encoded, "base64url").toString()) !==
+        `${encoded}.${signature}`
+    )
+      throw new UserError("forbidden");
+    const rows = await c.db.execute(
+      "SELECT * FROM receipts WHERE mutation = ?",
+      Buffer.from(encoded, "base64url").toString(),
+    );
+    if (!rows[0]) throw new UserError("not-found");
+    return rows[0];
+  };
   const pump = async (
     c: {
       key: string[];
@@ -88,15 +121,22 @@ export function createBus(options: {
         const scope = scopeOf(c.key);
         if (options.dispatch && (await options.authorize(scope, "task.send"))) {
           const queued = await c.db.execute(
-            "SELECT mutation, text, receipt FROM receipts WHERE status = 'queued' ORDER BY rowid LIMIT 1",
+            "SELECT * FROM receipts WHERE status = 'queued' ORDER BY rowid LIMIT 1",
           );
           if (queued[0]) {
             const old = receipt(queued[0]);
             // Dispatch must reconcile this stable ID, including a lost admission/result response.
-            const result = await options.dispatch(scope, {
-              text: String(queued[0].text),
-              clientMutationId: `bus:${createHash("sha256").update(old.id).digest("hex")}`,
-            });
+            const dispatch = options.dispatch;
+            const result = await traceOperation(
+              "bus.dispatch",
+              async () =>
+                dispatch(scope, {
+                  text: String(queued[0].text),
+                  clientMutationId: `bus:${createHash("sha256").update(old.id).digest("hex")}`,
+                }),
+              carrierOf(queued[0]),
+              [currentTraceHeaders()],
+            );
             await permit(scope, "task.send");
             const next: BusReceipt = {
               ...old,
@@ -112,7 +152,7 @@ export function createBus(options: {
                   old.clientMutationId,
                 );
                 await tx.execute(
-                  "INSERT INTO outbox(payload) VALUES (?)",
+                  "INSERT INTO outbox(payload, mutation, traceparent, enqueued_at_ms, attempts) VALUES (?, ?, ?, ?, 0)",
                   JSON.stringify(
                     Schema.decodeUnknownSync(BusOutput)({
                       version: 1,
@@ -120,6 +160,9 @@ export function createBus(options: {
                       text: result.status === "completed" ? result.text : null,
                     }),
                   ),
+                  old.clientMutationId,
+                  queued[0].traceparent ?? null,
+                  Date.now(),
                 );
               },
               { name: "bus.complete" },
@@ -158,48 +201,101 @@ export function createBus(options: {
           }
         });
         const rows = await c.db.execute(
-          "SELECT seq, payload FROM outbox WHERE sent = 0 ORDER BY seq LIMIT 32",
+          "SELECT * FROM outbox WHERE sent = 0 ORDER BY seq LIMIT 32",
         );
         for (const row of rows) {
           await permit(scope, "history.read");
-          await traceOperation("bus.stream.append", async (attempt) => {
-            const signal = AbortSignal.any([
-              c.abortSignal,
-              AbortSignal.timeout(5000),
-            ]);
-            attempt.setAttribute("http.request.method", "POST");
-            try {
-              const result = await fetch(url, {
-                method: "POST",
-                body: String(row.payload),
-                headers: {
-                  "content-type": "application/json",
-                  "Producer-Id": c.actorId,
-                  "Producer-Epoch": "0",
-                  "Producer-Seq": String(Number(row.seq) - 1),
-                },
-                signal,
-              });
-              attempt.setAttribute("http.response.status_code", result.status);
-              await result.body?.cancel();
-              if (!result.ok) throw new Error("stream append unavailable");
-              await c.db.execute(
-                "UPDATE outbox SET sent = 1 WHERE seq = ?",
-                row.seq,
-              );
-              attempt.setAttribute("outcome", "success");
-            } catch (error) {
-              attempt.setAttribute(
-                "outcome",
-                c.abortSignal.aborted
+          await traceOperation(
+            "bus.stream.append",
+            async (attempt) => {
+              const started = performance.now();
+              const signal = AbortSignal.any([
+                c.abortSignal,
+                AbortSignal.timeout(5000),
+              ]);
+              attempt.setAttribute("http.request.method", "POST");
+              let count: number | null = null;
+              try {
+                // Count initiated attempts, not guaranteed wire deliveries. Legacy totals stay unknown.
+                const [state] = await c.db.execute(
+                  "UPDATE outbox SET first_attempt_at_ms = CASE WHEN enqueued_at_ms IS NULL THEN NULL ELSE COALESCE(first_attempt_at_ms, ?) END, attempts = attempts + 1 WHERE seq = ? RETURNING first_attempt_at_ms, attempts",
+                  Date.now(),
+                  row.seq,
+                );
+                count = numberOf(state.attempts);
+                if (count !== null) attempt.setAttribute("attempt", count);
+                const queuedAt = numberOf(row.enqueued_at_ms);
+                const firstAt = numberOf(state.first_attempt_at_ms);
+                if (
+                  queuedAt !== null &&
+                  firstAt !== null &&
+                  firstAt >= queuedAt
+                )
+                  attempt.setAttribute("queue.duration_ms", firstAt - queuedAt);
+                const result = await fetch(url, {
+                  method: "POST",
+                  body: String(row.payload),
+                  headers: {
+                    "content-type": "application/json",
+                    "Producer-Id": c.actorId,
+                    "Producer-Epoch": "0",
+                    "Producer-Seq": String(Number(row.seq) - 1),
+                  },
+                  signal,
+                });
+                attempt.setAttribute(
+                  "http.response.status_code",
+                  result.status,
+                );
+                await result.body?.cancel();
+                if (!result.ok) throw new Error("stream append unavailable");
+                const acknowledgedAt = Date.now();
+                await c.db.execute(
+                  "UPDATE outbox SET sent = 1, acknowledged_at_ms = ? WHERE seq = ?",
+                  acknowledgedAt,
+                  row.seq,
+                );
+                if (queuedAt !== null && acknowledgedAt >= queuedAt)
+                  attempt.setAttribute(
+                    "delivery.duration_ms",
+                    acknowledgedAt - queuedAt,
+                  );
+                attempt.setAttribute("outcome", "success");
+                runtimeLog("bus.delivery", {
+                  outcome: "success",
+                  operation: "bus.stream.append",
+                  status_code: result.status,
+                  ...(count === null ? {} : { attempt: count }),
+                  duration_ms: performance.now() - started,
+                });
+              } catch (error) {
+                const outcome = c.abortSignal.aborted
                   ? "cancelled"
                   : signal.aborted
                     ? "timeout"
-                    : "error",
-              );
-              throw error;
-            }
-          });
+                    : "error";
+                attempt.setAttribute("outcome", outcome);
+                runtimeLog(
+                  "bus.delivery",
+                  {
+                    outcome,
+                    operation: "bus.stream.append",
+                    ...(count === null ? {} : { attempt: count }),
+                    duration_ms: performance.now() - started,
+                  },
+                  "warn",
+                );
+                throw error;
+              } finally {
+                attempt.setAttribute(
+                  "attempt.duration_ms",
+                  performance.now() - started,
+                );
+              }
+            },
+            carrierOf(row),
+            [currentTraceHeaders()],
+          );
         }
         span.setAttribute("outcome", "success");
       } catch (error) {
@@ -227,6 +323,36 @@ export function createBus(options: {
         await database.execute(
           "CREATE TABLE IF NOT EXISTS outbox(seq INTEGER PRIMARY KEY AUTOINCREMENT, payload TEXT NOT NULL, sent INTEGER NOT NULL DEFAULT 0)",
         );
+        // Additive migration: historical dates, attempt totals and receipt roots are unknown.
+        for (const [table, additions] of Object.entries({
+          receipts: [
+            "traceparent TEXT",
+            "received_at_ms INTEGER",
+            "admitted_at_ms INTEGER",
+          ],
+          outbox: [
+            "mutation TEXT",
+            "traceparent TEXT",
+            "enqueued_at_ms INTEGER",
+            "first_attempt_at_ms INTEGER",
+            "acknowledged_at_ms INTEGER",
+            "attempts INTEGER",
+          ],
+        })) {
+          const columns = await database.execute(`PRAGMA table_info(${table})`);
+          for (const definition of additions)
+            if (
+              !columns.some(
+                (column) => column.name === definition.split(" ")[0],
+              )
+            )
+              await database.execute(
+                `ALTER TABLE ${table} ADD COLUMN ${definition}`,
+              );
+        }
+        await database.execute(
+          "CREATE INDEX IF NOT EXISTS outbox_mutation ON outbox(mutation)",
+        );
       },
     }),
     createVars: () => ({ pumping: false }),
@@ -250,7 +376,11 @@ export function createBus(options: {
       c.waitUntil(pump(c, "prepare").catch(() => {}));
     },
     actions: {
-      admit: async (c, input: BusSendRequest) => {
+      admit: async (
+        c,
+        input: BusSendRequest,
+        transport?: { traceparent?: string; receivedAtMs?: number },
+      ) => {
         const scope = scopeOf(c.key);
         await permit(scope, "task.send");
         try {
@@ -263,14 +393,26 @@ export function createBus(options: {
         const accepted = await c.db.transaction(
           async (tx) => {
             const existing = await tx.execute(
-              "SELECT text, receipt FROM receipts WHERE mutation = ?",
+              "SELECT text, receipt, traceparent FROM receipts WHERE mutation = ?",
               input.clientMutationId,
             );
             if (existing[0]) {
               if (existing[0].text !== input.text)
                 throw new UserError("conflict");
-              return receipt(existing[0]);
+              return {
+                value: receipt(existing[0]),
+                carrier: carrierOf(existing[0]),
+              };
             }
+            // Root identity is minted by the host, never inherited from caller-controlled HTTP.
+            const carrier = createTraceCarrier(
+              "bus.admit",
+              transport?.traceparent
+                ? [{ traceparent: transport.traceparent }]
+                : [],
+            );
+            const admittedAt = Date.now();
+            const receivedAt = transport?.receivedAtMs;
             const result: BusReceipt = {
               version: 1,
               id: seal(scope, input.clientMutationId),
@@ -279,45 +421,78 @@ export function createBus(options: {
               submissionId: null,
             };
             await tx.execute(
-              "INSERT INTO receipts(mutation, text, status, receipt) VALUES (?, ?, 'queued', ?)",
+              "INSERT INTO receipts(mutation, text, status, receipt, traceparent, received_at_ms, admitted_at_ms) VALUES (?, ?, 'queued', ?, ?, ?, ?)",
               input.clientMutationId,
               input.text,
               JSON.stringify(result),
+              carrier.traceparent,
+              typeof receivedAt === "number" &&
+                Number.isSafeInteger(receivedAt) &&
+                receivedAt > 0 &&
+                receivedAt <= admittedAt
+                ? receivedAt
+                : null,
+              admittedAt,
             );
             await tx.execute(
-              "INSERT INTO outbox(payload) VALUES (?)",
+              "INSERT INTO outbox(payload, mutation, traceparent, enqueued_at_ms, attempts) VALUES (?, ?, ?, ?, 0)",
               JSON.stringify({
                 version: 1,
                 receipt: result,
                 text: null,
               } satisfies BusOutput),
+              input.clientMutationId,
+              carrier.traceparent,
+              admittedAt,
             );
-            return result;
+            return { value: result, carrier };
           },
           { name: "bus.admit" },
         );
+        withTraceContext(accepted.carrier, () =>
+          runtimeLog("bus.delivery", {
+            outcome: accepted.value.status === "queued" ? "queued" : "success",
+            operation: "submit",
+          }),
+        );
         c.waitUntil(pump(c, "input").catch(() => {}));
-        return accepted;
+        return accepted.value;
       },
       receipt: async (c, id: string) => {
-        const scope = scopeOf(c.key);
-        await permit(scope, "history.read");
-        if (typeof id !== "string" || id.length > 1000)
-          throw new UserError("invalid-request");
-        const [encoded, signature, extra] = id.split(".");
-        if (
-          !encoded ||
-          extra !== undefined ||
-          seal(scope, Buffer.from(encoded, "base64url").toString()) !==
-            `${encoded}.${signature}`
-        )
-          throw new UserError("forbidden");
-        const rows = await c.db.execute(
-          "SELECT receipt FROM receipts WHERE mutation = ?",
-          Buffer.from(encoded, "base64url").toString(),
+        return receipt(await readReceipt(c, id));
+      },
+      timing: async (c, id: string) => {
+        const row = await readReceipt(c, id);
+        return traceOperation(
+          "bus.receipt",
+          async (span) => {
+            const rows = await c.db.execute(
+              "SELECT * FROM outbox WHERE mutation = ? ORDER BY seq LIMIT 32",
+              row.mutation,
+            );
+            await permit(scopeOf(c.key), "history.read");
+            const admittedAtMs = numberOf(row.admitted_at_ms);
+            if (admittedAtMs !== null && Date.now() >= admittedAtMs)
+              span.setAttribute("receipt.age_ms", Date.now() - admittedAtMs);
+            return {
+              traceId: carrierOf(row).traceparent?.split("-")[1] ?? null,
+              receivedAtMs: numberOf(row.received_at_ms),
+              admittedAtMs,
+              // Legacy outbox rows have no proven receipt linkage; do not reconstruct it from content.
+              outputs:
+                admittedAtMs === null
+                  ? null
+                  : rows.map((output) => ({
+                      enqueuedAtMs: numberOf(output.enqueued_at_ms),
+                      firstAttemptAtMs: numberOf(output.first_attempt_at_ms),
+                      acknowledgedAtMs: numberOf(output.acknowledged_at_ms),
+                      attempts: numberOf(output.attempts),
+                    })),
+            };
+          },
+          carrierOf(row),
+          [currentTraceHeaders()],
         );
-        if (!rows[0]) throw new UserError("not-found");
-        return receipt(rows[0]);
       },
       pump: async (c) => {
         await pump(c, "poll");
