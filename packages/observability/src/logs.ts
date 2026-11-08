@@ -5,6 +5,14 @@ import {
   SpanStatusCode,
   trace,
 } from "@opentelemetry/api";
+import {
+  contentKinds,
+  contentRedactionReady,
+  projectContent,
+  type RuntimeContentKind,
+  registerContentEnvironment,
+  registerContentSecrets,
+} from "./content.js";
 
 const events = [
   "runtime.ready",
@@ -164,7 +172,9 @@ type Record = {
   timeUnixNano: string;
   severityNumber: number;
   severityText: string;
-  body: { stringValue: RuntimeLogEvent | "analytics.sample" };
+  body: {
+    stringValue: RuntimeLogEvent | "analytics.sample" | "content.record";
+  };
   attributes: Attribute[];
   traceId?: string;
   spanId?: string;
@@ -271,6 +281,7 @@ export function createRuntimeLogger(options: {
   dataset?: string;
   token?: string;
   revision?: string;
+  contentEnabled?: boolean;
   /** Transport injection for tests; production must retain the fixed HTTPS destination. */
   fetch?: typeof globalThis.fetch;
 }) {
@@ -294,6 +305,12 @@ export function createRuntimeLogger(options: {
       ].includes(service),
   );
   const transport = options.fetch ?? globalThis.fetch;
+  const contentEnabled =
+    service !== "observatory" &&
+    (options.contentEnabled ??
+      process.env.COMPUTAH_AXIOM_CONTENT_ENABLED === "1");
+  registerContentEnvironment(process.env);
+  registerContentSecrets(token ? [token] : []);
   const queue: Record[] = [];
   let closed = false;
   let accepted = 0;
@@ -315,14 +332,16 @@ export function createRuntimeLogger(options: {
   });
 
   function enqueue(
-    event: RuntimeLogEvent | "analytics.sample",
+    event: RuntimeLogEvent | "analytics.sample" | "content.record",
     fields: RuntimeLogFields,
     level: "info" | "warn" | "error",
     extra: Attribute[] = [],
   ): string | undefined {
     if (!enabled || closed) return undefined;
     if (
-      (event !== "analytics.sample" && !events.includes(event)) ||
+      (event !== "analytics.sample" &&
+        event !== "content.record" &&
+        !events.includes(event)) ||
       !["info", "warn", "error"].includes(level)
     ) {
       rejected++;
@@ -365,7 +384,7 @@ export function createRuntimeLogger(options: {
       const logId = randomUUID();
       attributes.push({ key: "log.id", value: { stringValue: logId } });
       const span = trace.getSpanContext(context.active());
-      queue.push({
+      const record: Record = {
         timeUnixNano: (BigInt(Date.now()) * 1_000_000n).toString(),
         severityNumber: level === "error" ? 17 : level === "warn" ? 13 : 9,
         severityText: level.toUpperCase(),
@@ -374,7 +393,23 @@ export function createRuntimeLogger(options: {
         ...(span && isSpanContextValid(span)
           ? { traceId: span.traceId, spanId: span.spanId }
           : {}),
-      });
+      };
+      if (
+        event === "content.record" &&
+        queue.reduce(
+          (sum, row) =>
+            sum +
+            (row.body.stringValue === "content.record"
+              ? Buffer.byteLength(JSON.stringify(row))
+              : 0),
+          Buffer.byteLength(JSON.stringify(record)),
+        ) >
+          2 * 1024 * 1024
+      ) {
+        dropped++;
+        return undefined;
+      }
+      queue.push(record);
       accepted++;
       return logId;
     } catch {
@@ -394,6 +429,44 @@ export function createRuntimeLogger(options: {
       return undefined;
     }
     return enqueue(event, fields, level);
+  }
+
+  function content(kind: RuntimeContentKind, payload: unknown) {
+    if (!enabled || closed || !contentEnabled) return undefined;
+    if (!contentRedactionReady()) {
+      dropped++;
+      return undefined;
+    }
+    if (!contentKinds.includes(kind)) {
+      rejected++;
+      return undefined;
+    }
+    // Reserve at least 384 slots for lifecycle/error/analytics records. Bound
+    // private bytes including in-flight rows, which remain in this same queue.
+    const contentRows = queue.filter(
+      (row) => row.body.stringValue === "content.record",
+    );
+    if (contentRows.length >= 128 || queue.length >= 128) {
+      dropped++;
+      return undefined;
+    }
+    const projected = projectContent(payload);
+    const span = trace.getSpanContext(context.active());
+    const attrs: Attribute[] = [
+      { key: "content.schema", value: { stringValue: "computah.content.v1" } },
+      { key: "content.kind", value: { stringValue: kind } },
+      { key: "content.payload", value: { stringValue: projected.payload } },
+      { key: "content.truncated", value: { boolValue: projected.truncated } },
+      { key: "content.redacted", value: { boolValue: projected.redacted } },
+      { key: "content.missing", value: { stringValue: projected.missing } },
+      {
+        key: "content.correlation",
+        value: {
+          stringValue: span && isSpanContextValid(span) ? "active" : "missing",
+        },
+      },
+    ];
+    return enqueue("content.record", {}, "info", attrs);
   }
 
   function metric(sample: RuntimeMetricSample): string | undefined {
@@ -655,7 +728,14 @@ export function createRuntimeLogger(options: {
         const end = accepted;
         active = (async () => {
           while (completed < end) {
-            const batch = queue.slice(0, Math.min(64, end - completed));
+            const batch: Record[] = [];
+            let bytes = 0;
+            for (const row of queue.slice(0, Math.min(64, end - completed))) {
+              const size = Buffer.byteLength(JSON.stringify(row));
+              if (batch.length && bytes + size > 256 * 1024) break;
+              batch.push(row);
+              bytes += size;
+            }
             await exportBatch(batch);
             queue.splice(0, batch.length);
             completed += batch.length;
@@ -676,6 +756,7 @@ export function createRuntimeLogger(options: {
   interval?.unref();
   return {
     emit,
+    content,
     metric,
     flush,
     stats,
@@ -708,4 +789,9 @@ export function runtimeLog(
 /** Emit one safe scalar observation only after local deduplication and commit. */
 export function runtimeMetric(sample: RuntimeMetricSample) {
   return runtime?.metric(sample);
+}
+
+/** Explicitly opted-in private operation evidence; never a generic log bypass. */
+export function runtimeContent(kind: RuntimeContentKind, payload: unknown) {
+  return runtime?.content(kind, payload);
 }

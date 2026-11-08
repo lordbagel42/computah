@@ -4,6 +4,11 @@ Computah exports every emitted trace, without sampling, from the instrumented
 backend, Slack and bus entry points when `COMPUTAH_AXIOM_INGEST_TOKEN` is present.
 This is operational tracing, not a copy of user histories. No automatic
 DEBUGSHARE collection, diagnostics bundles or diagnostic-agent spawning is added.
+Separately, the owner-authorized opt-in [private content log lane](logging.md#authorized-private-content-records)
+exports bounded actual normal-operation input/replies, model inputs/outputs and
+available tool/activity evidence into `computah-prod-logs`. It does not broaden
+trace attributes or the public observatory projection. Source/local proof,
+protected-host activation and independently queried ingestion are separate states.
 
 ## Collection boundaries
 
@@ -34,7 +39,8 @@ DEBUGSHARE collection, diagnostics bundles or diagnostic-agent spawning is added
   The same retry/cancel/reopen export check now prepares actual Slack source
   attribution in the core input and verifies its author/channel canaries stay out
   of sanitized exports. Speaker IDs and receipt timestamps are model context,
-  never trace/log attributes. Attribution preserves the existing admission and
+  never trace or generic runtime-log attributes. Explicitly enabled private
+  content records may carry them. Attribution preserves the existing admission and
   submit spans rather than introducing per-field spans; live model use of the
   metadata and production adoption remain separate acceptance gaps.
   Rich presentation and stop/progress reuse these same bounded lanes: long-answer
@@ -110,6 +116,49 @@ missing, not fabricated zeros. Provider-returned tiers are distinct from request
 priority. Cost attributes are excluded: SDK pricing-derived cost is not an invoice
 or proof that priority was served.
 
+## Private content coverage
+
+Source implements explicitly enabled private `content.record` logs, not content
+trace attributes. Local intercepted Axiom export tests cover admitted message
+search, final text, native tool arguments/results, actual model input/output,
+scope/participant identity, existing trace context, typed failure/cancellation,
+credential/hidden-thinking exclusion, truncation, overload and public projection.
+This source/local proof is not protected-host activation or live content ingestion.
+
+- Core fresh committed admissions capture trusted scope/resource, request and
+  submission IDs, actual input and already-available frozen source evidence.
+  Duplicate/conflicting admissions do not intentionally emit new input records.
+- Normal Worker dispatch and gateway result retrieval capture visible final text;
+  repeated result retrieval may repeat it. No extra history read is made for logs.
+- Native ToolTask before/after hooks capture actual call IDs/names/arguments,
+  available output/details/diagnostics, typed error flags and trusted scope when
+  readable. Generation afterResponse captures visible activity. Native hook replay
+  and abort-handler limits remain; intermediate progress is not captured.
+- The existing priority Models wrapper captures all four normal stream/complete
+  methods, latest 64 input messages (newest first), at most 128 blocks per message,
+  64 tool declarations, visible terminal output and available SDK token usage.
+  Source limits/missing data are explicit. Deferred methods are not newly covered.
+  Image bytes, hidden thinking and signatures are excluded. The pinned provider
+  exposes no distinct supported reasoning-summary field; none is fabricated.
+- Slack captures accepted new receipt text plus prepared text, participant and
+  real source/reply locations; frozen prepared submits and final delivery attempts
+  have linked job identity. Attempt text is not proof of send; successful delivery
+  has a separate activity row and ambiguous sends retain existing error outcomes.
+  No additional Slack lookup, history export or unsolicited message is performed.
+
+The public observatory still queries only `computah-prod-traces` and reconstructs
+its closed timing/topology schema; private content/identity canaries are rejected
+even when injected into query rows or failures. This is local disclosure-boundary
+proof, not a certification of deployed token grants. Dataset metadata currently
+reports no explicit dataset retention period (`retentionDays: 0`,
+`useRetentionPeriod: false`); effective organization/plan retention is unknown.
+Do not interpret those values as zero-day or unlimited retention. The exact
+last-deployed public Worker query credential returned HTTP 200 for count-only
+queries on both traces and logs: it is not log-isolated. Private content activation
+is held until a separate trace-only Worker credential is installed and verified
+with positive trace access and log permission denial. No grants/retention are
+changed by runtime capture, and no universal "all data" or durable audit claim is made.
+
 ## Runtime coverage ledger
 
 Shared durable APIs now support independent admission roots:
@@ -154,28 +203,37 @@ native-adapter run: trace `882ac53cf7d80de89b7e4dc9840a67d1` contains native
 children ([query](https://app.axiom.co/bagel-w3ue/query?qid=17kuj79bwqv-to6au0)).
 Separate log ingestion and complete Task admission linkage remain unproved.
 
+Operations production acceptance at `fb8e297` independently verified trace
+`3c1b1db98f760895740d1b8ea88cd8a7`: timing span `8a9059bf2e1b89d6`
+has query child `78ae6069d5059800`, both ready/count 14, with exact paired
+`operation.completed` logs and revision
+([spans](https://app.axiom.co/bagel-w3ue/query?qid=iUIVvzbwA6m-to6fb2),
+[logs](https://app.axiom.co/bagel-w3ue/query?qid=omJiyVdbe1F-to6fb5)).
+This is exercised tool/query parentage, not native admission/ingress/delivery
+continuity or private-content acceptance.
+
 The AGENTS.md rule requires instrumented runtime changes; this ledger records
 known debt, not permission to silently extend it. Static schemas, assets, fixtures
 and pure transformations do not need meaningless per-byte spans. The unit of
 coverage is an executable operation and its observable outcome/linkage.
 
-| Runtime surface                    | Actual coverage                                                                                                                                                                                                                      | Remaining proof/work                                                                                                                                                                                     |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Backend HTTP → gateway → Rivet RPC | Request lifetime/status and Effect operations; active RPC context propagates                                                                                                                                                         | Abort/disconnect/reconnect and every route's failures are not exhaustively traced/tested                                                                                                                 |
-| Interaction → Task → Worker        | Native Pi phases and Rivet actions export, including native error/replay events                                                                                                                                                      | Custom `admit` uses `BACKGROUND_CONTEXT`; Pi creates a new root with no caller link at each admission. Presence is not continuity; sleep/restart linkage remains unproved                                |
-| Slack → backend                    | `d517ae6`: persisted independent job roots across ACK/retry/reopen, actual receive/admit/dequeue timestamps, queue intervals and phase attempts, DEBUGSHARE capture association, startup/finally flush; real sanitized relay tests   | Latest job/capture instrumentation runtime adoption and exact Axiom UUID receipts pending; legacy rows remain null; bootstrap both-signal proof at `330af03` is not full-job proof                       |
-| Tavily                             | Full service typed outcomes/cleanup; production native-adapter tool trace verified at `99962a5`                                                                                                                                      | Separate structured-log ingestion and full Task admission linkage remain unproved; no automatic retries exist                                                                                            |
-| Standalone bus                     | `1f119b1` full pump/stream/replay lifetimes; `1e1c840` persisted receipt roots, append/dispatch parents and pump links, private durable timing, sanitized trace/log regression                                                       | Dispatch disabled; replay remains HTTP-parented, not falsely receipt-linked. Forced socket/backpressure permutations not exhaustive; latest causal source adoption/query proof pending                   |
-| Dashboard                          | `c9335bc` shared BFF bootstrap/HTTP/core spans and logs, operator.history on actual existing-only actor reads, fixed-upstream IDs; local actor-backed browser proof                                                                  | Production consumed-revision/trace/log receipts and browser lifecycle telemetry remain separate; local smoke-provider evidence is not live-model proof                                                   |
-| Native product                     | `a989f45` shared Node IPC/core/process/materialization/recovery spans/logs through polling/cancel and drain; trusted-core IDs, no embedded ingest key                                                                                | Remote production receipts pending; Rust GPU/input/IME and pre-Node startup intervals uninstrumented; optional protected-host config is not client relay provisioning                                    |
-| Rune/Pi experiment                 | `76f7751`: bounded local bridge start/spawn, prompt/cancel enqueue, attempt/failure, materialized render and pipe/reap records; same-session local correlation verified                                                              | No remote authenticated client relay/Axiom export/query proof; UI, storage, tool and full relaunch lifetimes remain incomplete; no server ingest credential embedded                                     |
-| Native Worker files                | `d5034c7` explicit Pi child spans and linked operation logs for grant-scoped read/write/edit, no paths/content/host shell                                                                                                            | Actual production tool trace/log query proof remains separate from local native regression                                                                                                               |
-| Native living self-docs            | Fixed `computah.self_docs.discover/read` spans and linked logs; local real Pi Interaction/Worker sleep/reopen tests verify sanitized native-parent continuity and ready/error/cancel outcomes without doc text/paths                 | Built-image acceptance, enabled collection and live Axiom ingestion need separate receipts; abrupt-death recovery and Task-admission trace continuity remain unproved                                    |
-| Operations discovery/timing        | Fixed `operations.discover/query/timing` spans and matching logs; native Pi caller parents, query/body-cleanup lifetime, explicit availability/denial/failure/cancel/timeout, returned-row counts; actual sanitized relay regression | Measured `4f6929e` production gap (blank tool identity, no named query/outcome) is source-fixed, not yet revision-matched live acceptance; native admission join remains separate; see [tools](tools.md) |
-| Sentinel                           | `3ecef7e` stored-carrier review/enforce/cancel metadata spans and native preflight/cancellation/replay tests                                                                                                                         | Enabled-host ingestion, real review quality, provider refresh, publication buffering and external-effect protection remain unproved or unimplemented                                                     |
-| Gmail/analytics                    | Shared fixed Gmail names; analytics now wires bounded private projection, outer priority-preserving model observer, native task/usage watches and gateway/Task timings to the shared LOGS-only sink                                  | Gmail wiring, full native admission join and revision-matched live analytics proof remain separate; no MeterProvider, invoice truth or complete task census; see [analytics](analytics.md)               |
-| Public observatory                 | `b3a507e` bounded positive-schema Worker HTTP/poll emitter; `480a953` fixes native fetch; owner-verified production query/render and 1000-row keyed correlation, documented in [observatory](public-observatory.md)                  | Optional edge ingest remains disabled/unproved; static/rejection paths use platform telemetry; browser interaction and actual visitor-disconnect export remain gaps                                      |
-| Deployment/setup/quality scripts   | Checks/logs, not application trace export                                                                                                                                                                                            | Separate operational tracing policy; no host/process/SQL/socket/metrics/log pipeline coverage claim                                                                                                      |
+| Runtime surface                    | Actual coverage                                                                                                                                                                                                                                                                                                 | Remaining proof/work                                                                                                                                                                                  |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backend HTTP → gateway → Rivet RPC | Request lifetime/status and Effect operations; active RPC context propagates                                                                                                                                                                                                                                    | Abort/disconnect/reconnect and every route's failures are not exhaustively traced/tested                                                                                                              |
+| Interaction → Task → Worker        | Native Pi phases and Rivet actions export, including native error/replay events                                                                                                                                                                                                                                 | Custom `admit` uses `BACKGROUND_CONTEXT`; Pi creates a new root with no caller link at each admission. Presence is not continuity; sleep/restart linkage remains unproved                             |
+| Slack → backend                    | `d517ae6`: persisted independent job roots across ACK/retry/reopen, actual receive/admit/dequeue timestamps, queue intervals and phase attempts, DEBUGSHARE capture association, startup/finally flush; real sanitized relay tests                                                                              | Latest job/capture instrumentation runtime adoption and exact Axiom UUID receipts pending; legacy rows remain null; bootstrap both-signal proof at `330af03` is not full-job proof                    |
+| Tavily                             | Full service typed outcomes/cleanup; production native-adapter tool trace verified at `99962a5`                                                                                                                                                                                                                 | Separate structured-log ingestion and full Task admission linkage remain unproved; no automatic retries exist                                                                                         |
+| Standalone bus                     | `1f119b1` full pump/stream/replay lifetimes; `1e1c840` persisted receipt roots, append/dispatch parents and pump links, private durable timing, sanitized trace/log regression                                                                                                                                  | Dispatch disabled; replay remains HTTP-parented, not falsely receipt-linked. Forced socket/backpressure permutations not exhaustive; latest causal source adoption/query proof pending                |
+| Dashboard                          | `c9335bc` shared BFF bootstrap/HTTP/core spans and logs, operator.history on actual existing-only actor reads, fixed-upstream IDs; local actor-backed browser proof                                                                                                                                             | Production consumed-revision/trace/log receipts and browser lifecycle telemetry remain separate; local smoke-provider evidence is not live-model proof                                                |
+| Native product                     | `a989f45` shared Node IPC/core/process/materialization/recovery spans/logs through polling/cancel and drain; trusted-core IDs, no embedded ingest key                                                                                                                                                           | Remote production receipts pending; Rust GPU/input/IME and pre-Node startup intervals uninstrumented; optional protected-host config is not client relay provisioning                                 |
+| Rune/Pi experiment                 | `76f7751`: bounded local bridge start/spawn, prompt/cancel enqueue, attempt/failure, materialized render and pipe/reap records; same-session local correlation verified                                                                                                                                         | No remote authenticated client relay/Axiom export/query proof; UI, storage, tool and full relaunch lifetimes remain incomplete; no server ingest credential embedded                                  |
+| Native Worker files                | `d5034c7` explicit Pi child spans and linked operation logs for grant-scoped read/write/edit, no paths/content/host shell                                                                                                                                                                                       | Actual production tool trace/log query proof remains separate from local native regression                                                                                                            |
+| Native living self-docs            | Fixed `computah.self_docs.discover/read` spans and linked logs; local real Pi Interaction/Worker sleep/reopen tests verify sanitized native-parent continuity and ready/error/cancel outcomes without doc text/paths                                                                                            | Built-image acceptance, enabled collection and live Axiom ingestion need separate receipts; abrupt-death recovery and Task-admission trace continuity remain unproved                                 |
+| Operations discovery/timing        | Fixed `operations.discover/query/timing` spans and matching logs; native Pi caller parents, query/body-cleanup lifetime, explicit availability/denial/failure/cancel/timeout, returned-row counts; actual sanitized relay regression; `fb8e297` exercised timing→query parentage and exact paired logs verified | Native admission root join, absent ingress/delivery and exhaustive failure/cancel coverage remain gaps; five discovery spans include internal/nested work, not five user calls; see [tools](tools.md) |
+| Sentinel                           | `3ecef7e` stored-carrier review/enforce/cancel metadata spans and native preflight/cancellation/replay tests                                                                                                                                                                                                    | Enabled-host ingestion, real review quality, provider refresh, publication buffering and external-effect protection remain unproved or unimplemented                                                  |
+| Gmail/analytics                    | Shared fixed Gmail names; analytics now wires bounded private projection, outer priority-preserving model observer, native task/usage watches and gateway/Task timings to the shared LOGS-only sink                                                                                                             | Gmail wiring, full native admission join and revision-matched live analytics proof remain separate; no MeterProvider, invoice truth or complete task census; see [analytics](analytics.md)            |
+| Public observatory                 | `b3a507e` bounded positive-schema Worker HTTP/poll emitter; `480a953` fixes native fetch; owner-verified production query/render and 1000-row keyed correlation, documented in [observatory](public-observatory.md)                                                                                             | Optional edge ingest remains disabled/unproved; static/rejection paths use platform telemetry; browser interaction and actual visitor-disconnect export remain gaps                                   |
+| Deployment/setup/quality scripts   | Checks/logs, not application trace export                                                                                                                                                                                                                                                                       | Separate operational tracing policy; no host/process/SQL/socket/metrics/log pipeline coverage claim                                                                                                   |
 
 The pinned Pi package's caller-span bridge is internal, not exported publicly.
 Do not import private vendor files or weaken atomic admission/deduplication merely

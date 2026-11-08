@@ -12,7 +12,7 @@ import { createOperations, type OperationalTarget } from "../src/operations.js";
 import { smokeProvider } from "../src/smoke-model.js";
 import { createTavily } from "../src/tavily.js";
 
-test("Pi phases and delegated Rivet actions reach the sanitized exporter without private content", async (context) => {
+test("Pi phases keep traces content-free while opted-in native content reaches private logs", async (context) => {
   const originalFetch = globalThis.fetch;
   const bodies: string[] = [];
   const logBodies: string[] = [];
@@ -31,6 +31,8 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
   };
   process.env.COMPUTAH_AXIOM_INGEST_TOKEN = "synthetic-only";
   process.env.COMPUTAH_AXIOM_LOG_DATASET = "synthetic-sentinel-logs";
+  const priorContent = process.env.COMPUTAH_AXIOM_CONTENT_ENABLED;
+  process.env.COMPUTAH_AXIOM_CONTENT_ENABLED = "1";
   const telemetry = await startObservability("backend");
   const scope = {
     tenantId: "private-tenant-canary",
@@ -133,7 +135,7 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
     const receipt = await session.submit(
       session.interactionId,
       "private-prompt-canary",
-      "synthetic-request",
+      "capture-request",
     );
     const result = await session.result(
       session.interactionId,
@@ -141,6 +143,20 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
       true,
     );
     expect(result.submission.status).toBe("done");
+    expect(
+      await session.submit(
+        session.interactionId,
+        "private-prompt-canary",
+        "capture-request",
+      ),
+    ).toEqual(receipt);
+    await expect(
+      session.submit(
+        session.interactionId,
+        "rejected-conflict-content",
+        "capture-request",
+      ),
+    ).rejects.toThrow();
     const operational = await session.submit(
       session.interactionId,
       "private-operations-canary",
@@ -382,6 +398,9 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
     await core.close();
     await telemetry.close();
     globalThis.fetch = originalFetch;
+    if (priorContent === undefined)
+      delete process.env.COMPUTAH_AXIOM_CONTENT_ENABLED;
+    else process.env.COMPUTAH_AXIOM_CONTENT_ENABLED = priorContent;
   }
   const spans: {
     name: string;
@@ -539,6 +558,73 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
         ),
     ),
   ).toBe(true);
+  const field = (row: (typeof logs)[number], key: string) =>
+    row.attributes.find((a) => a.key === key)?.value.stringValue;
+  const content = logs.filter((row) => field(row, "content.kind"));
+  const ordinaryLogs = JSON.stringify(
+    logs.filter((row) => !field(row, "content.kind")),
+  );
+  const incoming = content
+    .filter((row) => field(row, "content.kind") === "incoming")
+    .map((row) => JSON.parse(field(row, "content.payload") ?? "null"));
+  expect(
+    incoming.filter((row) => row.requestId === "input:capture-request"),
+  ).toHaveLength(1);
+  expect(incoming).toContainEqual(
+    expect.objectContaining({
+      scope,
+      actorId: expect.any(String),
+      submissionId: expect.any(Number),
+      requestId: "input:capture-request",
+      text: "private-prompt-canary",
+    }),
+  );
+  expect(JSON.stringify(content)).not.toContain("rejected-conflict-content");
+  const toolCalls = content.filter(
+    (row) => field(row, "content.kind") === "tool.call",
+  );
+  expect(
+    toolCalls.some((row) =>
+      field(row, "content.payload")?.includes('"name":"Task"'),
+    ),
+  ).toBe(true);
+  for (const row of toolCalls) {
+    expect(
+      spans.some(
+        (span) =>
+          span.traceId === row.traceId &&
+          span.spanId === row.spanId &&
+          span.name === "pi.durable.phase",
+      ),
+    ).toBe(true);
+  }
+  const results = content
+    .filter((row) => field(row, "content.kind") === "tool.result")
+    .map((row) => JSON.parse(field(row, "content.payload") ?? "null"));
+  expect(
+    results.some(
+      (row) =>
+        row.name === "Task" &&
+        JSON.stringify(row.output).includes("private-prompt-canary"),
+    ),
+  ).toBe(true);
+  expect(results.some((row) => row.isError === true)).toBe(true);
+  expect(content.some((row) => field(row, "content.kind") === "activity")).toBe(
+    true,
+  );
+  const finals = content
+    .filter((row) => field(row, "content.kind") === "final")
+    .map((row) => JSON.parse(field(row, "content.payload") ?? "null"));
+  expect(
+    finals.some((row) => JSON.stringify(row).includes("private-prompt-canary")),
+  ).toBe(true);
+  expect(
+    finals.some((row) =>
+      JSON.stringify(row).includes("private-sentinel-canary"),
+    ),
+  ).toBe(false);
+  expect(JSON.stringify(content)).not.toContain("private-query-token-canary");
+  expect(JSON.stringify(content)).not.toContain("a".repeat(64));
   for (const privateValue of [
     "private-query-token-canary",
     "private-returned-span-canary",
@@ -553,7 +639,7 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
     "f".repeat(16),
   ]) {
     expect(bodies.join()).not.toContain(privateValue);
-    expect(logBodies.join()).not.toContain(privateValue);
+    expect(ordinaryLogs).not.toContain(privateValue);
   }
   for (const operation of ["review", "enforce", "cancel"])
     expect(spans.some((s) => s.name === `computah.sentinel.${operation}`)).toBe(
@@ -591,7 +677,7 @@ test("Pi phases and delegated Rivet actions reach the sanitized exporter without
     "private-tenant-canary",
     "reviewKey",
   ])
-    expect(logBodies.join()).not.toContain(privateValue);
+    expect(ordinaryLogs).not.toContain(privateValue);
   const parent = spans.find((s) => s.name === "computah.synthetic");
   expect(parent?.spanId).toMatch(/^[a-f0-9]{16}$/);
   const web = spans.filter((s) =>

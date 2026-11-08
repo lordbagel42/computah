@@ -6,6 +6,7 @@ import {
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { registerContentSecrets } from "../src/content.js";
 import { sanitizeTraces } from "../src/index.js";
 import {
   createRuntimeLogger,
@@ -433,4 +434,220 @@ test("analytics samples use only the fixed scalar catalog and distinct cost prov
     Number.MAX_SAFE_INTEGER,
   );
   assert.ok(!JSON.stringify(rows).includes(canary));
+});
+
+test("opted-in private content exports searchable text and identity but excludes credentials and hidden reasoning", async () => {
+  const payloads: string[] = [];
+  const priorAuth = process.env.COMPUTAH_AUTH_JSON;
+  const priorToken = process.env.COMPUTAH_SYNTHETIC_TOKEN;
+  process.env.COMPUTAH_AUTH_JSON = JSON.stringify([
+    { token: "synthetic-auth-json-opaque" },
+  ]);
+  process.env.COMPUTAH_SYNTHETIC_TOKEN = "synthetic-env-token-opaque";
+  const logger = createRuntimeLogger({
+    ...config,
+    contentEnabled: true,
+    fetch: async (_url, init) => {
+      payloads.push(String(init?.body));
+      return new Response("{}");
+    },
+  });
+  if (priorAuth === undefined) delete process.env.COMPUTAH_AUTH_JSON;
+  else process.env.COMPUTAH_AUTH_JSON = priorAuth;
+  if (priorToken === undefined) delete process.env.COMPUTAH_SYNTHETIC_TOKEN;
+  else process.env.COMPUTAH_SYNTHETIC_TOKEN = priorToken;
+  const credential = "synthetic-known-protected-value";
+  registerContentSecrets([credential]);
+  const { context, trace } = await import("@opentelemetry/api");
+  const parent = provider.getTracer("test").startSpan("computah.synthetic");
+  context.with(trace.setSpan(context.active(), parent), () => {
+    assert.ok(
+      logger.content("incoming", {
+        text: `mewofanoinwewaoi;neaw ${credential} Bearer synthetic-auth-value`,
+        actor: { userId: "synthetic-participant", source: "synthetic-channel" },
+        authorization: "auth-field-canary",
+        token: "token-field-canary",
+        coreToken: "core-token-field-canary",
+        toolOutput: "synthetic-auth-json-opaque synthetic-env-token-opaque",
+        diagnosticText:
+          'Cookie: first=cookie-one-canary; second=cookie-two-canary\npassword="quoted password canary"',
+        nested: {
+          apiKey: "api-field-canary",
+          tool: { query: "useful actual query" },
+        },
+        content: [
+          { type: "thinking", thinking: "hidden-thinking-canary" },
+          { type: "text", text: "actual final reply" },
+        ],
+        reasoningSummary: "Available explicit summary, not hidden reasoning",
+        usage: { input_tokens: 37, output_tokens: 9, totalTokens: 46 },
+      }),
+    );
+  });
+  parent.end();
+  assert.equal(logger.emit("content.record" as "runtime.ready"), undefined);
+  await logger.close();
+  const serialized = payloads.join("");
+  for (const value of [
+    credential,
+    "synthetic-auth-value",
+    "auth-field-canary",
+    "token-field-canary",
+    "core-token-field-canary",
+    "synthetic-auth-json-opaque",
+    "synthetic-env-token-opaque",
+    "cookie-one-canary",
+    "cookie-two-canary",
+    "quoted password canary",
+    "api-field-canary",
+    "hidden-thinking-canary",
+    config.token,
+  ])
+    assert.ok(!serialized.includes(value), value);
+  for (const value of [
+    "mewofanoinwewaoi;neaw",
+    "synthetic-participant",
+    "useful actual query",
+    "actual final reply",
+    "Available explicit summary",
+  ])
+    assert.ok(serialized.includes(value), value);
+  const row = JSON.parse(payloads[0]).resourceLogs[0].scopeLogs[0]
+    .logRecords[0];
+  assert.equal(row.traceId, parent.spanContext().traceId);
+  assert.equal(row.spanId, parent.spanContext().spanId);
+  const attrs = Object.fromEntries(
+    row.attributes.map(
+      (attr: {
+        key: string;
+        value: { stringValue?: string; boolValue?: boolean };
+      }) => [attr.key, attr.value.stringValue ?? attr.value.boolValue],
+    ),
+  );
+  assert.equal(attrs["content.schema"], "computah.content.v1");
+  assert.equal(attrs["content.truncated"], false);
+  assert.equal(attrs["content.redacted"], true);
+  assert.equal(attrs["content.correlation"], "active");
+  assert.equal(JSON.parse(attrs["content.payload"]).usage.input_tokens, 37);
+  assert.ok(attrs["content.missing"].includes("hidden_reasoning_excluded"));
+
+  const disabled = createRuntimeLogger({ ...config, contentEnabled: false });
+  assert.equal(
+    disabled.content("incoming", { text: "not exported" }),
+    undefined,
+  );
+  assert.equal((await disabled.close()).accepted, 0);
+  const publicService = createRuntimeLogger({
+    ...config,
+    service: "observatory",
+    contentEnabled: true,
+  });
+  assert.equal(
+    publicService.content("incoming", { text: "never public" }),
+    undefined,
+  );
+  await publicService.close();
+});
+
+test("private content bounds encoded bytes, reserves scalar capacity and fails open on malformed input", async () => {
+  const batches: string[] = [];
+  const logger = createRuntimeLogger({
+    ...config,
+    contentEnabled: true,
+    fetch: async (_url, init) => {
+      batches.push(String(init?.body));
+      return new Response("{}", { status: 503 });
+    },
+  });
+  const cyclic: { self?: unknown } = {};
+  cyclic.self = cyclic;
+  assert.ok(logger.content("tool.result", cyclic));
+  assert.ok(
+    logger.content(
+      "tool.result",
+      new Proxy(
+        {},
+        {
+          ownKeys() {
+            throw new Error("not-exported-error-canary");
+          },
+        },
+      ),
+    ),
+  );
+  assert.ok(
+    logger.content("tool.result", { text: "🙂\n\u0000".repeat(100_000) }),
+  );
+  for (let index = 0; index < 180; index++)
+    logger.content("tool.result", {
+      text: "bounded useful output ".repeat(2000),
+    });
+  assert.ok(logger.stats().dropped > 0);
+  assert.ok(logger.emit("runtime.stopped", { outcome: "stopped" }));
+  const result = await logger.close();
+  assert.equal(result.exported, 0);
+  assert.equal(result.failed, result.accepted);
+  assert.equal(result.queued, 0);
+  const rows = batches.flatMap(
+    (batch) => JSON.parse(batch).resourceLogs[0].scopeLogs[0].logRecords,
+  );
+  assert.ok(rows.some((row) => row.body.stringValue === "runtime.stopped"));
+  assert.ok(!batches.join("").includes("not-exported-error-canary"));
+  for (const batch of batches) assert.ok(Buffer.byteLength(batch) < 270_000);
+  const contents = rows.filter(
+    (row) => row.body.stringValue === "content.record",
+  );
+  assert.ok(contents.length <= 128);
+  assert.ok(
+    contents.reduce(
+      (sum, row) => sum + Buffer.byteLength(JSON.stringify(row)),
+      0,
+    ) <=
+      2 * 1024 * 1024,
+  );
+  const attributes = contents.map((row) =>
+    Object.fromEntries(
+      row.attributes.map(
+        (attr: {
+          key: string;
+          value: { stringValue?: string; boolValue?: boolean };
+        }) => [attr.key, attr.value.stringValue ?? attr.value.boolValue],
+      ),
+    ),
+  );
+  assert.ok(
+    attributes.some((attr) => attr["content.missing"] === "projection_failed"),
+  );
+  assert.ok(
+    attributes.some((attr) => attr["content.missing"] === "cyclic_value"),
+  );
+  assert.ok(attributes.some((attr) => attr["content.truncated"] === true));
+  for (const attr of attributes) {
+    assert.equal(attr["content.correlation"], "missing");
+    assert.ok(Buffer.byteLength(attr["content.payload"]) <= 65_536);
+    JSON.parse(attr["content.payload"]);
+  }
+  assert.equal(logger.content("incoming", {}), undefined);
+});
+
+test("redaction registry saturation stops private content without stopping scalar logs", async () => {
+  const logger = createRuntimeLogger({
+    ...config,
+    contentEnabled: true,
+    fetch: async () => new Response("{}"),
+  });
+  registerContentSecrets(
+    Array.from({ length: 513 }, (_, i) => `synthetic-registry-only-${i}`),
+  );
+  registerContentSecrets(["synthetic-unretained-opaque-credential"]);
+  assert.equal(
+    logger.content("incoming", {
+      text: "synthetic-unretained-opaque-credential",
+    }),
+    undefined,
+  );
+  assert.ok(logger.emit("runtime.ready", { outcome: "ready" }));
+  const stats = await logger.close();
+  assert.equal(stats.exported, 1);
+  assert.equal(stats.dropped, 1);
 });

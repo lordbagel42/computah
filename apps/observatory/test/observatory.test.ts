@@ -47,6 +47,12 @@ test("public projection retains timing and true topology without private content
     [
       row({
         attributes: { prompt: privateText },
+        "content.payload": JSON.stringify({
+          text: privateText,
+          actor: privateText,
+        }),
+        "content.kind": "incoming",
+        body: privateText,
         resources: privateText,
         events: [{ name: privateText }],
         error: false,
@@ -89,6 +95,8 @@ test("public projection retains timing and true topology without private content
     "attributes",
     "resources",
     "events",
+    "content.payload",
+    "content.kind",
     "status.message",
   ])
     assert.ok(!serialized.includes(forbidden));
@@ -155,9 +163,19 @@ test("collector shares one fixed query across visitors, backs off and preserves 
     assert.equal(url, ENDPOINT);
     const body = JSON.parse(String(options?.body));
     assert.equal(body.apl, QUERY);
+    assert.ok(QUERY.startsWith("['computah-prod-traces']"));
+    assert.ok(!QUERY.includes("computah-prod-logs"));
+    assert.ok(!QUERY.includes("content.payload"));
     assert.equal(Date.parse(body.endTime) - Date.parse(body.startTime), 900000);
     if (fail) throw new Error("PRIVATE-token-error-body");
-    return Response.json(envelope([row()]));
+    return Response.json(
+      envelope([
+        row({
+          "content.payload": "PRIVATE-content-row-canary",
+          participant: "PRIVATE-identity-canary",
+        }),
+      ]),
+    );
   };
   const collector = new Collector(
     { token: "private-query-token", secret },

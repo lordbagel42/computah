@@ -10,6 +10,7 @@ import type {
   Viewer,
   WireError,
 } from "@computah/contracts";
+import { registerContentSecrets } from "@computah/observability";
 import type {
   Cursor,
   EntryRecord,
@@ -167,6 +168,11 @@ export function createHttpServer(options: {
   privilegedUrlPrefixes?: readonly string[];
   gmail?: Pick<ReturnType<typeof createGmailRuntime>, "status" | "drafts">;
 }) {
+  registerContentSecrets([
+    options.secret,
+    ...(options.operatorRedactValues ?? []),
+    ...(options.privilegedUrlPrefixes ?? []),
+  ]);
   const sign = (principal: Principal, purpose: string, data: string) =>
     createHmac("sha256", options.secret)
       .update(JSON.stringify([principalKey(principal), purpose, data]))
@@ -224,6 +230,7 @@ export function createHttpServer(options: {
         ? options.principals.get(tokenHash(bearer))
         : undefined;
       if (!principal) throw new HttpError(401, "unauthenticated");
+      registerContentSecrets(bearer ? [bearer] : []);
       const session = options.bind({
         tenantId: principal.tenantId,
         userId: principal.userId,

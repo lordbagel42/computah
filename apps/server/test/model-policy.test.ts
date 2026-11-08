@@ -2,10 +2,17 @@ import { zstdDecompressSync } from "node:zlib";
 import {
   createTraceCarrier,
   currentTraceHeaders,
+  registerContentSecrets,
+  startObservability,
   withTraceContext,
 } from "@computah/observability";
 import {
+  createAssistantMessageEventStream,
+  fauxAssistantMessage,
+  fauxText,
+  fauxThinking,
   InMemoryCredentialStore,
+  type Models,
   type StreamOptions,
 } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -13,7 +20,7 @@ import {
   NOOP_TELEMETRY_CONTEXT,
   NOOP_TELEMETRY_PROPAGATION,
 } from "@earendil-works/pi-telemetry";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { readConfig } from "../src/config.js";
 import {
   interactionModel,
@@ -236,4 +243,222 @@ test("HTTP provider error is preserved for caller while diagnostics redact messa
     outcome: "reasoning-not-allowed",
   });
   expect(JSON.stringify(entries)).not.toContain("synthetic-secret");
+});
+
+test("opted-in model evidence preserves native async parents, content, usage and terminal failures without hidden blocks", async () => {
+  const bodies: string[] = [];
+  const traces: string[] = [];
+  vi.stubEnv("COMPUTAH_AXIOM_INGEST_TOKEN", "synthetic-content-ingest");
+  vi.stubEnv("COMPUTAH_AXIOM_LOG_DATASET", "synthetic-model-content");
+  vi.stubEnv("COMPUTAH_AXIOM_CONTENT_ENABLED", "1");
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url) === "https://api.axiom.co/v1/logs") {
+      bodies.push(String(init?.body));
+      return Response.json({});
+    }
+    if (String(url) === "https://api.axiom.co/v1/traces") {
+      traces.push(String(init?.body));
+      return Response.json({});
+    }
+    return originalFetch(url, init);
+  };
+  const telemetry = await startObservability("backend");
+  const native = await runtime();
+  const model = native.getModel("openai-codex", "gpt-6.1-terra");
+  if (!model) throw new Error("Missing Terra");
+  const restored = createTraceCarrier("model");
+  const unrelated = createTraceCarrier("http");
+  const input: StreamOptions = {
+    telemetry: {
+      ...NOOP_TELEMETRY_CONTEXT,
+      propagation: { ...NOOP_TELEMETRY_PROPAGATION, inject: () => restored },
+      addLink() {},
+      addEvent() {},
+      setAttributes() {},
+      setStatus() {},
+    },
+  };
+  registerContentSecrets(["synthetic-configured-secret"]);
+  const request = {
+    systemPrompt: "private-system-canary",
+    tools: [
+      {
+        name: "lookup",
+        description: "private-tool-description",
+        parameters: { type: "object" },
+      },
+    ],
+    messages: [
+      {
+        role: "user" as const,
+        content: "private-input-canary synthetic-configured-secret",
+        timestamp: 1,
+      },
+      fauxAssistantMessage([
+        fauxThinking("hidden-input-canary"),
+        fauxText("visible-prior-answer"),
+      ]),
+    ],
+  };
+  const diagnostics: unknown[] = [];
+  try {
+    for (const method of [
+      "stream",
+      "streamSimple",
+      "complete",
+      "completeSimple",
+    ] as const) {
+      for (const stopReason of ["stop", "error", "aborted"] as const) {
+        const message = fauxAssistantMessage(
+          [
+            fauxThinking("hidden-output-canary"),
+            fauxText("private-output-canary"),
+          ],
+          { stopReason },
+        );
+        message.usage.input = 7;
+        message.errorMessage =
+          stopReason === "error" ? "private-provider-error" : undefined;
+        const stream = createAssistantMessageEventStream();
+        const models = priorityModels(
+          new Proxy(native, {
+            get(target, property) {
+              if (property === method)
+                return () => {
+                  expect(currentTraceHeaders().traceparent?.split("-")[1]).toBe(
+                    restored.traceparent?.split("-")[1],
+                  );
+                  return method.startsWith("stream")
+                    ? stream
+                    : Promise.resolve(message);
+                };
+              const value = Reflect.get(target, property, target);
+              return typeof value === "function" ? value.bind(target) : value;
+            },
+          }) as Models,
+          (entry) => diagnostics.push(entry),
+        );
+        const boundedRequest =
+          method === "stream" && stopReason === "stop"
+            ? {
+                ...request,
+                messages: [
+                  ...Array.from({ length: 65 }, (_, index) => ({
+                    role: "user" as const,
+                    content:
+                      index === 0 ? "old-omitted-canary" : "older context",
+                    timestamp: 1,
+                  })),
+                  ...request.messages,
+                ],
+              }
+            : request;
+        const result = withTraceContext(unrelated, () =>
+          models[method](model, boundedRequest, input),
+        );
+        if ("result" in result) {
+          expect(result).toBe(stream);
+          // Resolve outside the model's active context, as native streams do.
+          withTraceContext(unrelated, () => stream.end(message));
+        }
+        expect(await ("result" in result ? result.result() : result)).toBe(
+          message,
+        );
+      }
+    }
+    const rejected = new Error("private-thrown-error");
+    const models = priorityModels(
+      new Proxy(native, {
+        get(target, property) {
+          if (property === "completeSimple")
+            return () => Promise.reject(rejected);
+          if (property === "streamSimple")
+            return () => {
+              throw rejected;
+            };
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as Models,
+      (entry) => diagnostics.push(entry),
+    );
+    await expect(models.completeSimple(model, request, input)).rejects.toBe(
+      rejected,
+    );
+    expect(() => models.streamSimple(model, request, input)).toThrow(rejected);
+  } finally {
+    await telemetry.close();
+    globalThis.fetch = originalFetch;
+    vi.unstubAllEnvs();
+  }
+  type Row = {
+    traceId: string;
+    spanId: string;
+    attributes: { key: string; value: { stringValue?: string } }[];
+  };
+  const rows: Row[] = bodies.flatMap((body) =>
+    JSON.parse(body).resourceLogs.flatMap(
+      (r: { scopeLogs: { logRecords: Row[] }[] }) =>
+        r.scopeLogs.flatMap((s) => s.logRecords),
+    ),
+  );
+  const field = (row: Row, key: string) =>
+    row.attributes.find((a) => a.key === key)?.value.stringValue;
+  const content = rows.filter((row) => field(row, "content.kind"));
+  expect(content).toHaveLength(28);
+  const inputs = content.filter(
+    (row) => field(row, "content.kind") === "model.input",
+  );
+  const outputs = content.filter(
+    (row) => field(row, "content.kind") === "model.output",
+  );
+  expect(inputs).toHaveLength(14);
+  expect(outputs).toHaveLength(14);
+  const firstInput = JSON.parse(field(inputs[0], "content.payload") ?? "null");
+  expect(firstInput.sourceTruncated).toBe(true);
+  expect(firstInput.messages).toHaveLength(64);
+  expect(firstInput.missing).toContain("hidden_reasoning_excluded");
+  expect(JSON.stringify(firstInput)).not.toContain("old-omitted-canary");
+  for (let i = 0; i < inputs.length; i++) {
+    expect(inputs[i].traceId).toBe(restored.traceparent?.split("-")[1]);
+    expect(outputs[i].traceId).toBe(inputs[i].traceId);
+    expect(outputs[i].spanId).toBe(inputs[i].spanId);
+  }
+  const payloads = outputs.map((row) =>
+    JSON.parse(field(row, "content.payload") ?? "null"),
+  );
+  expect(payloads.filter((row) => row.stopReason === "aborted")).toHaveLength(
+    4,
+  );
+  expect(payloads.filter((row) => row.stopReason === "error")).toHaveLength(4);
+  expect(
+    payloads.filter((row) => row.error === "model_request_failed"),
+  ).toHaveLength(2);
+  expect(payloads[0].usage.input).toBe(7);
+  const exported = JSON.stringify(content);
+  for (const visible of [
+    "private-system-canary",
+    "private-tool-description",
+    "private-input-canary",
+    "visible-prior-answer",
+    "private-output-canary",
+    "private-provider-error",
+  ])
+    expect(exported).toContain(visible);
+  for (const excluded of [
+    "hidden-input-canary",
+    "hidden-output-canary",
+    "synthetic-configured-secret",
+    "private-thrown-error",
+  ])
+    expect(exported).not.toContain(excluded);
+  expect(traces.join()).not.toMatch(
+    /private-input-canary|private-output-canary|private-provider-error|hidden-output-canary/,
+  );
+  expect(
+    diagnostics.filter(
+      (row) => (row as { outcome?: string }).outcome === "aborted",
+    ),
+  ).toHaveLength(4);
 });

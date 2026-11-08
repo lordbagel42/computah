@@ -2,11 +2,17 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import {
   createTraceCarrier,
   currentTraceHeaders,
+  registerContentSecrets,
+  runtimeContent,
   traceEvent,
   traceOperation,
+  withTraceContext,
 } from "@computah/observability";
 import { effectTracing } from "@computah/observability/effect";
-import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
+import {
+  BACKGROUND_CONTEXT,
+  type Context,
+} from "@earendil-works/chord/context";
 import { applyImmutable } from "@earendil-works/chord/delta";
 import {
   CompactionTask,
@@ -27,6 +33,7 @@ import {
   type SubmissionRecord,
   type TaskId,
   type ToolRegistration,
+  ToolTask,
   type Tx,
 } from "@earendil-works/pi-durable";
 import { obj, str } from "@earendil-works/pi-schema";
@@ -336,6 +343,26 @@ async function stopSubmission(pi: Harness, submissionId: SubmissionId) {
 export function createCore(options: CoreOptions) {
   if (Buffer.byteLength(options.connectionSecret) < 32)
     throw new CoreError("invalid");
+  registerContentSecrets([
+    options.connectionSecret,
+    ...Object.values(options.apiKeys ?? {}),
+    options.tavily?.apiKey ?? "",
+    options.operations?.queryToken ?? "",
+    options.axiomMcp?.pat ?? "",
+  ]);
+  const nativeContent = (
+    context: Context,
+    kind: "tool.call" | "tool.result" | "activity",
+    payload: unknown,
+  ) => {
+    let carrier: Record<string, string> = {};
+    try {
+      carrier = context.telemetry.propagation?.inject(context.telemetry) ?? {};
+    } catch {
+      // No invented parent when the native adapter cannot provide one.
+    }
+    withTraceContext(carrier, () => runtimeContent(kind, payload));
+  };
   const analyticsWatches = new Map<
     string,
     Awaited<ReturnType<OperationalAnalytics["watchHarness"]>>
@@ -467,7 +494,61 @@ export function createCore(options: CoreOptions) {
         ]
       : [],
     hooks: [
+      hook(ToolTask, {
+        beforeTool: async (call, api, context) => {
+          const scope = (
+            await api.snapshot(Binding, context).catch(() => undefined)
+          )?.scope;
+          nativeContent(context, "tool.call", {
+            scope,
+            conversationId: api.conversationId,
+            taskId: api.taskId,
+            callId: call.id,
+            name: call.name,
+            arguments: call.arguments,
+            parent: call.parent,
+          });
+          return undefined;
+        },
+        afterTool: async (call, result, api, context) => {
+          const scope = (
+            await api.snapshot(Binding, context).catch(() => undefined)
+          )?.scope;
+          nativeContent(context, "tool.result", {
+            scope,
+            conversationId: api.conversationId,
+            taskId: api.taskId,
+            callId: call.id,
+            name: call.name,
+            arguments: call.arguments,
+            output: result.output,
+            structuredOutput: result.structuredOutput,
+            details: result.details,
+            diagnostics: result.diagnostics,
+            isError: result.isError,
+          });
+          return undefined;
+        },
+      }),
       hook(GenerationTask, {
+        afterResponse: async (message, api, context) => {
+          const scope = (
+            await api.snapshot(Binding, context).catch(() => undefined)
+          )?.scope;
+          nativeContent(context, "activity", {
+            scope,
+            conversationId: api.conversationId,
+            taskId: api.taskId,
+            phase: "model.response",
+            stopReason: message.stopReason,
+            error: message.errorMessage,
+            content: message.content.flatMap((part) =>
+              part.type === "text"
+                ? [{ type: part.type, text: part.text }]
+                : [],
+            ),
+          });
+        },
         beforeRequest: async (request, api, context) => {
           if (sourceBoundary && context.abortSignal) {
             // Register BEFORE any awaited read: a thrown hook is not authorization.
@@ -1187,7 +1268,8 @@ export function createCore(options: CoreOptions) {
             ? null
             : await options.sources?.preload(scope, text);
         await sourceCheck(scope, preload?.grants ?? []);
-        return root.commit(async (tx) => {
+        let fresh = false;
+        const admitted = await root.commit(async (tx) => {
           const receipt = await tx.doc(Receipt, requestId, null);
           if (receipt.submissionId !== null) {
             return receipt.hash === hash
@@ -1220,8 +1302,23 @@ export function createCore(options: CoreOptions) {
           };
           operations.sequence++;
           operations.tailRequestId = requestId;
+          fresh = true;
           return { submissionId: id };
         }, BACKGROUND_CONTEXT);
+        // Capture only committed new admissions, never conflicts or retry history.
+        if (fresh && "submissionId" in admitted)
+          runtimeContent("incoming", {
+            scope,
+            actorId:
+              c.key.length === 4
+                ? workerId(scope, c.key[3])
+                : interactionId(scope),
+            requestId,
+            submissionId: admitted.submissionId,
+            text,
+            sourceEvidence: [privateEvidence, preload?.text].filter(Boolean),
+          });
+        return admitted;
       },
       operationContext: async (
         c: { key: string[]; pi: Harness },
@@ -1517,6 +1614,14 @@ export function createCore(options: CoreOptions) {
           : [],
       )
       .join("");
+    runtimeContent("final", {
+      scope,
+      resourceId: workerId(scope, label),
+      requestId,
+      submissionId: result.id,
+      text: textResult,
+      status: "done",
+    });
     return {
       status: "done",
       text: textResult,
@@ -1696,6 +1801,24 @@ export function createCore(options: CoreOptions) {
             await permit(scope, "history.read");
             await actor.captureAnalytics().catch(() => {});
             await actor.sourceAccess();
+            if (submission.status === "done" && submission.type === "input")
+              runtimeContent("final", {
+                scope,
+                resourceId: id,
+                submissionId,
+                status: "done",
+                content: entries
+                  .flatMap((entry) => entry.model ?? [])
+                  .flatMap((message) =>
+                    message.role === "assistant"
+                      ? message.content.flatMap((part) =>
+                          part.type === "text"
+                            ? [{ type: part.type, text: part.text }]
+                            : [],
+                        )
+                      : [],
+                  ),
+              });
             return { submission, entries };
           }),
         /** Private native views. Never send these objects across the public boundary. */

@@ -16,14 +16,21 @@ test("real sanitized export preserves per-job roots through ACK, retries, reopen
   const path = join(directory, "inbox.sqlite");
   const originalFetch = globalThis.fetch;
   const exported: string[] = [];
+  const logs: string[] = [];
   globalThis.fetch = async (input, init) => {
     if (String(input) === "https://api.axiom.co/v1/traces") {
       exported.push(String(init?.body));
       return new Response("{}");
     }
+    if (String(input) === "https://api.axiom.co/v1/logs") {
+      logs.push(String(init?.body));
+      return new Response("{}");
+    }
     return originalFetch(input, init);
   };
   process.env.COMPUTAH_AXIOM_INGEST_TOKEN = "synthetic-axiom-secret-not-real";
+  process.env.COMPUTAH_AXIOM_LOG_DATASET = "synthetic-private-logs";
+  process.env.COMPUTAH_AXIOM_CONTENT_ENABLED = "1";
   const telemetry = await startObservability("slack");
   const binding: Binding = {
     teamId: "TFAKE",
@@ -135,6 +142,50 @@ test("real sanitized export preserves per-job roots through ACK, retries, reopen
     db.close();
     adapter.close();
     await telemetry.close();
+    const privateRows = logs.flatMap((batch) =>
+      JSON.parse(batch).resourceLogs.flatMap(
+        (resource: {
+          scopeLogs: {
+            logRecords: {
+              traceId?: string;
+              attributes: { key: string; value: { stringValue?: string } }[];
+            }[];
+          }[];
+        }) => resource.scopeLogs.flatMap((scope) => scope.logRecords),
+      ),
+    );
+    const contents = privateRows
+      .map((row) => ({
+        traceId: row.traceId,
+        attributes: Object.fromEntries(
+          row.attributes.map(
+            (attr: { key: string; value: { stringValue?: string } }) => [
+              attr.key,
+              attr.value.stringValue,
+            ],
+          ),
+        ),
+      }))
+      .filter((row) => row.attributes["content.payload"]);
+    assert.ok(
+      contents.some(
+        (row) =>
+          row.traceId === root.split("-")[1] &&
+          row.attributes["content.kind"] === "incoming" &&
+          row.attributes["content.payload"]?.includes(
+            "private-synthetic-message",
+          ),
+      ),
+    );
+    assert.ok(
+      contents.some(
+        (row) =>
+          row.attributes["content.kind"] === "final" &&
+          row.attributes["content.payload"]?.includes('"outcome":"attempt"'),
+      ),
+    );
+    assert.ok(!logs.join("").includes("synthetic-core-secret"));
+    assert.ok(!logs.join("").includes("private-ambiguous-send"));
     const encoded = exported.join("\n");
     for (const secret of [
       "private-synthetic",
@@ -207,6 +258,8 @@ test("real sanitized export preserves per-job roots through ACK, retries, reopen
     await telemetry.close();
     globalThis.fetch = originalFetch;
     delete process.env.COMPUTAH_AXIOM_INGEST_TOKEN;
+    delete process.env.COMPUTAH_AXIOM_LOG_DATASET;
+    delete process.env.COMPUTAH_AXIOM_CONTENT_ENABLED;
     await rm(directory, { recursive: true });
   }
 });

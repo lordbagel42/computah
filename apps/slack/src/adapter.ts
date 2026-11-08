@@ -3,6 +3,8 @@ import { DatabaseSync } from "node:sqlite";
 import {
   createTraceCarrier,
   currentTraceHeaders,
+  registerContentSecrets,
+  runtimeContent,
   runtimeLog,
   traceEvent,
   traceInterval,
@@ -199,6 +201,10 @@ export class SlackAdapter {
     this.bindings = new Map(
       bindings.map((binding) => [bindingKey(binding), binding]),
     );
+    registerContentSecrets([
+      ...diagnosticSecrets,
+      ...bindings.map((binding) => binding.coreToken),
+    ]);
     if (
       new Set(privateBindings.map((b) => `${b.teamId}:${b.slackUserId}`))
         .size !== privateBindings.length
@@ -663,6 +669,26 @@ export class SlackAdapter {
       );
     }
     const carrier = this.timing(jobId)?.traceparent;
+    withTraceContext(carrier ? { traceparent: carrier } : {}, () =>
+      runtimeContent("incoming", {
+        source: "slack",
+        jobId,
+        receiptId: id,
+        actor: {
+          tenantId: binding.tenantId,
+          userId: binding.userId,
+          agentId: binding.agentId,
+        },
+        participant: binding.slackUserId,
+        team: binding.teamId,
+        channel: event.channel,
+        messageTs: event.ts,
+        sourceThread: event.thread_ts ?? null,
+        replyThread: thread,
+        text: event.text,
+        preparedText: text,
+      }),
+    );
     traceInterval(
       "slack.admit",
       admissionStarted,
@@ -1086,6 +1112,15 @@ export class SlackAdapter {
         // must retry identical text, never absorb newer input into that ID.
         this.finish(job.id, "admitting");
         await this.phase(job.id, "submit", async () => {
+          runtimeContent("incoming", {
+            source: "slack.prepared",
+            text: job.text,
+            jobId: job.id,
+            clientMutationId: job.id,
+            participant: binding.slackUserId,
+            channel: job.channel,
+            replyThread: job.thread,
+          });
           const result = (await this.transport.request(
             binding,
             "/v1/submissions",
@@ -1676,11 +1711,30 @@ export class SlackAdapter {
             : route?.channel ||
               job.channel ||
               (await this.transport.openDm(binding.slackUserId));
+        runtimeContent("final", {
+          source: "slack.delivery",
+          outcome: "attempt",
+          text,
+          jobId: job.id,
+          channel,
+          replyThread: privateChannel
+            ? null
+            : route
+              ? route.thread
+              : job.thread,
+          participant: binding.slackUserId,
+        });
         await this.transport.post(
           channel,
           text,
           privateChannel ? null : route ? route.thread : job.thread,
         );
+        runtimeContent("activity", {
+          source: "slack.delivery",
+          outcome: "success",
+          jobId: job.id,
+          channel,
+        });
       });
       this.finish(job.id, "done");
     } catch {

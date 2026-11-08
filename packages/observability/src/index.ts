@@ -15,11 +15,13 @@ import {
   startRuntimeLogging,
 } from "./logs.js";
 
+export { type RuntimeContentKind, registerContentSecrets } from "./content.js";
 export {
   type RuntimeLogEvent,
   type RuntimeLogFields,
   type RuntimeMetricName,
   type RuntimeMetricSample,
+  runtimeContent,
   runtimeLog,
   runtimeMetric,
   startRuntimeLogging,

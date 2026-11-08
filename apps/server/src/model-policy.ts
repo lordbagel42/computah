@@ -1,7 +1,15 @@
-import { traceModelStream, traceOperation } from "@computah/observability";
+import {
+  currentTraceHeaders,
+  registerContentSecrets,
+  runtimeContent,
+  traceModelStream,
+  traceOperation,
+  withTraceContext,
+} from "@computah/observability";
 import type {
   Api,
   AssistantMessage,
+  Context,
   Model,
   Models,
   StreamOptions,
@@ -111,6 +119,38 @@ export function priorityModels(
     };
   }
   function terminal(model: Model<Api>, message: AssistantMessage) {
+    runtimeContent("model.output", {
+      model: `${model.provider}/${model.id}`,
+      sourceTruncated: message.content.length > 128,
+      missing: message.content
+        .slice(0, 128)
+        .some((part) => part.type === "thinking")
+        ? ["hidden_reasoning_excluded"]
+        : [],
+      stopReason: message.stopReason,
+      error: message.errorMessage,
+      usage: message.usage && {
+        input: message.usage.input,
+        output: message.usage.output,
+        cacheRead: message.usage.cacheRead,
+        cacheWrite: message.usage.cacheWrite,
+        totalTokens: message.usage.totalTokens,
+      },
+      content: message.content.slice(0, 128).flatMap<unknown>((part) =>
+        part.type === "text"
+          ? [{ type: part.type, text: part.text }]
+          : part.type === "toolCall"
+            ? [
+                {
+                  type: part.type,
+                  id: part.id,
+                  name: part.name,
+                  arguments: part.arguments,
+                },
+              ]
+            : [],
+      ),
+    });
     report({
       model: `${model.provider}/${model.id}`,
       event: "terminal",
@@ -128,58 +168,145 @@ export function priorityModels(
     });
     return message;
   }
+  function captureInput(
+    model: Model<Api>,
+    context: Context,
+    input?: StreamOptions,
+  ) {
+    registerContentSecrets(input?.apiKey ? [input.apiKey] : []);
+    const messages = context.messages.slice(-64);
+    const missing = new Set<string>();
+    let sourceTruncated = context.messages.length > 64;
+    const projected = messages.map((message) => {
+      if (Array.isArray(message.content) && message.content.length > 128)
+        sourceTruncated = true;
+      return {
+        role: message.role,
+        content:
+          typeof message.content === "string"
+            ? message.content
+            : message.content.slice(0, 128).flatMap<unknown>((part) => {
+                if (part.type === "text")
+                  return [{ type: part.type, text: part.text }];
+                if (part.type === "toolCall")
+                  return [
+                    {
+                      type: part.type,
+                      id: part.id,
+                      name: part.name,
+                      arguments: part.arguments,
+                    },
+                  ];
+                if (part.type === "image") {
+                  missing.add("image_bytes_excluded");
+                  return [{ type: part.type, mimeType: part.mimeType }];
+                }
+                missing.add("hidden_reasoning_excluded");
+                return [];
+              }),
+        ...(message.role === "system"
+          ? {
+              sections: message.sections,
+              toolsAdded: message.toolsAdded?.slice(0, 64),
+              toolsRemoved: message.toolsRemoved?.slice(0, 64),
+            }
+          : {}),
+        ...(message.role === "toolResult"
+          ? {
+              toolCallId: message.toolCallId,
+              toolName: message.toolName,
+              isError: message.isError,
+            }
+          : {}),
+      };
+    });
+    runtimeContent("model.input", {
+      model: `${model.provider}/${model.id}`,
+      sourceTruncated:
+        sourceTruncated ||
+        (context.tools?.length ?? 0) > 64 ||
+        messages.some(
+          (message) =>
+            message.role === "system" &&
+            ((message.toolsAdded?.length ?? 0) > 64 ||
+              (message.toolsRemoved?.length ?? 0) > 64),
+        ),
+      missing: [...missing],
+      // Most recent first so the shared byte budget prioritizes this request.
+      messageOrder: "newest_first",
+      messages: projected.reverse(),
+      system: context.systemPrompt,
+      tools: context.tools?.slice(0, 64),
+    });
+  }
+  function failure(model: Model<Api>, input?: StreamOptions) {
+    runtimeContent("model.output", {
+      model: `${model.provider}/${model.id}`,
+      outcome: input?.signal?.aborted ? "cancelled" : "error",
+      error: "model_request_failed",
+    });
+    report({
+      model: `${model.provider}/${model.id}`,
+      event: "terminal",
+      requested: "priority",
+      outcome: input?.signal?.aborted ? "aborted" : "provider-error",
+    });
+  }
+  function observeStream<T extends { result(): Promise<AssistantMessage> }>(
+    model: Model<Api>,
+    context: Context,
+    input: StreamOptions | undefined,
+    call: () => T,
+  ): T {
+    // Invoked INSIDE traceModelStream's active span. Restore that exact carrier
+    // for terminal callbacks rather than inheriting the result consumer's context.
+    const carrier = currentTraceHeaders();
+    captureInput(model, context, input);
+    try {
+      const stream = call();
+      void stream.result().then(
+        (message) => withTraceContext(carrier, () => terminal(model, message)),
+        () => withTraceContext(carrier, () => failure(model, input)),
+      );
+      return stream;
+    } catch (error) {
+      failure(model, input);
+      throw error;
+    }
+  }
   const requests: Pick<
     Models,
     "stream" | "streamSimple" | "complete" | "completeSimple"
   > = {
     stream(model, context, input) {
-      const stream = traceModelStream(
-        model.id,
-        () => models.stream<Api>(model, context, options(model, input ?? {})),
-        parent(input),
-      );
-      void stream.result().then(
-        (message) => terminal(model, message),
-        () => {
-          report({
-            model: `${model.provider}/${model.id}`,
-            event: "terminal",
-            requested: "priority",
-            outcome: "provider-error",
-          });
-        },
-      );
-      return stream;
-    },
-    streamSimple(model, context, input) {
-      const stream = traceModelStream(
+      return traceModelStream(
         model.id,
         () =>
-          models.streamSimple(model, context, {
-            ...options(model, input ?? {}),
-            reasoning: "high",
-          }),
+          observeStream(model, context, input, () =>
+            models.stream<Api>(model, context, options(model, input ?? {})),
+          ),
         parent(input),
       );
-      void stream.result().then(
-        (message) => terminal(model, message),
-        () => {
-          report({
-            model: `${model.provider}/${model.id}`,
-            event: "terminal",
-            requested: "priority",
-            outcome: "provider-error",
-          });
-        },
+    },
+    streamSimple(model, context, input) {
+      return traceModelStream(
+        model.id,
+        () =>
+          observeStream(model, context, input, () =>
+            models.streamSimple(model, context, {
+              ...options(model, input ?? {}),
+              reasoning: "high",
+            }),
+          ),
+        parent(input),
       );
-      return stream;
     },
     async complete(model, context, input) {
-      return terminal(
-        model,
-        await traceOperation(
-          "model",
-          async (span) => {
+      return traceOperation(
+        "model",
+        async (span) => {
+          captureInput(model, context, input);
+          try {
             const message = await models.complete<Api>(
               model,
               context,
@@ -187,28 +314,34 @@ export function priorityModels(
             );
             span.setAttribute("outcome", message.stopReason);
             if (message.stopReason === "error") span.setStatus({ code: 2 });
-            return message;
-          },
-          parent(input),
-        ),
+            return terminal(model, message);
+          } catch (error) {
+            failure(model, input);
+            throw error;
+          }
+        },
+        parent(input),
       );
     },
     async completeSimple(model, context, input) {
-      return terminal(
-        model,
-        await traceOperation(
-          "model",
-          async (span) => {
+      return traceOperation(
+        "model",
+        async (span) => {
+          captureInput(model, context, input);
+          try {
             const message = await models.completeSimple(model, context, {
               ...options(model, input ?? {}),
               reasoning: "high",
             });
             span.setAttribute("outcome", message.stopReason);
             if (message.stopReason === "error") span.setStatus({ code: 2 });
-            return message;
-          },
-          parent(input),
-        ),
+            return terminal(model, message);
+          } catch (error) {
+            failure(model, input);
+            throw error;
+          }
+        },
+        parent(input),
       );
     },
   };

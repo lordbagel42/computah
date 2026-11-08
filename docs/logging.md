@@ -43,6 +43,66 @@ not inferred from the service catalog. The lower-level
 creates an isolated instance for tests and explicitly authorized synthetic proof;
 application code should use the singleton, not create competing pipelines.
 
+## Authorized private content records
+
+The owner explicitly requested searchable actual operation content in private
+Axiom. `COMPUTAH_AXIOM_CONTENT_ENABLED=1`, together with the normal protected log
+configuration, opts a process into `runtimeContent(kind, payload)`. Default is
+disabled; the observatory service cannot enable this lane. The isolated test
+logger accepts `contentEnabled: true`. Generic `runtimeLog` remains content-free
+and cannot manufacture a `content.record` or analytics sample.
+
+This is the same bounded queue/exporter and private `computah-prod-logs` dataset,
+not a new exporter or raw stdout sink. Keep its query grants restricted to
+authorized operators; its configured dataset retention applies to content too.
+Do not grant the public observatory credential access to logs. Runtime code does
+not provision permissions/retention or certify their deployed configuration.
+
+OTLP body is fixed `content.record`. Attributes are:
+
+- `content.schema`: exactly `computah.content.v1`.
+- `content.kind`: `incoming`, `final`, `model.input`, `model.output`, `tool.call`,
+  `tool.result`, `activity`.
+- `content.payload`: JSON string containing the bounded actual source-projected
+  text/arguments/result, available trusted actor/participant/location/submission
+  identity, activity and usage. Literal text is searchable, not replaced by hashes.
+- `content.truncated`, `content.redacted`: booleans.
+- `content.missing`: `none` or comma-separated fixed categories
+  `unsupported_value`, `cyclic_value`, `hidden_reasoning_excluded`,
+  `accessor_excluded`; whole-record fallback is `record_limit` or
+  `projection_failed`. Source-specific unavailable evidence is explicit in payload.
+- `content.correlation`: `active` or `missing`; existing emission-time trace/span,
+  `log.id`, service and revision fields remain. A missing context is not fabricated.
+
+`content.ts` removes credential/header/auth fields, registered host secrets and
+recognizable credential patterns from free text; hidden thinking/reasoning blocks,
+signatures and encrypted reasoning never enter the payload. Explicitly available
+reasoning summaries can use `reasoningSummary`, never hidden model reasoning.
+Current protected environment/auth JSON credentials and HTTP/operator secret/URL
+values are registered locally. Do not interpret pattern matching as universal
+secret detection: arbitrary unknown secrets or obfuscated credentials in prose
+cannot be guaranteed detectable. Call sites must source-project operation data,
+not serialize credentials, arbitrary runtime objects or raw checkpoint histories.
+The secret registry retains at most 512 distinct values (64 KiB each). Overflow,
+oversized credentials or incomplete bounded auth-config traversal disable further
+content admission instead of forgetting known credentials; scalar logs continue.
+
+Projection bounds: depth 12, 1,024 visited nodes, 128 array elements, 64 object
+fields, 16 KiB encoded JSON per string and 32 KiB total encoded strings/keys;
+serialized payload at most 64 KiB. Redaction uses bounded lookahead before clipping.
+Nonserializable/cyclic/getter inputs fail open with missing-evidence markers;
+no `toJSON` hooks are executed. Content admission is capped at 128 occupied queue
+slots and 2 MiB serialized content bytes including in-flight records, reserving
+at least 384 slots for scalar lifecycle/error/analytics rows. New content drops
+under pressure. Batches are capped at 64 rows and 256 KiB row bytes (plus fixed
+OTLP envelope); the same deadlines, no-retry and shutdown semantics apply.
+
+Only new normal operations are captured: no bulk Slack retrieval, history dump,
+database export or backfill. A model input may include the bounded context the
+application was already sending for that operation. DEBUGSHARE remains a separate
+explicit capture. Local exporter tests are not live ingestion or exhaustive
+coverage; the [coverage ledger](observability.md) records adoption/proof separately.
+
 ## Analytics observation hook
 
 The separately authorized `runtimeMetric(sample: RuntimeMetricSample)` emits
@@ -162,7 +222,8 @@ OTLP body is the fixed event name; attributes carry approved fields and generate
   [Axiom OTel contract](https://axiom.co/docs/send-data/opentelemetry).
 - At most 512 records **including in-flight records**, each bounded by the fixed
   schema. Newest records drop at capacity. One serial exporter sends at most 64
-  records per batch. Automatic flush runs every second on an unreferenced timer.
+  records and 256 KiB serialized row bytes per batch. Automatic flush runs every
+  second on an unreferenced timer.
 - Each batch has a five-second deadline covering headers/body/cleanup, aborts
   on timeout, and reads at most 4096 response bytes. HTTP/network/parse failures,
   excessive responses and partial OTLP rejections increment failure counters.
@@ -175,8 +236,8 @@ OTLP body is the fixed event name; attributes carry approved fields and generate
 - `flush()` settles all records accepted before its invocation; later emissions
   may need a later flush. Concurrent flushes share serialized export work.
   `close()` immediately stops admission and the timer, then drains accepted work;
-  repeated close is safe. A full queue requires up to eight batches, or nine if
-  a smaller batch was already in flight (up to 45 seconds at the deadline).
+  repeated close is safe. Content-enabled byte limits can require more batches
+  than the content-free queue's eight full batches; shutdown must allow for drain.
   Crashes/exiting without close can lose queued data.
 - `stats()`/flush/close return snapshots: `enabled`, `closed`, `queued`, `accepted`,
   `exported`, `failed`, `dropped`, `rejected`. Exported means OTLP acknowledged,
