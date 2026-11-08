@@ -13,6 +13,7 @@ import { SocketModeClient } from "@slack/socket-mode";
 import { LogLevel, WebClient } from "@slack/web-api";
 import { type Binding, type Ingress, SlackAdapter } from "./adapter.js";
 import type { DebugReport } from "./debugshare.js";
+import { CoreDenied, readProgress } from "./lifecycle.js";
 import { presentSlack } from "./presentation.js";
 import { startTimingBroker } from "./timing-broker.js";
 
@@ -249,6 +250,8 @@ async function run() {
         signal: AbortSignal.timeout(30_000),
         redirect: "error",
       });
+      if (response.status === 401 || response.status === 403)
+        throw new CoreDenied();
       if (!response.ok) throw new Error("Core unavailable");
       return response.json();
     });
@@ -277,6 +280,26 @@ async function run() {
     auth.user_id,
     {
       request,
+      async progress(binding, submission) {
+        return traceOperation("slack.core", async () => {
+          const response = await fetch(
+            new URL(
+              `/v1/submissions/${encodeURIComponent(submission)}/events`,
+              base,
+            ),
+            {
+              headers: {
+                authorization: `Bearer ${binding.coreToken}`,
+                accept: "text/event-stream",
+                ...currentTraceHeaders(),
+              },
+              signal: AbortSignal.timeout(2000),
+              redirect: "error",
+            },
+          );
+          return readProgress(response, submission);
+        });
+      },
       ...(publishDebugshare ? { publishDebugshare } : {}),
       async diagnosticContext(source) {
         const scope = source.channel.startsWith("D")

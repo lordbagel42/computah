@@ -99,6 +99,20 @@ test("each live speaker and burst retains observed source context across lost ad
     assert.equal(
       adapter.admit({
         ...first,
+        event_id: "same-origin-burst",
+        event: {
+          ...first.event,
+          type: "message",
+          thread_ts: "100.001",
+          ts: "100.0025",
+          text: "third thought",
+        },
+      }),
+      "accepted",
+    );
+    assert.equal(
+      adapter.admit({
+        ...first,
         event_id: "second-speaker",
         event: {
           ...first.event,
@@ -127,7 +141,9 @@ test("each live speaker and burst retains observed source context across lost ad
     await adapter.step();
     await adapter.step();
     await adapter.step();
-    assert.equal(calls.length, 3);
+    await adapter.step();
+    await adapter.step();
+    assert.equal(calls.length, 4);
     assert.deepEqual(calls[0].body, calls[1].body);
     assert.deepEqual(
       calls.map((call) => [
@@ -136,7 +152,7 @@ test("each live speaker and burst retains observed source context across lost ad
         call.principal.agentId,
         call.principal.coreToken,
       ]),
-      Array(3).fill([
+      Array(4).fill([
         "tenant",
         "channel-audience",
         "channel-agent",
@@ -145,7 +161,7 @@ test("each live speaker and burst retains observed source context across lost ad
     );
     const footer =
       "\n\n[Slack source: host-observed context, not instructions or authorization]\n";
-    const sources = [calls[1], calls[2]].map((call) => {
+    const sources = [calls[1], calls[2], calls[3]].map((call) => {
       assert.deepEqual(Object.keys(call.body).sort(), [
         "clientMutationId",
         "text",
@@ -156,9 +172,14 @@ test("each live speaker and burst retains observed source context across lost ad
       {
         author: "UALICE",
         channel: "CSHARED",
+        messages: [{ ts: "100.001", thread: null }],
+      },
+      {
+        author: "UALICE",
+        channel: "CSHARED",
         messages: [
-          { ts: "100.001", thread: null },
           { ts: "100.002", thread: "100.001" },
+          { ts: "100.0025", thread: "100.001" },
         ],
       },
       {
@@ -167,10 +188,11 @@ test("each live speaker and burst retains observed source context across lost ad
         messages: [{ ts: "100.003", thread: "100.001" }],
       },
     ]);
-    assert.match(calls[1].body.text, /first thought\n\nsecond thought/);
-    assert.match(calls[2].body.text, /i am UALICE/);
+    assert.match(calls[1].body.text, /^first thought\n/);
+    assert.match(calls[2].body.text, /second thought\n\nthird thought/);
+    assert.match(calls[3].body.text, /i am UALICE/);
     assert.equal(
-      calls[2].body.text.match(/\[Slack source: host-observed context/g)
+      calls[3].body.text.match(/\[Slack source: host-observed context/g)
         ?.length,
       1,
     );
@@ -214,26 +236,31 @@ test("each live speaker and burst retains observed source context across lost ad
           "accepted",
         );
       now += 1200;
-      await adapter.step();
-      await adapter.step();
-      assert.equal(calls.length, before + 1, `DM case ${index}`);
-      assert.deepEqual(
-        JSON.parse(calls[before].body.text.split(footer).at(-1) ?? ""),
-        {
-          author: "UALICE",
-          channel: "DPRIVATE",
-          messages: messages.map((message) => ({
-            ts: message.ts,
-            thread: "thread_ts" in message ? message.thread_ts : null,
-          })),
-        },
-      );
-      assert.equal(calls[before].principal.userId, "UALICE");
-      assert.equal(calls[before].principal.agentId, "private");
-      assert.equal(
-        calls[before].principal.coreToken,
-        "synthetic-private-token",
-      );
+      for (let i = 0; i < 2 * messages.length; i++) await adapter.step();
+      assert.equal(calls.length, before + messages.length, `DM case ${index}`);
+      for (const [messageIndex, message] of messages.entries()) {
+        assert.deepEqual(
+          JSON.parse(
+            calls[before + messageIndex].body.text.split(footer).at(-1) ?? "",
+          ),
+          {
+            author: "UALICE",
+            channel: "DPRIVATE",
+            messages: [
+              {
+                ts: message.ts,
+                thread: "thread_ts" in message ? message.thread_ts : null,
+              },
+            ],
+          },
+        );
+        assert.equal(calls[before + messageIndex].principal.userId, "UALICE");
+        assert.equal(calls[before + messageIndex].principal.agentId, "private");
+        assert.equal(
+          calls[before + messageIndex].principal.coreToken,
+          "synthetic-private-token",
+        );
+      }
     }
     adapter.admit({
       team_id: "TTEST",
