@@ -4,6 +4,23 @@ Requires Node 22.19+ and pnpm 12.0.0. The lockfile pins installed packages; Effe
 is 4.1.2 and TypeScript 7.0.2. E2B orbs are the default build environment. No cloud
 resources, accounts or deployments are needed for contract tests.
 
+## Amp orbs
+
+Executable `.agents/setup` prepares snapshot-ready dependencies: the Dockerfile's
+Node version, the root manifest's pnpm version, both pinned Rust toolchains with
+Clippy/rustfmt, and Linux native build/graphics prerequisites. It installs frozen
+dependencies for the root workspace, the independent Rune experiment (using its
+own pnpm pin), and both deployment workspaces. Cargo fetches both locked native
+workspaces for the Linux host without compiling them. Warm setup reuses installed
+toolchains and package caches; login shells inherit their paths.
+
+`.agents/resume` only checks local toolchain availability. No dependency installs,
+servers, provider logins, real Pi installation or deployment actions run on wake.
+Deterministic tests need no external services or secrets. Fetching dependencies
+does not establish successful compilation, native rendering or live acceptance.
+Changes to these scripts affect future project snapshots only after publication
+to the default branch; existing orbs can run setup explicitly to refresh.
+
 Run `pnpm install`, then `pnpm format`, `pnpm check`, `pnpm typecheck`, `pnpm test`.
 The only approved dependency install script initially is esbuild's platform-binary
 setup. Optional @google/genai, cbor-extract, lmdb, msgpackr-extract and protobufjs

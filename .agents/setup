@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+repo_root="$PWD"
+export CI=true
+# Each install below selects its own binary, including pnpm 10 for the experiment.
+export npm_config_manage_package_manager_versions=false
+
+step() {
+  local started=$SECONDS
+  printf '\n[orb setup] %s\n' "$*"
+  "$@"
+  printf '[orb setup] completed in %ss\n' "$((SECONDS - started))"
+}
+
+# Only refresh apt metadata when a prerequisite is actually missing.
+packages=(ca-certificates curl git xz-utils build-essential pkg-config
+  libfontconfig-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev
+  libvulkan1 mesa-vulkan-drivers)
+missing=()
+for package in "${packages[@]}"; do
+  if [[ "$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)" != 'install ok installed' ]]; then
+    missing+=("$package")
+  fi
+done
+if ((${#missing[@]})); then
+  elevate=()
+  if ((EUID != 0)); then elevate=(sudo -n); fi
+  step "${elevate[@]}" apt-get update
+  step "${elevate[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+fi
+
+# Match the production Node pin without replacing the orb's system binaries.
+toolchain="$HOME/.local/share/computah-toolchain"
+node_version="$(sed -nE 's/^FROM node:([0-9.]+)-.*/\1/p' Dockerfile)"
+[[ -n "$node_version" ]]
+export PATH="$toolchain/node/bin:$toolchain/bin:$HOME/.cargo/bin:$PATH"
+if [[ ! -x "$toolchain/node/bin/node" ]] || [[ "$("$toolchain/node/bin/node" --version)" != "v$node_version" ]]; then
+  case "$(uname -m)" in
+    x86_64) arch=x64 ;;
+    aarch64) arch=arm64 ;;
+    *) echo 'Unsupported Node architecture' >&2; exit 1 ;;
+  esac
+  download="$(mktemp -d)"
+  trap 'rm -rf "$download"' EXIT
+  archive="node-v$node_version-linux-$arch.tar.xz"
+  step curl --fail --silent --show-error --location "https://nodejs.org/dist/v$node_version/$archive" -o "$download/$archive"
+  step curl --fail --silent --show-error --location "https://nodejs.org/dist/v$node_version/SHASUMS256.txt" -o "$download/SHASUMS256.txt"
+  (cd "$download"; grep "  $archive\$" SHASUMS256.txt | sha256sum --check -)
+  mkdir -p "$toolchain/node"
+  step tar -xJf "$download/$archive" --strip-components=1 -C "$toolchain/node"
+  rm -rf "$download"
+  trap - EXIT
+fi
+
+pnpm_version="$(node -p 'require("./package.json").packageManager.split("@")[1]')"
+if [[ ! -x "$toolchain/bin/pnpm" ]] || [[ "$("$toolchain/bin/pnpm" --version)" != "$pnpm_version" ]]; then
+  step npm install --global --prefix "$toolchain" "pnpm@$pnpm_version"
+fi
+experiment_pnpm_version="$(node -p 'require("./experiments/rune-pi/package.json").packageManager.split("@")[1]')"
+experiment_pnpm="$toolchain/rune-pi/bin/pnpm"
+if [[ ! -x "$experiment_pnpm" ]] || [[ "$("$experiment_pnpm" --version)" != "$experiment_pnpm_version" ]]; then
+  step npm install --global --prefix "$toolchain/rune-pi" "pnpm@$experiment_pnpm_version"
+fi
+
+# Amp and supervised services use separate login shells after setup exits.
+profile_marker='# Computah orb toolchains'
+if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+  cat >> "$HOME/.bash_profile" <<'PROFILE'
+
+# Computah orb toolchains
+export PATH="$HOME/.local/share/computah-toolchain/node/bin:$HOME/.local/share/computah-toolchain/bin:$HOME/.cargo/bin:$PATH"
+PROFILE
+fi
+
+if ! command -v rustup >/dev/null; then
+  download="$(mktemp -d)"
+  trap 'rm -rf "$download"' EXIT
+  step curl --fail --silent --show-error --location https://sh.rustup.rs -o "$download/rustup-init.sh"
+  step sh "$download/rustup-init.sh" -y --no-modify-path --profile minimal --default-toolchain none
+  rm -rf "$download"
+  trap - EXIT
+fi
+for workspace in apps/native experiments/rune-pi; do
+  rust_version="$(sed -nE 's/^channel = "([^"]+)"/\1/p' "$workspace/rust-toolchain.toml")"
+  [[ -n "$rust_version" ]]
+  installed="$(rustup component list --installed --toolchain "$rust_version" 2>/dev/null || true)"
+  if ! grep -q '^rustc-' <<< "$installed" || ! grep -q '^clippy-' <<< "$installed" || ! grep -q '^rustfmt-' <<< "$installed"; then
+    step rustup toolchain install "$rust_version" --profile minimal --component clippy,rustfmt
+  fi
+done
+
+# Select the experiment's own pinned version explicitly; never rewrite its lockfile.
+step pnpm install --frozen-lockfile
+for workspace in experiments/rune-pi deploy apps/observatory/deploy; do
+  (
+    cd "$workspace"
+    if [[ "$workspace" == experiments/rune-pi ]]; then
+      step "$experiment_pnpm" install --ignore-workspace --lockfile-dir . --frozen-lockfile --ignore-scripts
+    else
+      step pnpm install --frozen-lockfile
+    fi
+  )
+done
+for workspace in apps/native experiments/rune-pi; do
+  (
+    cd "$workspace"
+    host="$(rustc -vV | sed -n 's/^host: //p')"
+    step cargo fetch --locked --target "$host"
+  )
+done
+printf '\n[orb setup] Toolchains and locked dependencies ready for %s\n' "$repo_root"
