@@ -25,7 +25,7 @@ and individual measured spans. Missing roots or pre-index historical messages
 return unavailable; no time-proximity matching or historical reconstruction.
 
 Authority is the private Pi binding plus an explicit `operations.read` grant in
-`COMPUTAH_AUTH_JSON`, rechecked before query and disclosure. Runtime uses only
+`COMPUTAH_AUTH_JSON`, rechecked before query and disclosure. Axiom queries use only
 `COMPUTAH_AXIOM_QUERY_TOKEN`, privately provisioned as Query-only access to
 `computah-prod-traces`. Key presence does not grant a principal access. Never
 extract Amp MCP credentials or reuse ingest/management credentials. Dataset
@@ -33,6 +33,30 @@ scoping alone is not tenant isolation: tool arguments cannot select arbitrary
 APL, dataset, time range, trace IDs or foreign actors. Incoming `traceparent` is
 correlation, not authority to query its entire trace; upstream Slack/bus timing
 requires a separately host-verified durable receipt linkage.
+
+The optional backend `CoreOptions.transportTiming` callback now reads the Slack
+broker using only the host-selected Interaction `input:slack:<hash>` receipt and
+frozen private scope. The executable activates this UDS-only client when both
+`COMPUTAH_SLACK_TIMING_SOCKET` and `COMPUTAH_SLACK_TIMING_TOKEN_FILE` are absolute
+paths. Both absent disables it; partial configuration fails startup. The separate
+token file needs no group/other permissions and at least 32 characters. Provision
+private token copies outside the dedicated shared socket directory; mount only
+that directory, never Slack journal/bindings. Current broker bindings additionally
+check tenant/user/agent and the stored receipt audience. Unknown, foreign and
+revoked receipts are indistinguishable unavailable results.
+
+Transport evidence is returned independently of missing/failed Axiom access.
+It projects Unix-ms receive/admission/dequeue clocks, original Slack sender
+timestamp, each delivery/queue/core/API attempt and nullable outcomes. The returned
+broker traceparent is informational only: it is never added to the Axiom query
+roots. No arbitrary trace lookup, browser identity or caller carrier grants access.
+The client has a two-second I/O deadline, propagates cancellation, performs no
+automatic retries and validates a maximum 256 KiB positive-schema response with
+at most 2048 phases/receipts. Current grants are rechecked after I/O and before
+final disclosure. Whole spans, then phase/receipt rows, are removed if necessary
+to keep the entire valid JSON result within 120000 bytes, with explicit truncation.
+Local UDS, revoked/foreign scope, bounds, cancellation and sanitized trace/log
+checks are not live socket activation or live Axiom query proof.
 
 The fixed query uses Axiom's US East edge `/v1/query/_apl?format=tabular`, bounded
 to at most 24 hours from the earliest recorded admission (with a one-minute lead),
@@ -50,8 +74,9 @@ is through terminal stream result, **not TTFT**. Slack Web API lifetime is not
 platform delivery confirmation. Nested phases overlap: never add them as reply
 wall-clock. Missing sender creation, receive, queue and delivered timestamps stay
 unavailable rather than zero. Best-effort export can lose spans; an empty query
-does not prove no work occurred. Separate Slack/bus durable timing instrumentation
-and scoped query credential provisioning are not implied by this source packet.
+does not prove no work occurred. Slack transport receipts do not require Axiom;
+actual model span retrieval still requires the separate scoped query credential.
+Bus transport receipts and live timeline acceptance remain separate.
 
 ## Native private Worker files
 

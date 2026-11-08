@@ -37,6 +37,16 @@ DEBUGSHARE collection, diagnostics bundles or diagnostic-agent spawning is added
   cancellation. Only categorical outcomes export, never APL, schemas, results,
   PATs or organization headers. Local sanitized-export tests verify parentage;
   live native MCP queries remain blocked on private restricted-member credentials.
+- The backend private Slack timing client records `computah.slack.timing` under
+  the native Pi tool carrier, covering grants, bounded UDS I/O, cancellation and
+  final authorization. Resolved denials/failures are not successful spans/logs.
+  Receipt IDs, bindings, timestamps and broker credentials are not telemetry
+  attributes. Local sanitized-export tests cover success/denial/error/cancel and
+  timeout, plus parent continuity; they do not prove live ingestion. The broker
+  receipt carrier remains data, never authority to broaden Axiom trace queries.
+  The shipped broker deliberately ignores incoming trace headers and starts an
+  independent lookup root, so cross-process UDS lookup span continuity remains a
+  gap; local client-to-native-tool parent continuity is not that stronger claim.
 - The separate bus entry point records HTTP, native actor spans and lifecycle.
   It remains dispatch-disabled and does not mount backend/provider credentials.
   Provision only its Axiom credential, not the backend's provider env file.

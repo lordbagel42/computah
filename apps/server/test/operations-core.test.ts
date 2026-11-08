@@ -43,6 +43,7 @@ test("timing selects the earlier answered exchange and its Worker, never this di
     evidence: { status: string; code?: string };
   }[] = [];
   const queries: string[] = [];
+  const transportReceipts: string[] = [];
   let enqueue: (() => void) | undefined;
   const provider: PiProviderConfig = {
     api: "ops-test",
@@ -99,6 +100,17 @@ test("timing selects the earlier answered exchange and its Worker, never this di
     apiKeys: { "ops-test": "synthetic" },
     authorize: (scope, capability) =>
       scope.userId === "alice" || capability !== "operations.read",
+    transportTiming: async (scope, requestId, _signal, parent) => {
+      expect(Object.isFrozen(scope)).toBe(true);
+      expect(scope).toEqual({
+        tenantId: "synthetic",
+        userId: "alice",
+        agentId: "default",
+      });
+      expect(parent?.traceparent).toMatch(/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/);
+      transportReceipts.push(requestId);
+      return { status: "unavailable", code: "not_slack_receipt" };
+    },
     operations: {
       queryToken: "synthetic-query",
       fetch: async (_url, init) => {
@@ -171,6 +183,7 @@ test("timing selects the earlier answered exchange and its Worker, never this di
     expect(observed[0].targets[0].executionTraceId).toMatch(/^[a-f0-9]{32}$/);
     expect(observed[0].targets[1].requestId).toMatch(/^task:/);
     expect(observed[0].evidence.status).toBe("ready");
+    expect(transportReceipts).toEqual(["input:prior"]);
     expect(queries).toHaveLength(1);
     const diagnosticRecord = (
       await alice.result(alice.interactionId, diagnostic.submissionId)
@@ -190,6 +203,7 @@ test("timing selects the earlier answered exchange and its Worker, never this di
     await bob.wait(bob.interactionId, denied.submissionId);
     expect(queries).toHaveLength(1);
     expect(JSON.stringify(observed.at(-1))).toContain("denied");
+    expect(transportReceipts).toEqual(["input:prior"]);
   } finally {
     await core.close();
     await telemetry.close();

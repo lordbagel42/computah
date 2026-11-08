@@ -6,6 +6,10 @@ import {
 } from "@earendil-works/pi-durable";
 import { obj, str } from "@earendil-works/pi-schema";
 import type { Capability, Scope } from "./core.js";
+import type {
+  TransportTiming,
+  TransportTimingResult,
+} from "./transport-timing.js";
 
 export type OperationalTarget = {
   requestId: string;
@@ -25,6 +29,7 @@ export const operationalInstructions = `Operational data is a first-class capabi
 
 export function createOperations(options: {
   queryToken?: string;
+  transportConfigured?: boolean;
   authorize(
     scope: Readonly<Scope>,
     capability: Capability,
@@ -53,6 +58,9 @@ export function createOperations(options: {
         status: options.queryToken ? "configured" : "unavailable",
         code: options.queryToken ? null : "not_configured",
         source: "Axiom OTel",
+        transport: options.transportConfigured
+          ? "Slack private durable receipts configured; independent of Axiom"
+          : "Slack private durable receipts not configured",
         dataset,
         access:
           "COMPUTAH_AXIOM_QUERY_TOKEN: separate dataset-scoped Query-only credential, provision privately through the deployment owner; never ingest, Amp MCP or management credentials",
@@ -268,6 +276,7 @@ export function createOperations(options: {
 
 export function createOperationsExtension(options: {
   client: ReturnType<typeof createOperations>;
+  transportTiming?: TransportTiming;
   scope(
     api: ToolExecutionApi,
     context: Context,
@@ -303,19 +312,42 @@ export function createOperationsExtension(options: {
         replay: "safe",
         outputLimits: { maxBytes: 131_072, maxLines: 1 },
         execute: async (args, api, context) => {
-          const scope = await options.scope(api, context);
+          const binding = await options.scope(api, context);
+          const scope = binding ? Object.freeze({ ...binding }) : null;
           const access = scope
             ? await options.client.discover(scope)
             : { code: "denied" };
           if (!scope || access.code === "denied")
             return { output: [{ type: "text", text: JSON.stringify(access) }] };
           const targets = await options.target(args.requestId, api, context);
-          const evidence = targets.length
-            ? await options.client.query(
+          const signal = context.abortSignal ?? new AbortController().signal;
+          // Only the host-resolved Interaction receipt is eligible, never args or Worker roots.
+          let transport: TransportTimingResult = {
+            status: "unavailable",
+            code: "not_configured",
+          };
+          if (targets.length && options.transportTiming) {
+            const currentAccess = await options.client.discover(scope);
+            if (currentAccess.code === "denied")
+              return {
+                output: [{ type: "text", text: JSON.stringify(currentAccess) }],
+              };
+            try {
+              transport = await options.transportTiming(
                 scope,
-                targets,
-                context.abortSignal ?? new AbortController().signal,
-              )
+                targets[0].requestId,
+                signal,
+                context.telemetry.propagation?.inject(context.telemetry),
+              );
+            } catch {
+              transport = {
+                status: "unavailable",
+                code: signal.aborted ? "cancelled" : "transport",
+              };
+            }
+          }
+          const evidence = targets.length
+            ? await options.client.query(scope, targets, signal)
             : {
                 status: "unavailable",
                 code: "target_not_found_or_legacy_or_scan_limit",
@@ -325,7 +357,7 @@ export function createOperationsExtension(options: {
             return {
               output: [{ type: "text", text: JSON.stringify(finalAccess) }],
             };
-          let text = JSON.stringify({ targets, evidence });
+          let text = JSON.stringify({ targets, evidence, transport });
           while (
             Buffer.byteLength(text) > 120_000 &&
             "spans" in evidence &&
@@ -333,7 +365,17 @@ export function createOperationsExtension(options: {
           ) {
             evidence.spans.pop();
             evidence.truncated = true;
-            text = JSON.stringify({ targets, evidence });
+            text = JSON.stringify({ targets, evidence, transport });
+          }
+          while (
+            Buffer.byteLength(text) > 120_000 &&
+            transport.status === "ready" &&
+            (transport.timing.phases.length || transport.timing.receipts.length)
+          ) {
+            if (transport.timing.phases.length) transport.timing.phases.pop();
+            else transport.timing.receipts.pop();
+            transport.truncated = true;
+            text = JSON.stringify({ targets, evidence, transport });
           }
           if (Buffer.byteLength(text) > 120_000)
             text = JSON.stringify({

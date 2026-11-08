@@ -59,6 +59,7 @@ import {
   sentinelAudit,
 } from "./sentinel.js";
 import { createTavily, createTavilyExtension } from "./tavily.js";
+import type { TransportTiming } from "./transport-timing.js";
 
 export type Scope = { tenantId: string; userId: string; agentId: string };
 export type CoreObservation = {
@@ -249,6 +250,8 @@ export interface CoreOptions {
   tavily?: { apiKey: string; fetch?: typeof fetch };
   /** Separate dataset-scoped read credential; never reuse an ingest/MCP token. */
   operations?: { queryToken?: string; fetch?: typeof fetch };
+  /** Private host service callback, independent of Axiom; never an ingress argument. */
+  transportTiming?: TransportTiming;
   sentinel?: {
     ownerScope: Scope;
     reviews: readonly { scope: Scope; mode: "monitor" | "preflight" }[];
@@ -687,14 +690,16 @@ export function createCore(options: CoreOptions) {
     );
   }
 
-  if (options.operations) {
+  if (options.operations || options.transportTiming) {
     const operations = createOperations({
       ...options.operations,
+      transportConfigured: Boolean(options.transportTiming),
       authorize: options.authorize,
     });
     interactionTools.install(
       createOperationsExtension({
         client: operations,
+        transportTiming: options.transportTiming,
         scope: async (api, context) =>
           (await api.snapshot(Binding, context))?.scope ?? null,
         target: async (requestId, api, context) => {
@@ -1042,7 +1047,7 @@ export function createCore(options: CoreOptions) {
       await root.configure(
         {
           instructions:
-            (options.operations
+            (options.operations || options.transportTiming
               ? `${interactionInstructions}\n\n${operationalInstructions}`
               : interactionInstructions) +
             (options.axiomMcp ? `\n\n${axiomInstructions}` : ""),

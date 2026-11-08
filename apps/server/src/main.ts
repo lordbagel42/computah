@@ -13,11 +13,15 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createClient } from "rivetkit/client";
 import { OperationalAnalytics, observeModels } from "./analytics.js";
 import { principalKey, readConfig } from "./config.js";
-import { createCore } from "./core.js";
+import { type CoreOptions, createCore } from "./core.js";
 import { closeHttp, createHttpServer } from "./http.js";
 import { priorityModels } from "./model-policy.js";
 import { createSentinel } from "./sentinel.js";
 import { smokeProvider } from "./smoke-model.js";
+import {
+  createTransportTiming,
+  readTransportTimingConfig,
+} from "./transport-timing.js";
 
 async function main() {
   console.info("computah.lifecycle phase=bootstrap outcome=started");
@@ -72,11 +76,16 @@ async function main() {
       principal,
     ]),
   );
+  const authorize: CoreOptions["authorize"] = (scope, capability) =>
+    byScope.get(principalKey(scope))?.capabilities.includes(capability) ??
+    false;
+  const timing = readTransportTimingConfig(process.env);
   const core = createCore({
     connectionSecret: config.secret,
-    authorize: (scope, capability) =>
-      byScope.get(principalKey(scope))?.capabilities.includes(capability) ??
-      false,
+    authorize,
+    transportTiming: timing
+      ? createTransportTiming({ ...timing, authorize })
+      : undefined,
     model: config.model,
     analytics,
     workerModel: config.workerModel,
