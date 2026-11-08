@@ -49,12 +49,17 @@ const logs=[];
 const coreHeaders=[];
 let calls=0;
 let observations=0;
+let waiting=false;
 globalThis.fetch=async(u,o)=>{
  const url=new URL(u);
  if(url.hostname==='api.axiom.co'){
    if(/private-work-canary|private-envelope-canary|private-worker-label|synthetic-core-secret/.test(o.body))throw new Error('Telemetry leaked private content');
    if(url.pathname==='/v1/traces')spans.push(...JSON.parse(o.body).resourceSpans.flatMap(r=>r.scopeSpans.flatMap(s=>s.spans)));
-   else logs.push(o.body);
+   else {
+     logs.push(o.body);
+     const records=JSON.parse(o.body).resourceLogs?.flatMap(r=>r.scopeLogs.flatMap(s=>s.logRecords))??[];
+     if(waiting&&records.some(r=>r.body?.stringValue==='slack.reply_latency'&&r.attributes?.some(a=>a.key==='slack.reply.phase'&&a.value.stringValue==='overdue')))console.log('synthetic.deadline.during.wait.correct');
+   }
    return new Response('{}');
  }
  if(url.hostname!=='127.0.0.1'||o.headers.authorization!=='Bearer synthetic-core-secret-not-a-real-credential'||!/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/.test(o.headers.traceparent??''))throw new Error('Wrong core identity/trace');
@@ -75,7 +80,9 @@ globalThis.fetch=async(u,o)=>{
    return process.env.TEST_CANCEL==='denied'?new Response('{}',{status:403}):Response.json({submissionId:'signed-handle',status:process.env.TEST_CANCEL==='unknown'?'unknown':'cancelled'});
  }
  // Wait long enough for the actual adapter's five-second progress threshold.
- await new Promise(resolve=>setTimeout(resolve,3100));
+ waiting=true;
+ await new Promise(resolve=>setTimeout(resolve,process.env.TEST_CANCEL==='cancelled'&&!process.env.TEST_CARDS?6100:3100));
+ waiting=false;
  return Response.json({submission:{outcome:'streaming'}});
 };
 process.on('exit',()=>{
@@ -190,6 +197,9 @@ test("executable uses actual observation phases and scoped stop transport with s
           "ingress.trace.correct",
           "wire.trace.correct",
           "outcome.log.correct",
+          ...(outcome === "cancelled" && !cards
+            ? ["deadline.during.wait.correct"]
+            : []),
           ...(cards ? ["stream.start.correct"] : []),
           ...(cards === "success"
             ? [

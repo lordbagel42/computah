@@ -28,6 +28,7 @@ import {
   type StreamEnd,
   type StreamUpdate,
 } from "./lifecycle.js";
+import { ReplyLatency } from "./reply-latency.js";
 import { projectTiming } from "./timing.js";
 
 export interface Binding {
@@ -156,6 +157,7 @@ export interface Transport {
 /** Private, single-owner delivery journal, not a second cognition/history store. */
 export class SlackAdapter {
   private readonly db: DatabaseSync;
+  private readonly replyLatency: ReplyLatency;
   private readonly bindings: Map<string, Binding>;
   private statusFlight?: Promise<void>;
   private statusAbort?: AbortController;
@@ -316,6 +318,7 @@ export class SlackAdapter {
     CREATE TABLE IF NOT EXISTS receipt_timing (
       event TEXT PRIMARY KEY, received INTEGER, sender_ts TEXT, admitted INTEGER
     );`);
+    this.replyLatency = new ReplyLatency(this.db);
     for (const row of this.db
       .prepare(
         "SELECT DISTINCT t.traceparent FROM job_timing t JOIN jobs j ON j.id=t.job WHERE j.state IN ('queued','preparing','admitting','submitted') OR EXISTS (SELECT 1 FROM job_phases p WHERE p.job=t.job AND p.completed IS NULL)",
@@ -449,6 +452,7 @@ export class SlackAdapter {
     this.db.exec(
       "DELETE FROM receipt_timing WHERE event NOT IN (SELECT event FROM receipts)",
     );
+    this.replyLatency.prune();
     this.db.exec(
       "DELETE FROM job_lifecycle WHERE job NOT IN (SELECT id FROM jobs)",
     );
@@ -576,6 +580,8 @@ export class SlackAdapter {
           "INSERT INTO receipt_timing(event,received,sender_ts) VALUES(?,?,?)",
         )
         .run(id, receivedAt, event.ts);
+      if (!control && !isDebugshare(text))
+        this.replyLatency.admit(id, receivedAt ?? admissionStarted);
       if (isDebugshare(text)) {
         const carrier = this.timing(id)?.traceparent?.split("-");
         const report: DebugReport = {
@@ -744,6 +750,32 @@ export class SlackAdapter {
       .get(id) as unknown as JobTiming | undefined;
   }
 
+  /** Run independently of step(): an awaited core call must not hide deadlines. */
+  pumpReplyLatency() {
+    if (this.closed) return;
+    const started = this.now();
+    let outcome = "idle";
+    try {
+      outcome = this.replyLatency.flush(started);
+    } catch {
+      outcome = "error";
+      runtimeLog(
+        "runtime.report",
+        { outcome: "error", reason: "storage_failed" },
+        "warn",
+      );
+    } finally {
+      if (outcome !== "idle")
+        traceInterval(
+          "slack.reply_deadlines",
+          started,
+          this.now(),
+          {},
+          { outcome },
+        );
+    }
+  }
+
   private async phase<T>(
     id: string,
     phase: string,
@@ -883,6 +915,7 @@ export class SlackAdapter {
   private async runJob(job: Job): Promise<boolean> {
     const binding = this.bindings.get(job.binding);
     if (!binding) {
+      this.replyLatency.settle(job.id, "denied", this.now());
       this.finish(job.id, "done");
       return true;
     }
@@ -1060,11 +1093,13 @@ export class SlackAdapter {
         ? (JSON.parse(job.reply_options) as ReplyOptions)
         : undefined;
       if (storedReply?.selected && storedReply.selectedText) {
+        this.replyLatency.answer(job.id);
         await this.deliver(job, binding, storedReply.selectedText);
         return true;
       }
       if (this.now() - job.created > 5 * 60_000) {
         this.endStream(job.id, "unknown");
+        this.replyLatency.settle(job.id, "failed", this.now());
         await this.deliver(
           job,
           binding,
@@ -1236,13 +1271,30 @@ export class SlackAdapter {
           // Plain chat and malformed/quoted JSON retain the existing destination.
         }
       }
+      if (outcome === "completed" && answer?.trim())
+        this.replyLatency.answer(job.id);
+      else
+        this.replyLatency.settle(
+          job.id,
+          outcome === "cancelled" ? "cancelled" : "failed",
+          this.now(),
+        );
       await this.deliver(
         job,
         binding,
         answer ||
           `Computah finished with status: ${outcome}. No answer was returned.`,
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof CoreDenied) {
+        this.replyLatency.settle(job.id, "denied", this.now());
+        await this.deliver(
+          job,
+          binding,
+          "Core denied this request. Ask the operator to check your access.",
+        );
+        return true;
+      }
       // No provider/Slack errors, tokens, prompts or histories enter logs.
       traceEvent("slack.retry", { outcome: "error" });
       runtimeLog("runtime.retry", { outcome: "retry" }, "warn");
@@ -1313,6 +1365,7 @@ export class SlackAdapter {
             this.db.exec("BEGIN IMMEDIATE");
             try {
               this.finish(target.id, "done");
+              this.replyLatency.settle(target.id, "cancelled", this.now());
               this.db
                 .prepare("UPDATE job_lifecycle SET terminal=1 WHERE job=?")
                 .run(target.id);
@@ -1350,6 +1403,7 @@ export class SlackAdapter {
             if (result.status === "cancelled") {
               outcome = "cancelled";
               this.endStream(target.id, "cancelled");
+              this.replyLatency.settle(target.id, "cancelled", this.now());
               this.db
                 .prepare("UPDATE job_lifecycle SET terminal=1 WHERE job=?")
                 .run(target.id);
@@ -1699,6 +1753,7 @@ export class SlackAdapter {
             (current) => JSON.stringify(current) === JSON.stringify(route),
           ))
       ) {
+        this.replyLatency.settle(job.id, "denied", this.now());
         this.finish(job.id, "done");
         return;
       }
@@ -1732,6 +1787,16 @@ export class SlackAdapter {
           text,
           privateChannel ? null : route ? route.thread : job.thread,
         );
+        try {
+          this.replyLatency.confirm(job.id, this.now());
+        } catch {
+          // Telemetry storage cannot turn an acknowledged provider send into a retry.
+          runtimeLog(
+            "runtime.report",
+            { outcome: "error", reason: "storage_failed" },
+            "warn",
+          );
+        }
         runtimeContent("activity", {
           source: "slack.delivery",
           outcome: "success",

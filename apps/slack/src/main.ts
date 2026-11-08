@@ -574,6 +574,9 @@ async function run() {
     process.once("SIGINT", stop);
   });
   let timingBroker: Awaited<ReturnType<typeof startTimingBroker>> | undefined;
+  // Separate from the core long poll: unanswered deadlines must remain visible.
+  const replyDeadlines = setInterval(() => adapter.pumpReplyLatency(), 250);
+  replyDeadlines.unref();
   try {
     if (timingSocket && timingToken)
       timingBroker = await startTimingBroker({
@@ -592,6 +595,7 @@ async function run() {
       await delay(1000);
     }
   } finally {
+    clearInterval(replyDeadlines);
     try {
       await socket.disconnect();
     } finally {
