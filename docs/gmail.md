@@ -76,6 +76,15 @@ provider-aware check (plus deletion fencing). A single submit-time check is not 
 native fence. Search, draft reads and progress also require provider authority;
 drafts recheck immediately before release.
 
+Within each fresh verification, account/config/owner/scope validation still runs
+first. The independent profile and read-capability probes then overlap, and both
+must settle before verification completes, including failure. Both must succeed;
+no verified result is cached or reused across boundaries. Each existing bounded
+GET-only request remains unchanged, and local authority is rechecked afterward.
+This reduces sequential network time, not the number or freshness of checks;
+instantaneous probe concurrency increases from one to two. Local controlled
+transport tests are not deployed latency-improvement evidence.
+
 The initial readonly authorization was blocked. After the owner approved the
 full-mail-only scope, the existing managed config was updated in place and a fresh
 official session connection completed. The exact account was verified ACTIVE with

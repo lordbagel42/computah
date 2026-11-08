@@ -70,6 +70,7 @@ globalThis.fetch=async(u,o)=>{
    return Response.json({id:'signed-handle'});
  }
  if(url.pathname.endsWith('/events')){
+   if(!process.env.TEST_CARDS){console.log('synthetic.unusable.observation');throw new Error('Top-level acknowledgment fetched an unusable phase');}
    if(o.method||o.headers['last-event-id']||o.headers.accept!=='text/event-stream')throw new Error('Invalid observation reconnect');
    console.log('synthetic.observation.correct');
    return new Response('data: '+JSON.stringify({version:1,kind:'resync',sequence:0,submissionId:'signed-handle',observations:[{submissionId:'signed-handle',source:process.env.TEST_CARDS&&observations++===0?'interaction':'worker',phase:'generating',workerLabel:'private-worker-label',text:'{"text":"private-envelope-canary"'}]})+'\\n\\n');
@@ -89,7 +90,7 @@ process.on('exit',()=>{
  const attr=(s,key)=>s.attributes?.find(a=>a.key===key)?.value?.stringValue;
  const status=spans.find(s=>s.name==='computah.slack.status');
  const child=(name,parent)=>spans.some(s=>s.name===name&&s.traceId===parent?.traceId&&s.parentSpanId===parent?.spanId);
- if(status&&child('computah.slack.core',status)&&child('computah.slack.api',status))console.log('synthetic.progress.trace.correct');
+ if(status&&child('computah.slack.api',status)&&(!process.env.TEST_CARDS||child('computah.slack.core',status)))console.log('synthetic.progress.trace.correct');
  const wait=spans.find(s=>s.name==='computah.slack.wait'&&attr(s,'outcome')===(process.env.TEST_CANCEL==='denied'?'denied':process.env.TEST_CANCEL==='unknown'?'error':'cancelled'));
  const root=spans.find(s=>s.name==='computah.slack.job'&&s.traceId===wait?.traceId&&s.spanId===wait?.parentSpanId);
  if(root&&spans.some(s=>s.name==='computah.slack.receive'&&s.traceId===root.traceId&&s.spanId===root.parentSpanId))console.log('synthetic.ingress.trace.correct');
@@ -188,7 +189,7 @@ test("executable uses actual observation phases and scoped stop transport with s
         });
         assert.equal(code, 0, output);
         for (const marker of [
-          "observation.correct",
+          ...(cards ? ["observation.correct"] : []),
           "progress.correct",
           "cancel.transport.correct",
           "cancel.correct",
@@ -218,7 +219,7 @@ test("executable uses actual observation phases and scoped stop transport with s
           );
         assert.doesNotMatch(
           output,
-          /private-work-canary|private-envelope-canary|synthetic-core-secret/,
+          /private-work-canary|private-envelope-canary|synthetic-core-secret|synthetic\.unusable\.observation/,
         );
       } finally {
         clearTimeout(deadline);

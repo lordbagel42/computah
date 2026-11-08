@@ -1530,11 +1530,15 @@ export class SlackAdapter {
         async () => {
           let phase: Progress = null;
           try {
-            phase =
-              (await this.transport.progress?.(
-                binding,
-                job.submission ?? "",
-              )) ?? null;
+            // A phase snapshot only affects native source-thread cards. The
+            // fixed acknowledgment needs the pending result, not another core
+            // read (and its source-authorization round trips) for top-level DMs.
+            if (lifecycle.origin && this.transport.stream)
+              phase =
+                (await this.transport.progress?.(
+                  binding,
+                  job.submission ?? "",
+                )) ?? null;
           } catch {
             // The authoritative result already says pending. An optional phase
             // snapshot is not required to acknowledge that actual admitted work.

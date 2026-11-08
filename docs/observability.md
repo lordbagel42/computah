@@ -180,6 +180,14 @@ a fixed latency SLO or separate human presentation acceptance.
   model-tracing wrapper when `models` is supplied.
 - Slack records admitted event/ACK lifetime, delivery-loop steps, core requests,
   Web API operations and lifecycle/report categories. Bodies never enter spans.
+  Fixed acknowledgments for top-level sources skip phase observation that cannot
+  produce a native source-thread card. Executable sanitized-export checks retain
+  status→API ancestry without a core child there; threaded cards retain actual
+  status→core/API checks. Fresh Gmail authority checks overlap only their two
+  independent provider probes after account validation and await both even on
+  failure, keeping work inside the existing authority operation lifetime. No
+  verification result is cached and native generation/retry/release fences remain.
+  These local checks are not post-change production latency acceptance.
   The Slack formatting regression check exercises the production executable with
   synthetic Socket/core/Web API boundaries: JSON-decoded multiline mrkdwn reaches
   dispatch and successful `slack.api` spans retain their `slack.delivery` parent

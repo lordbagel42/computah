@@ -459,8 +459,11 @@ narration or extra model request is introduced. This follows the concise-task
 acknowledgment distinction in the inspected June `4ca93fb` source and its
 `5fba7f2` task-ownership refinement, not a human-typing indicator.
 
-An initial bounded actual core SSE phase snapshot can supply a native source-thread
-card titled `On it.`; missing/failed observation still permits the fixed ordinary
+An initial bounded actual core SSE phase snapshot is requested only when an actual
+source thread and stream transport can use it for a native card titled `On it.`.
+Top-level sources and transports without native cards skip that otherwise useless
+core read; their fixed acknowledgment depends only on the authoritative pending
+result. Missing/failed observation still permits the fixed ordinary
 `On it.` post. The snapshot has a two-second/128,000 decoded UTF-16-unit budget;
 no live model text, JSON reply envelope, Worker label, reasoning or tool payload
 is published. The existing durable status reservation permits at most one initial

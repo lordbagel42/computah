@@ -992,6 +992,91 @@ test("REST checkpoint/history uses GET and specific delta fields; only exact app
   ).rejects.toBeInstanceOf(GmailHistoryExpired);
 });
 
+test("fresh REST verification overlaps independent probes and awaits both even on failure", async () => {
+  for (const failProfile of [false, true]) {
+    let releaseProfile = () => {};
+    let releaseCapability = () => {};
+    const profileGate = new Promise<void>((resolve) => {
+      releaseProfile = resolve;
+    });
+    const capabilityGate = new Promise<void>((resolve) => {
+      releaseCapability = resolve;
+    });
+    const probes: string[] = [];
+    let accounts = 0;
+    let gated = true;
+    const provider = createComposioGmail({
+      apiKey: "synthetic-project-key",
+      authConfigId: "ac_read",
+      transport: async (url, init) => {
+        if (String(url).endsWith("/ca_pinned")) {
+          accounts++;
+          return Response.json({
+            id: "ca_pinned",
+            user_id: "opaque-owner",
+            toolkit: { slug: "gmail" },
+            auth_config: { id: "ac_read" },
+            status: "ACTIVE",
+            requested_scopes: [GMAIL_READONLY],
+          });
+        }
+        const body = JSON.parse(String(init?.body));
+        expect(body.method).toBe("GET");
+        expect(body.user_id).toBe("opaque-owner");
+        expect(body.connected_account_id).toBe("ca_pinned");
+        const profile = body.endpoint === "/gmail/v1/users/me/profile";
+        probes.push(profile ? "profile" : "capability");
+        if (gated) await (profile ? profileGate : capabilityGate);
+        return Response.json({
+          status: profile && failProfile ? 403 : 200,
+          data: profile ? { emailAddress: "synthetic@example.invalid" } : {},
+        });
+      },
+    });
+    let settled = false;
+    const pending = provider.verify("opaque-owner", "ca_pinned");
+    void pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(probes).toEqual(["profile", "capability"]);
+      releaseProfile();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      releaseCapability();
+      if (failProfile) await expect(pending).rejects.toThrow("Gmail provider");
+      else
+        await expect(pending).resolves.toHaveProperty(
+          "readAccessVerified",
+          true,
+        );
+      gated = false;
+      await provider.verify("opaque-owner", "ca_pinned").catch(() => {});
+      expect(accounts).toBe(2);
+      expect(probes).toEqual([
+        "profile",
+        "capability",
+        "profile",
+        "capability",
+      ]);
+      await expect(
+        provider.verify("foreign-owner", "ca_pinned"),
+      ).rejects.toThrow("denied");
+      expect(probes).toHaveLength(4);
+    } finally {
+      releaseProfile();
+      releaseCapability();
+      await pending.catch(() => {});
+    }
+  }
+});
+
 test("REST broker pins owner/account and uses read-only proxy; requested scopes alone do not prove effective access", async () => {
   let readAllowed = false;
   const requests: { path: string; body: Record<string, unknown> }[] = [];

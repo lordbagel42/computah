@@ -285,16 +285,22 @@ export function createComposioGmail(options: {
         requestedScopes.length !== (result.requested_scopes as unknown[]).length
       )
         deny();
-      const profile = await read(owner, account, "/gmail/v1/users/me/profile");
-      if (!profile) deny();
-      if (
-        !(await read(
+      // Both probes require the validated account, but not each other's result.
+      // Await both on failure too: verification must not leave provider work
+      // running outside its authority/tracing lifetime. No result is cached.
+      const [profileResult, capabilityResult] = await Promise.allSettled([
+        read(owner, account, "/gmail/v1/users/me/profile"),
+        read(
           owner,
           account,
           "/gmail/v1/users/me/messages?maxResults=1&q=in%3Ainbox&fields=messages%2Fid",
-        ))
-      )
-        deny();
+        ),
+      ]);
+      if (profileResult.status === "rejected") throw profileResult.reason;
+      const profile = profileResult.value;
+      if (!profile) deny();
+      if (capabilityResult.status === "rejected") throw capabilityResult.reason;
+      if (!capabilityResult.value) deny();
       return {
         id: account,
         owner,

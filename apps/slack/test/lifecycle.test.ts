@@ -273,6 +273,11 @@ test("card cleanup is bounded, restart-safe and does not block failed or cancell
 
 test("top-level source never becomes a native stream even when reply preference is threaded", async () => {
   const f = fixture();
+  let observations = 0;
+  f.transport.progress = async () => {
+    observations++;
+    return "worker";
+  };
   f.transport.stream = async () => {
     throw new Error("must not stream top-level origin");
   };
@@ -283,6 +288,11 @@ test("top-level source never becomes a native stream even when reply preference 
     await f.adapter.step();
     assert.equal(f.posts.length, 1);
     assert.equal(f.posts[0][2], null);
+    assert.equal(
+      observations,
+      0,
+      "an unusable phase lookup must not delay the acknowledgment",
+    );
   } finally {
     f.close();
   }
@@ -667,13 +677,20 @@ test("instant answers skip acknowledgement; pending work gets one after the grac
     [false, true],
   ]) {
     const f = fixture();
+    const thread = failedObservation ? "source.001" : null;
+    let observations = 0;
     f.transport.progress = failedObservation
       ? async () => {
+          observations++;
           throw new Error("observation unavailable");
         }
       : undefined;
+    if (failedObservation)
+      f.transport.stream = async () => {
+        throw new Error("must not start a card without observation");
+      };
     try {
-      f.adapter.admit(input("1", "work"));
+      f.adapter.admit(input("1", "work", { thread_ts: thread ?? undefined }));
       f.advance(1200);
       await f.adapter.step();
       f.advance(299);
@@ -682,11 +699,13 @@ test("instant answers skip acknowledgement; pending work gets one after the grac
       if (!instant) {
         f.advance(1);
         await f.adapter.step();
-        assert.deepEqual(f.posts, [["DOWNER", "On it.", null]]);
+        assert.deepEqual(f.posts, [["DOWNER", "On it.", thread]]);
+        assert.equal(observations, failedObservation ? 1 : 0);
         f.reopen();
         f.advance(6000);
         await f.adapter.step();
         assert.equal(f.posts.length, 1);
+        assert.equal(observations, failedObservation ? 1 : 0);
       }
       f.outcome("completed");
       await f.adapter.step();
