@@ -2,6 +2,7 @@ import {
   startObservability,
   traceEvent,
   traceHttp,
+  traceLifecycle,
 } from "@computah/observability";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -13,6 +14,7 @@ import { priorityModels } from "./model-policy.js";
 import { smokeProvider } from "./smoke-model.js";
 
 async function main() {
+  console.info("computah.lifecycle phase=bootstrap outcome=started");
   const telemetry = await startObservability("backend");
   const config = readConfig(process.env);
   // PORT belongs to this ingress, not to native child services.
@@ -21,12 +23,14 @@ async function main() {
   // The official runtime owns file locking, refresh and provider-specific auth.
   const models =
     config.mode === "real"
-      ? await ModelRuntime.create({
-          ...(config.authFile
-            ? { authPath: config.authFile }
-            : { credentials: new InMemoryCredentialStore() }),
-          modelsPath: null,
-        })
+      ? await traceLifecycle("models", () =>
+          ModelRuntime.create({
+            ...(config.authFile
+              ? { authPath: config.authFile }
+              : { credentials: new InMemoryCredentialStore() }),
+            modelsPath: null,
+          }),
+        )
       : undefined;
   if (models) {
     for (const [provider, key] of Object.entries(config.apiKeys ?? {}))
@@ -72,9 +76,11 @@ async function main() {
     (stopping ??= (async () => {
       // Do not race native startup/HTTP listen against storage shutdown.
       await startup?.catch(() => {});
-      if (http?.listening) await closeHttp(http);
-      await core.close();
-      await client?.dispose();
+      const server = http;
+      if (server?.listening)
+        await traceLifecycle("http_drain", () => closeHttp(server));
+      await traceLifecycle("registry_drain", () => core.close());
+      await traceLifecycle("client_drain", async () => client?.dispose());
       traceEvent("stopped");
       await telemetry.close();
     })());
@@ -89,7 +95,7 @@ async function main() {
   // Host owns signal shutdown: stop public admissions before draining the actors.
   core.registry.config.shutdown = { disableSignalHandlers: true };
   startup = (async () => {
-    await core.registry.startAndWait();
+    await traceLifecycle("registry", () => core.registry.startAndWait());
     if (stopping) return;
     const runtime = core.registry.parseConfig();
     client = createClient<typeof core.registry>({
@@ -106,10 +112,14 @@ async function main() {
       ready: () => !stopping,
     });
     traceHttp(http);
-    await new Promise<void>((resolve, reject) => {
-      http?.once("error", reject);
-      http?.listen(config.port, "0.0.0.0", resolve);
-    });
+    await traceLifecycle(
+      "listener",
+      () =>
+        new Promise<void>((resolve, reject) => {
+          http?.once("error", reject);
+          http?.listen(config.port, "0.0.0.0", resolve);
+        }),
+    );
     console.info(`computah.http.ready mode=${config.mode} port=${config.port}`);
     traceEvent("ready");
   })();

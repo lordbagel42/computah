@@ -9,6 +9,7 @@ import {
   startObservability,
   traceEvent,
   traceHttp,
+  traceLifecycle,
   traceOperation,
 } from "../src/index.js";
 
@@ -153,6 +154,15 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
       }),
       (error) => error === failure,
     );
+    await traceOperation("ready", async () => {
+      assert.equal(await traceLifecycle("registry", async () => 73), 73);
+      await assert.rejects(
+        traceLifecycle("registry_drain", async () => {
+          throw failure;
+        }),
+        (error) => error === failure,
+      );
+    });
     await Effect.runPromise(
       Effect.succeed(42).pipe(
         Effect.withSpan("computah.history"),
@@ -219,6 +229,14 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
             spanId: string;
             parentSpanId?: string;
             status: { code: number };
+            attributes: {
+              key: string;
+              value: {
+                stringValue?: string;
+                intValue?: string;
+                doubleValue?: number;
+              };
+            }[];
           }[];
         }[];
       }) => r.scopeSpans.flatMap((s) => s.spans),
@@ -252,6 +270,31 @@ test("SDK, Effect, HTTP and native JSON spans pass through one relay; sink failu
     spans.find((span) => span.name === "computah.wait")?.status.code,
     2,
   );
+  const lifecycle = spans.filter((span) => span.name === "computah.lifecycle");
+  assert.equal(lifecycle.length, 2);
+  const parent = spans.find((span) => span.name === "computah.ready");
+  for (const [index, span] of lifecycle.entries()) {
+    assert.equal(span.parentSpanId, parent?.spanId);
+    assert.equal(span.traceId, parent?.traceId);
+    const attrs = new Map<string, { stringValue?: string }>(
+      span.attributes.map(
+        (attr: { key: string; value: { stringValue?: string } }) => [
+          attr.key,
+          attr.value,
+        ],
+      ),
+    );
+    assert.equal(
+      attrs.get("phase")?.stringValue,
+      index === 0 ? "registry" : "registry_drain",
+    );
+    assert.equal(
+      attrs.get("outcome")?.stringValue,
+      index === 0 ? "success" : "error",
+    );
+    assert.ok(attrs.has("duration.ms"));
+  }
+  assert.equal(lifecycle[1]?.status.code, 2);
   assert.ok(!exported.join().includes("private-content"));
   assert.ok(!exported.join().includes("synthetic-private-credential"));
 });

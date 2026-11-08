@@ -10,6 +10,12 @@ DEBUGSHARE collection, diagnostics bundles or diagnostic-agent spawning is added
 - Node OpenTelemetry records HTTP request lifetime/status, existing Effect gateway
   spans, explicit injected-model call lifetimes, safe provider tier/outcome events,
   and ready/stopped/report events.
+- Backend lifecycle boundaries record model initialization, native registry
+  readiness, HTTP listen and HTTP/registry/client drain with fixed phase/outcome
+  categories and elapsed milliseconds. These also emit content-free local log
+  markers when export is disabled. They distinguish time inside registry startup
+  from model initialization; they do not instrument native startup internals or
+  establish the cause of a slow phase. Bootstrap logs begin after static imports.
 - The native Rivet exporter records actor invocations. Pi's existing OTel adapter
   records submission admission, task phases, tool/delegation activity, compaction,
   checkpoints/replays and model calls on its default model runtime. The injected

@@ -38,6 +38,7 @@ const operations = new Set([
   "http",
   "ready",
   "stopped",
+  "lifecycle",
   "report",
   "synthetic",
   "model",
@@ -132,6 +133,12 @@ const categories = new Set([
   "computah.cancel",
   "computah.task",
   "prepare",
+  "models",
+  "registry",
+  "listener",
+  "http_drain",
+  "registry_drain",
+  "client_drain",
   "poll",
   "tools",
   "drain",
@@ -179,6 +186,7 @@ const stringKeys = new Set([
 ]);
 const numberKeys = new Set([
   "attempt",
+  "duration.ms",
   "status",
   "http.response.status_code",
   "gen_ai.usage.input_tokens",
@@ -514,6 +522,37 @@ export function traceEvent(
   const span = trace.getTracer("computah").startSpan(`computah.${operation}`);
   span.setAttributes(values);
   span.end();
+}
+
+/** Fixed, content-free lifecycle boundaries also remain visible without export. */
+export function traceLifecycle<T>(
+  phase:
+    | "models"
+    | "registry"
+    | "listener"
+    | "http_drain"
+    | "registry_drain"
+    | "client_drain",
+  body: () => Promise<T>,
+): Promise<T> {
+  return traceOperation("lifecycle", async (span) => {
+    const started = performance.now();
+    span.setAttribute("phase", phase);
+    console.info(`computah.lifecycle phase=${phase} outcome=started`);
+    let outcome = "success";
+    try {
+      return await body();
+    } catch (error) {
+      outcome = "error";
+      throw error;
+    } finally {
+      const elapsed = Math.round(performance.now() - started);
+      span.setAttributes({ outcome, "duration.ms": elapsed });
+      console.info(
+        `computah.lifecycle phase=${phase} outcome=${outcome} duration_ms=${elapsed}`,
+      );
+    }
+  });
 }
 
 /** IDs only, for trusted internal transports. Never forward baggage or credentials. */
