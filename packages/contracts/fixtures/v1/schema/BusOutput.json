@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "enum": [1]
+        },
+        "receipt": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "number",
+              "enum": [1]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "clientMutationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "submissionId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": ["completed"]
+            }
+          },
+          "required": [
+            "version",
+            "id",
+            "clientMutationId",
+            "submissionId",
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["version", "receipt", "text"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "enum": [1]
+        },
+        "receipt": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "number",
+              "enum": [1]
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "clientMutationId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "submissionId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": ["queued", "submitted", "failed", "cancelled"]
+            }
+          },
+          "required": [
+            "version",
+            "id",
+            "clientMutationId",
+            "submissionId",
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "text": {
+          "type": "null"
+        }
+      },
+      "required": ["version", "receipt", "text"],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {}
+}

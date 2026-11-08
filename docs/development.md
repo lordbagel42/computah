@@ -6,8 +6,9 @@ resources, accounts or deployments are needed for contract tests.
 
 Run `pnpm install`, then `pnpm format`, `pnpm check`, `pnpm typecheck`, `pnpm test`.
 The only approved dependency install script initially is esbuild's platform-binary
-setup. Optional @google/genai, cbor-extract and protobufjs scripts are explicitly
-disabled; the exercised native core path does not need them. Rivet 3.0.6 release-age
+setup. Optional @google/genai, cbor-extract, lmdb, msgpackr-extract and protobufjs
+scripts are explicitly disabled; the exercised bus uses packaged native prebuilds,
+without running their install scripts. Rivet 3.0.6 release-age
 exceptions are exact version pins, not permission to run dependency scripts.
 Review additional build scripts before permitting them. Formatting/linting is not
 runtime verification. `pnpm test` includes real Rivet/Pi SQLite tests with an

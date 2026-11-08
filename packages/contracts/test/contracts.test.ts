@@ -4,6 +4,9 @@ import test from "node:test";
 import { Schema } from "effect";
 import {
   applyEvent,
+  BusOutput,
+  BusReceipt,
+  BusSendRequest,
   Snapshot,
   StreamEvent,
   SubmissionObservationEvent,
@@ -17,6 +20,83 @@ const viewer = {
   displayName: "June",
   capabilities: ["message.send", "message.cancel"],
 };
+
+test("bus ingress preserves evidence and rejects caller-supplied authority", () => {
+  const decode = Schema.decodeUnknownSync(BusSendRequest, {
+    onExcessProperty: "error",
+  });
+  const request = {
+    clientMutationId: "mailbox-receipt-17",
+    text: "  Keep this evidence unchanged.\n",
+  };
+  assert.deepEqual(decode(request), request);
+  for (const field of ["tenantId", "scope", "grantVersion", "destination"]) {
+    assert.throws(() => decode({ ...request, [field]: "untrusted" }));
+  }
+  for (const text of ["", " \t\n", "a".repeat(100_001)]) {
+    assert.throws(() => decode({ ...request, text }));
+  }
+  assert.equal(
+    decode({ ...request, text: "a".repeat(100_000) }).text.length,
+    100_000,
+  );
+  assert.equal(
+    decode({ ...request, clientMutationId: "a".repeat(200) }).clientMutationId
+      .length,
+    200,
+  );
+  assert.throws(() =>
+    decode({ ...request, clientMutationId: "a".repeat(201) }),
+  );
+});
+
+test("bus output exposes final text only on completed receipts without inventing replay cursors", async () => {
+  const fixture = JSON.parse(
+    await readFile(new URL("../fixtures/v1/bus.json", import.meta.url), "utf8"),
+  );
+  const decode = Schema.decodeUnknownSync(BusOutput, {
+    onExcessProperty: "error",
+  });
+  assert.deepEqual(
+    Schema.decodeUnknownSync(BusSendRequest)(fixture.request),
+    fixture.request,
+  );
+  const records = fixture.outputs.map((output: unknown) => decode(output));
+  assert.deepEqual(
+    records.map((output: BusOutput) => output.receipt.status),
+    ["queued", "submitted", "completed"],
+  );
+  const queued = records[0];
+  assert.equal(queued.receipt.submissionId, null);
+  for (const status of ["queued", "submitted", "failed", "cancelled"]) {
+    assert.throws(() =>
+      decode({
+        ...queued,
+        receipt: { ...queued.receipt, status },
+        text: "premature output",
+      }),
+    );
+    assert.doesNotThrow(() =>
+      decode({
+        ...queued,
+        receipt: { ...queued.receipt, status },
+        text: null,
+      }),
+    );
+  }
+  assert.equal(
+    records[2].text,
+    "Evidence checked. Deliverable Casing Preserved.",
+  );
+  assert.throws(() => decode({ ...queued, sequence: 0 }));
+  assert.throws(() => decode({ ...queued, reasoning: "private" }));
+  assert.throws(() =>
+    Schema.decodeUnknownSync(BusReceipt)({
+      ...queued.receipt,
+      status: "accepted",
+    }),
+  );
+});
 
 test("send retries deduplicate, conflicting payloads fail and host scope cannot be supplied", async () => {
   const session = createMockSession(viewer);

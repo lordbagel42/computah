@@ -5,6 +5,8 @@ allowBuilds:
   "@google/genai": false
   cbor-extract: false
   esbuild: true
+  lmdb: false
+  msgpackr-extract: false
   protobufjs: false
 minimumReleaseAgeExclude:
   - "@rivetkit/engine-api-full@3.0.6"

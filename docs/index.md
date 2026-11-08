@@ -4,6 +4,46 @@ Read this index before changing Computah. Read the relevant linked page again
 when the task crosses a subsystem boundary. It is intentionally small enough for
 Interaction and Workers to discover on demand; it is not a giant system prompt.
 
+## Golden-path milestones
+
+The durable Task/Worker and stream/cancel/personality cut is published at
+`4b89424`. Production backend and Slack are paused under the mandatory Fast-only
+HOLD; implementation evidence is not authorization to resume model execution.
+The next product exits, in order:
+
+1. Deliver the [external message actor and Durable Streams API](bus.md):
+   authenticated ingress, disabled-dispatch durable queue, public output replay,
+   reconnect, idempotency, audience denial and restart proof. This is the sole
+   immediate focus. Bus-only operation must not construct a provider runtime or
+   wake existing Interaction checkpoints. Separate bus-only host activation is
+   explicitly authorized, preserving the backend/Slack pause.
+2. After the bus is delivered, resume tenant-scoped Composio/Gmail onboarding,
+   verified mailbox, effectively
+   full historical email indexing/private retrieval and continued updates, plus
+   durable new email to its owner's Interaction agent, autonomous Task delegation
+   and a visibly unsent local draft. Not integrated or deployed yet.
+3. Join one product client to that same durable/email core and prove real send,
+   delegated result, reconnect, cancellation and follow-up. Not delivered yet.
+
+Gmail historical indexing is foundational memory, not optional later import.
+Process it in resumable quota-aware batches with account-scoped storage/retrieval,
+visible coverage/backlog and historical/live deduplication; a bounded recent import
+or conversation history is not effectively-full-mailbox memory.
+Then extend memory/Worker revival and resume Procedure and Cron acceptance. Slack
+and Gmail work is limited to minimum bus compatibility until the bus is delivered;
+unrelated expansion and backfill build are deferred, not discarded.
+Source packets and passing local checks are not deployed product capabilities.
+
+The global event bus is external ingress and egress around the whole agent.
+Trusted tenant/account ingress reaches the audience-bound Interaction agent;
+Interaction alone selects persistent Workers through Task. Providers and adapters
+do not select Workers. Internal agent communication is a separate concern.
+The [external message actor contract](events.md) uses the official file-backed
+Durable Streams reference server for API-client replay: the pinned native Rivet
+route is unavailable. Current snapshot SSE is not that durable stream transport.
+Durable history and native compaction are implemented foundations, not the planned
+Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dreaming.
+
 ## Current status
 
 - **Implemented locally:** workspace scaffolding; renderer-neutral Effect Schema
@@ -29,10 +69,11 @@ Interaction and Workers to discover on demand; it is not a giant system prompt.
   calls and three primary Worker request/reply pairs without publishing entries.
   Also verified rejected missing/forged tokens, idempotency/conflict handling,
   and Docker restart retaining exact public history and the old signed handle.
-  The scoped Docker/Alchemy reconciler is enabled; see [operations](operations.md)
-  for the observed revision/image. Enabled-timer automatic main rollout and
-  post-rollout real follow-up/history preservation also passed. No public ingress
-  is provisioned.
+  GitHub Actions now owns delivery through the scoped Docker/Alchemy updater;
+  the reconciliation timer is disabled after verified hosted handover and a
+  follow-on Actions-only rollout. See [operations](operations.md) for receipts.
+  Earlier timer rollout and post-rollout real history preservation also passed.
+  No public ingress is provisioned.
 - **Planned:** Composio/Gmail onboarding, live Slack setup, adaptive recall/Dreaming,
   selected json-render native migration, Reflection and DEBUGSHARE/repair.
 - **Not claimed:** live integration-account onboarding, tested imported laptop

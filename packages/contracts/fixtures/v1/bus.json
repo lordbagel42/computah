@@ -1,0 +1,42 @@
+{
+  "description": "Synthetic public wire records only. Durable offsets are assigned by the native stream service, not by this fixture.",
+  "request": {
+    "clientMutationId": "external-message-17",
+    "text": "Preserve this input exactly.\n"
+  },
+  "outputs": [
+    {
+      "version": 1,
+      "receipt": {
+        "version": 1,
+        "id": "synthetic-signed-bus-receipt",
+        "clientMutationId": "external-message-17",
+        "status": "queued",
+        "submissionId": null
+      },
+      "text": null
+    },
+    {
+      "version": 1,
+      "receipt": {
+        "version": 1,
+        "id": "synthetic-signed-bus-receipt",
+        "clientMutationId": "external-message-17",
+        "status": "submitted",
+        "submissionId": "synthetic-signed-interaction-submission"
+      },
+      "text": null
+    },
+    {
+      "version": 1,
+      "receipt": {
+        "version": 1,
+        "id": "synthetic-signed-bus-receipt",
+        "clientMutationId": "external-message-17",
+        "status": "completed",
+        "submissionId": "synthetic-signed-interaction-submission"
+      },
+      "text": "Evidence checked. Deliverable Casing Preserved."
+    }
+  ]
+}

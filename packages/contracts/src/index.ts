@@ -117,6 +117,53 @@ export const SendRequest = Schema.Struct({
   text: Schema.String,
 });
 export type SendRequest = typeof SendRequest.Type;
+
+/** Identity, source grants and destinations are bound by the authenticated host. */
+export const BusSendRequest = Schema.Struct({
+  clientMutationId: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(200),
+  ),
+  text: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(100_000),
+    Schema.isPattern(/\S/u),
+  ),
+});
+export type BusSendRequest = typeof BusSendRequest.Type;
+
+const busReceiptFields = {
+  version: WireVersion,
+  id: Id,
+  clientMutationId: Id,
+  submissionId: Schema.NullOr(Id),
+};
+const completedBusReceipt = Schema.Struct({
+  ...busReceiptFields,
+  status: Schema.Literal("completed"),
+});
+const otherBusReceipt = Schema.Struct({
+  ...busReceiptFields,
+  status: Schema.Literals(["queued", "submitted", "failed", "cancelled"]),
+});
+export const BusReceipt = Schema.Union([completedBusReceipt, otherBusReceipt]);
+export type BusReceipt = typeof BusReceipt.Type;
+
+/** Public final text only; ordering and replay use native Durable Stream offsets. */
+export const BusOutput = Schema.Union([
+  Schema.Struct({
+    version: WireVersion,
+    receipt: completedBusReceipt,
+    text: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({
+    version: WireVersion,
+    receipt: otherBusReceipt,
+    text: Schema.Null,
+  }),
+]);
+export type BusOutput = typeof BusOutput.Type;
+
 export const CancelRequest = Schema.Struct({
   conversationId: Id,
   submissionId: Id,

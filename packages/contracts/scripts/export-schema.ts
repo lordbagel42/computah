@@ -4,6 +4,9 @@ import { Schema } from "effect";
 import {
   AccountHandle,
   BrowserSessionHandle,
+  BusOutput,
+  BusReceipt,
+  BusSendRequest,
   CancelRequest,
   CancelResult,
   SendRequest,
@@ -19,6 +22,9 @@ import {
 const schemas = {
   AccountHandle,
   BrowserSessionHandle,
+  BusOutput,
+  BusReceipt,
+  BusSendRequest,
   Viewer,
   Snapshot,
   SendRequest,
