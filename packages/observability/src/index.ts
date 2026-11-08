@@ -129,6 +129,8 @@ const operations = new Set([
   "operations.discover",
   "operations.query",
   "operations.timing",
+  "self_docs.discover",
+  "self_docs.read",
   "observatory.http",
   "observatory.poll",
 ]);

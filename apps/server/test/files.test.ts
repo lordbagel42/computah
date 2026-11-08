@@ -111,7 +111,9 @@ test("native Task/Worker read-write-edit uses isolated durable DB files, not hos
       const last = request.messages.at(-1);
       let response: ReturnType<typeof fauxAssistantMessage>;
       if (tools.has("Task")) {
-        expect(tools).toEqual(new Set(["Task"]));
+        expect(tools).toEqual(
+          new Set(["Task", "self_docs_discover", "self_docs_read"]),
+        );
         response =
           last?.role === "toolResult"
             ? fauxAssistantMessage(JSON.stringify(last.content))
@@ -252,7 +254,11 @@ test("native Task/Worker read-write-edit uses isolated durable DB files, not hos
     expect(offered.flat()).not.toContain("bash");
     await alice.sleep(alice.workerId());
     await run(alice, "read", "a-read-reopened");
-    expect(offered.at(-1)).toEqual(["read"]);
+    expect(offered.at(-1)).toEqual([
+      "read",
+      "self_docs_discover",
+      "self_docs_read",
+    ]);
     const history = JSON.stringify(
       (await alice.history(alice.workerId())).items,
     );

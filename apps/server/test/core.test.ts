@@ -207,7 +207,11 @@ test("real Rivet/Pi Task delegation, deduplication, Worker reuse, native compact
   );
   expect(requests.some((request) => request.tools.includes("Task"))).toBe(true);
   expect(
-    requests.every((request) => request.tools.every((name) => name === "Task")),
+    requests.every((request) =>
+      request.tools.every((name) =>
+        ["Task", "self_docs_discover", "self_docs_read"].includes(name),
+      ),
+    ),
   ).toBe(true);
   await expect
     .poll(() =>

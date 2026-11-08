@@ -57,6 +57,7 @@ import {
   operationalInstructions,
 } from "./operations.js";
 import { interactionInstructions, workerInstructions } from "./personality.js";
+import { createSelfDocs, selfDocsInstructions } from "./self-docs.js";
 import {
   type SentinelDecision,
   type SentinelInput,
@@ -389,6 +390,8 @@ export function createCore(options: CoreOptions) {
       "message_timing",
       "axiom_discover",
       "axiom_read",
+      "self_docs_discover",
+      "self_docs_read",
     ].map((name) => ({
       tool: name,
       wrap: (tool: ToolRegistration): ToolRegistration => ({
@@ -906,6 +909,9 @@ export function createCore(options: CoreOptions) {
       (await api.snapshot(Binding, context))?.scope ?? null,
   });
   workerTools.install(files.extension);
+  const selfDocs = createSelfDocs();
+  interactionTools.install(selfDocs.extension);
+  workerTools.install(selfDocs.extension);
 
   if (options.axiomMcp) {
     interactionTools.install(
@@ -1337,7 +1343,8 @@ export function createCore(options: CoreOptions) {
             (options.operations || options.transportTiming
               ? `${interactionInstructions}\n\n${operationalInstructions}`
               : interactionInstructions) +
-            (options.axiomMcp ? `\n\n${axiomInstructions}` : ""),
+            (options.axiomMcp ? `\n\n${axiomInstructions}` : "") +
+            `\n\n${selfDocsInstructions}`,
           model: modelRef(options.model),
           ...(options.thinkingLevel
             ? { thinkingLevel: options.thinkingLevel }
@@ -1367,8 +1374,13 @@ export function createCore(options: CoreOptions) {
       const root = await c.pi.root(BACKGROUND_CONTEXT);
       await root.configure(
         {
-          tools: [...tools, ...fileTools, ...sourceTools],
-          instructions: workerInstructions,
+          tools: [
+            ...tools,
+            ...fileTools,
+            ...sourceTools,
+            ...(selfDocs.extension.tools ?? []),
+          ],
+          instructions: `${workerInstructions}\n\n${selfDocsInstructions}`,
           model: modelRef(options.workerModel ?? options.model),
           ...(options.thinkingLevel
             ? { thinkingLevel: options.thinkingLevel }

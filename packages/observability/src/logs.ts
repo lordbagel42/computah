@@ -91,6 +91,8 @@ const operations = [
   "operations.discover",
   "operations.query",
   "operations.timing",
+  "self_docs.discover",
+  "self_docs.read",
   "slack.receive",
   "slack.step",
   "slack.api",

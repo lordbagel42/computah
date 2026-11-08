@@ -9,6 +9,7 @@ RUN pnpm install --frozen-lockfile
 COPY --chown=node:node apps/server ./apps/server
 COPY --chown=node:node packages/contracts ./packages/contracts
 COPY --chown=node:node packages/observability ./packages/observability
+COPY --chown=node:node docs ./docs
 ENV NODE_ENV=production HOME=/data PORT=8787
 USER node
 EXPOSE 8787

@@ -134,10 +134,20 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
       expect(request.system).toContain(
         "Your voice applies to accompanying commentary, not the deliverable.",
       );
-      expect(request.tools).toEqual(["Task"]);
+      expect(request.tools).toEqual([
+        "Task",
+        "self_docs_discover",
+        "self_docs_read",
+      ]);
     }
     for (const request of worker) {
-      expect(request.tools).toEqual(["read", "write", "edit"]);
+      expect(request.tools).toEqual([
+        "read",
+        "write",
+        "edit",
+        "self_docs_discover",
+        "self_docs_read",
+      ]);
       expect(request.model).toBe(
         request.text.includes("previous heading")
           ? "execution-test"
