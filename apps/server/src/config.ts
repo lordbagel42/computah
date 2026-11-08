@@ -19,6 +19,8 @@ const capabilities: Capability[] = [
   "web.search",
   "web.extract",
   "operations.read",
+  "files.read",
+  "files.write",
 ];
 
 export function readConfig(env: NodeJS.ProcessEnv) {

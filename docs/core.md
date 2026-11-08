@@ -55,7 +55,10 @@ categories and content-free spans; it is not a second durable workflow engine.
 Each Interaction is keyed by tenant/user/agent. Its task tool is
 `Task({ worker, text })`. The executable also installs the read-only
 [operational discovery and message timing tools](tools.md#operational-data-discovery),
-with explicit `operations.read` authorization. Workers optionally receive the native
+with explicit `operations.read` authorization. Workers receive Pi's native `read`, `write`, and `edit`
+only with explicit `files.read` / `files.write` grants. These tools operate in the
+Worker actor's private SQLite-backed file namespace, never the host filesystem or
+another Worker's storage. See [native tools](tools.md). Workers optionally receive the native
 [Tavily web tools](tavily.md), only when the protected key and this principal's
 explicit `web.search` / `web.extract` grants are present. Task reads its trusted
 session binding, checks current task authority and addresses the Worker by the
@@ -127,18 +130,22 @@ All gateway reads, admissions and controls compare **all three** identity fields
 before resolving an actor. Current grants are checked outside prompts on each
 operation and again at actor admission/Task dispatch. Capabilities are:
 
-| Capability      | Effect                                                                       |
-| --------------- | ---------------------------------------------------------------------------- |
-| `history.read`  | Read/wait on this scope's histories/results                                  |
-| `task.send`     | Admit work/delegate within this scope                                        |
-| `task.control`  | Cancel this scope's queued or active submission and linked Workers           |
-| `core.maintain` | Compact/sleep this scope's actors; intended owner-only grant                 |
-| `web.search`    | Search public evidence through configured Tavily, in this scope              |
-| `web.extract`   | Extract bounded public URL evidence through configured Tavily, in this scope |
+| Capability      | Effect                                                                        |
+| --------------- | ----------------------------------------------------------------------------- |
+| `history.read`  | Read/wait on this scope's histories/results                                   |
+| `task.send`     | Admit work/delegate within this scope                                         |
+| `task.control`  | Cancel this scope's queued or active submission and linked Workers            |
+| `core.maintain` | Compact/sleep this scope's actors; intended owner-only grant                  |
+| `web.search`    | Search public evidence through configured Tavily, in this scope               |
+| `web.extract`   | Extract bounded public URL evidence through configured Tavily, in this scope  |
+| `files.read`    | Read this Worker's private database-backed files                              |
+| `files.write`   | Write this Worker's private database-backed files; edit also needs files.read |
 
 The owner may receive the broader maintenance grant. It is **not** cross-user
-history authority. No one receives ambient host shell or shared-code writes:
-CodingTools, native execution, sandbox tools and file tools are not installed.
+history authority. No one receives ambient host shell or shared-code writes.
+Only the three native file tools are registered, gated by current grants at
+execution independently of Task admission; the whole CodingTools extension
+(including bash), native host execution and sandbox tools are not installed.
 AgentOS-first execution remains later intent, not a fake implemented provider.
 
 Private actor connections require an HMAC bound to actor role and exact key;

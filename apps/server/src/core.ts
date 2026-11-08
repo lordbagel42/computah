@@ -29,6 +29,7 @@ import {
 import { Effect } from "effect";
 import { type Client, setup } from "rivetkit";
 import { createClient } from "rivetkit/client";
+import { createFileTools, type FileCapability } from "./files.js";
 import {
   createOperations,
   createOperationsExtension,
@@ -52,7 +53,8 @@ export type Capability =
   | "core.maintain"
   | "web.search"
   | "web.extract"
-  | "operations.read";
+  | "operations.read"
+  | FileCapability;
 
 export class CoreError extends Error {
   constructor(readonly code: "denied" | "invalid" | "conflict" | "runtime") {
@@ -376,6 +378,12 @@ export function createCore(options: CoreOptions) {
   });
   const workerTools = createRegistry();
   if (options.tavily) workerTools.install(tavilyExtension);
+  const files = createFileTools({
+    authorize: options.authorize,
+    scope: async (api, context) =>
+      (await api.snapshot(Binding, context))?.scope ?? null,
+  });
+  workerTools.install(files.extension);
 
   if (options.operations) {
     const operations = createOperations({
@@ -489,7 +497,7 @@ export function createCore(options: CoreOptions) {
     apiKeys: options.apiKeys,
     models: options.models,
     settings: options.settings,
-    // Never install CodingTools or a host environment implicitly, including for the owner.
+    // No host environment or whole CodingTools extension: files remain in each actor DB.
     onWake: async (c: { key: string[]; pi: Harness }) => {
       const scope = scopeOf(c.key);
       await c.pi.commit(async (tx) => {
@@ -703,6 +711,7 @@ export function createCore(options: CoreOptions) {
     onWake: async (c) => {
       await common.onWake(c);
       const capabilities = await tavily.capabilities(scopeOf(c.key));
+      const fileTools = await files.available(scopeOf(c.key));
       const tools = (tavilyExtension.tools ?? []).filter((tool) =>
         capabilities.includes(
           tool.name === "web_search" ? "web.search" : "web.extract",
@@ -711,7 +720,7 @@ export function createCore(options: CoreOptions) {
       const root = await c.pi.root(BACKGROUND_CONTEXT);
       await root.configure(
         {
-          tools,
+          tools: [...tools, ...fileTools],
           instructions: workerInstructions,
           model: modelRef(options.workerModel ?? options.model),
           ...(options.thinkingLevel

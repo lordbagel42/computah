@@ -53,6 +53,46 @@ unavailable rather than zero. Best-effort export can lose spans; an empty query
 does not prove no work occurred. Separate Slack/bus durable timing instrumentation
 and scoped query credential provisioning are not implied by this source packet.
 
+## Native private Worker files
+
+`apps/server/src/files.ts` registers the pinned Pi Durable 1.5.0 `read`, `write`
+and `edit` implementations individually, not the whole CodingTools extension.
+Rivet Pi 0.5.6 supplies its default `databaseEnv`: bytes live in that actor's
+`pi_file` SQLite table. Absolute and relative paths are keys in this private file
+namespace, not access to similarly named host files. Different user/tenant/agent
+bindings and different Worker labels have different actor databases. No host
+environment, node filesystem adapter, sandbox, bash or shared-code write is added.
+This supports durable drafts and task artifacts, **not host self-editing/deploy**.
+AgentOS-first host execution remains a separate unimplemented boundary.
+
+Trusted bootstrap capabilities are opt-in: `files.read` offers read;
+`files.write` offers write; edit requires both. The private Binding document,
+not tool arguments or task prose, supplies identity. Tool discovery is filtered on
+actor wake, and every execution rechecks current grants independently of Task or
+Sentinel admission. Stale model-visible tools cannot bypass revocation. Grant
+checks are not an atomic lock against concurrent host grant mutation during an
+already-running file operation. Restart to refresh executable bootstrap grants.
+No `files.*` grant is inferred from owner, maintenance or task permission.
+
+Inputs/results retain native Pi schemas and behavior: read supports path and
+optional offset/limit; write takes path/content; edit takes path and exact
+oldText/newText replacements. Native read truncation and edit diff results remain
+available in the private transcript. No generic file API or public download route
+is exposed. File content is user/task data, not authorization or instructions.
+Reusing a Worker label reuses its files after sleep/reopen. Mutations preserve
+native unsafe replay: after interruption, a write/edit may have landed, so inspect
+the retained file before retrying rather than claiming exactly-once effects.
+
+Operation spans are children of the incoming native Pi tool telemetry context;
+safe completion logs use the shared Axiom path. Only fixed read/write/edit
+operation and success/denied/error/cancelled outcomes leave the process. Paths,
+file bytes, tool arguments/results, principal bindings and raw errors are not
+exported. Dynamic registration and execution are verified with real Rivet/Pi
+actors and deterministic model calls, including Task delivery, edits retained
+after wake, two-user isolation, post-discovery revocation and a host file at the
+same absolute path remaining untouched. Live deployment/tool-call/Axiom evidence
+is separate from these local checks; no real-model honesty guarantee is claimed.
+
 ## First-class Worker capabilities
 
 Agent-browser and Tavily are explicit native integration requirements alongside

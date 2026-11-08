@@ -118,7 +118,9 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
     const interaction = observed.filter((request) =>
       request.tools.includes("Task"),
     );
-    const worker = observed.filter((request) => request.tools.length === 0);
+    const worker = observed.filter(
+      (request) => !request.tools.includes("Task"),
+    );
     expect(interaction.length).toBeGreaterThanOrEqual(4);
     expect(worker).toHaveLength(2);
     for (const request of interaction) {
@@ -135,6 +137,7 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
       expect(request.tools).toEqual(["Task"]);
     }
     for (const request of worker) {
+      expect(request.tools).toEqual(["read", "write", "edit"]);
       expect(request.model).toBe(
         request.text.includes("previous heading")
           ? "execution-test"
