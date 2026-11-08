@@ -234,6 +234,42 @@ test("per-receipt answer deadlines survive blocked core, batches, restart and un
     );
     exact.close();
 
+    const working = fixture();
+    working.outcome("streaming");
+    working.adapter.admit(working.event("working"), 0);
+    await working.adapter.step();
+    working.now(1500);
+    await working.adapter.step();
+    assert.equal(working.posts, 1, "acknowledgement is visible");
+    working.adapter.pumpReplyLatency();
+    assert.deepEqual(
+      working.rows(),
+      [],
+      "acknowledgement never confirms an answer",
+    );
+    working.now(5001);
+    working.adapter.pumpReplyLatency();
+    assert.deepEqual(
+      working.rows().map((r) => r.phase),
+      ["overdue"],
+    );
+    working.outcome("completed");
+    await working.adapter.step();
+    working.adapter.pumpReplyLatency();
+    assert.deepEqual(
+      working.rows().map((r) => [r.phase, r.elapsed]),
+      [
+        ["confirmed", 5001],
+        ["overdue", 5001],
+      ],
+    );
+    assert.equal(
+      working.posts,
+      2,
+      "final answer still uses its independent delivery path",
+    );
+    working.close();
+
     for (const kind of ["failed", "cancelled", "empty", "denied"] as const) {
       const terminal = fixture();
       terminal.adapter.admit(terminal.event(`terminal-${kind}`), 0);
@@ -358,7 +394,7 @@ test("per-receipt answer deadlines survive blocked core, batches, restart and un
     const latency = records.filter(
       (r) => r.body?.stringValue === "slack.reply_latency",
     );
-    assert.equal(latency.length, 135);
+    assert.equal(latency.length, 137);
     assert.equal(
       latency.filter(
         (r) =>

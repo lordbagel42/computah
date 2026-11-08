@@ -22,14 +22,14 @@ const modules={
    auth={test:async()=>({user_id:'UBOT',team_id:'TTEST',response_metadata:{scopes:['chat:write','im:write','im:history','app_mentions:read']}})};
    chat={postMessage:async(p)=>{
      if(p.channel!=='DOWNER'||p.thread_ts!==(process.env.TEST_CARDS?'1.000':undefined))throw new Error('DM was threaded or rerouted');
-     if(p.text.includes('still working')){
+     if(p.text==='On it.'){
        console.log('synthetic.progress.correct');globalThis.syntheticEmit('2','stop');
      } else if(p.text.includes(process.env.TEST_CANCEL==='denied'?'Core denied cancellation':process.env.TEST_CANCEL==='unknown'?'Cancellation is not confirmed':'Core confirmed cancellation')){
        console.log('synthetic.cancel.correct');process.kill(process.pid,'SIGTERM');
      } else throw new Error('Unexpected or leaked text');
      return {ok:true};
    },startStream:async(p)=>{
-     if(p.channel!=='DOWNER'||p.thread_ts!=='1.000'||p.recipient_user_id||p.task_display_mode!=='plan'||p.chunks.length!==1||p.chunks[0].id!=='interaction'||p.chunks[0].status!=='in_progress'||p.markdown_text||p.blocks)throw new Error('Invalid native start');
+     if(p.channel!=='DOWNER'||p.thread_ts!=='1.000'||p.recipient_user_id||p.task_display_mode!=='plan'||p.chunks.length!==1||p.chunks[0].id!=='interaction'||p.chunks[0].title!=='On it.'||p.chunks[0].status!=='in_progress'||p.markdown_text||p.blocks)throw new Error('Invalid native start');
      console.log('synthetic.stream.start.correct');
      if(process.env.TEST_CARDS==='denied')throw {data:{error:'missing_scope'}};
      if(process.env.TEST_CARDS==='error'){console.log('synthetic.progress.correct');globalThis.syntheticEmit('2','stop');throw new Error('ambiguous start');}

@@ -614,7 +614,7 @@ test("retired senders retain a durable coalescing fence after bindings disappear
   }
 });
 
-test("progress's stop invitation stays at the source even when final reply placement differs", async () => {
+test("working acknowledgement stays at the source even when final reply placement differs", async () => {
   for (const [text, source, expected] of [
     ["reply in thread: work", undefined, null],
     ["reply top-level: work", "10.001", "10.001"],
@@ -635,7 +635,7 @@ test("progress's stop invitation stays at the source even when final reply place
   }
 });
 
-test("progress is actual phase-only, at most one attempt across reopen/uncertain send, and preserves top-level DM", async () => {
+test("working acknowledgement is brief, at most one attempt across reopen/uncertain send, and preserves top-level DM", async () => {
   for (const failed of [false, true]) {
     const f = fixture();
     try {
@@ -644,13 +644,7 @@ test("progress is actual phase-only, at most one attempt across reopen/uncertain
       await f.adapter.step();
       if (failed) f.failPost();
       await f.adapter.step();
-      assert.deepEqual(f.posts, [
-        [
-          "DOWNER",
-          "Computah's linked Worker is still working. Send stop here to request cancellation.",
-          null,
-        ],
-      ]);
+      assert.deepEqual(f.posts, [["DOWNER", "On it.", null]]);
       f.reopen();
       await f.adapter.step();
       assert.equal(f.posts.length, 1);
@@ -660,6 +654,46 @@ test("progress is actual phase-only, at most one attempt across reopen/uncertain
         assert.equal(f.posts[1][1], "final answer");
         assert.equal(f.posts[1][2], null);
       }
+    } finally {
+      f.close();
+    }
+  }
+});
+
+test("instant answers skip acknowledgement; pending work gets one after the grace period even without observation", async () => {
+  for (const [instant, failedObservation] of [
+    [true, false],
+    [false, false],
+    [false, true],
+  ]) {
+    const f = fixture();
+    f.transport.progress = failedObservation
+      ? async () => {
+          throw new Error("observation unavailable");
+        }
+      : undefined;
+    try {
+      f.adapter.admit(input("1", "work"));
+      f.advance(1200);
+      await f.adapter.step();
+      f.advance(299);
+      await f.adapter.step();
+      assert.deepEqual(f.posts, [], "no chatter before 1.5 seconds");
+      if (!instant) {
+        f.advance(1);
+        await f.adapter.step();
+        assert.deepEqual(f.posts, [["DOWNER", "On it.", null]]);
+        f.reopen();
+        f.advance(6000);
+        await f.adapter.step();
+        assert.equal(f.posts.length, 1);
+      }
+      f.outcome("completed");
+      await f.adapter.step();
+      assert.deepEqual(
+        f.posts.map((p) => p[1]),
+        instant ? ["final answer"] : ["On it.", "final answer"],
+      );
     } finally {
       f.close();
     }

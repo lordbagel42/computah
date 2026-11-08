@@ -1458,12 +1458,7 @@ export class SlackAdapter {
   }
 
   private async progressJob(job: Job, binding: Binding) {
-    if (
-      !this.transport.progress ||
-      !job.submission ||
-      this.now() - job.created < 5000
-    )
-      return;
+    if (!job.submission || this.now() - job.created < 1500) return;
     const lifecycle = this.db
       .prepare(
         "SELECT progress,origin,origin_known FROM job_lifecycle WHERE job=?",
@@ -1513,6 +1508,15 @@ export class SlackAdapter {
       return;
     }
     if (lifecycle.progress) return;
+    // A stop attempt may be unconfirmed; don't follow it with a fresh "On it."
+    if (
+      this.db
+        .prepare(
+          "SELECT 1 FROM job_lifecycle WHERE kind='stop' AND target=? LIMIT 1",
+        )
+        .get(job.id)
+    )
+      return;
     // Reserve the only attempt before any external effect. Reconnect/reopen can
     // omit a marker, never duplicate it or replay final delivery.
     this.db
@@ -1524,12 +1528,19 @@ export class SlackAdapter {
         job.id,
         "status",
         async () => {
-          const phase = await this.transport.progress?.(
-            binding,
-            job.submission ?? "",
-          );
-          if (!phase) return;
-          if (lifecycle.origin && this.transport.stream) {
+          let phase: Progress = null;
+          try {
+            phase =
+              (await this.transport.progress?.(
+                binding,
+                job.submission ?? "",
+              )) ?? null;
+          } catch {
+            // The authoritative result already says pending. An optional phase
+            // snapshot is not required to acknowledge that actual admitted work.
+            outcome = "error";
+          }
+          if (phase && lifecycle.origin && this.transport.stream) {
             const stream: ProgressStream = {
               state: "starting",
               phase,
@@ -1553,13 +1564,7 @@ export class SlackAdapter {
             outcome = result.status === "unsupported" ? "denied" : "error";
             if (result.status !== "unsupported") return;
           }
-          await this.transport.post(
-            job.channel,
-            phase === "worker"
-              ? "Computah's linked Worker is still working. Send stop here to request cancellation."
-              : "Computah is still working on your request. Send stop here to request cancellation.",
-            lifecycle.origin,
-          );
+          await this.transport.post(job.channel, "On it.", lifecycle.origin);
         },
         undefined,
         () => outcome,

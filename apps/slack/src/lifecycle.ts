@@ -42,7 +42,7 @@ export function taskUpdates(phase: Exclude<Progress, null>, end?: StreamEnd) {
           ? "Core reported failure"
           : end === "completed"
             ? "Core finished; answer delivery is separate"
-            : "Computah request (send stop at the request's source to cancel)";
+            : "On it.";
   return [
     { type: "task_update" as const, id: "interaction", title, status },
     ...(phase === "worker"
