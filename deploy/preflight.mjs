@@ -7,7 +7,7 @@ const child = spawn(
   process.execPath,
   ["--import", "tsx", "apps/server/src/main.ts"],
   {
-    stdio: "ignore",
+    stdio: ["ignore", "inherit", "inherit"],
   },
 );
 const exited = once(child, "exit");
@@ -22,6 +22,7 @@ const request = (path, options = {}) =>
     headers,
     signal: AbortSignal.timeout(2000),
   });
+let stage = "startup";
 try {
   const deadline = Date.now() + 60000;
   for (;;) {
@@ -34,6 +35,7 @@ try {
     if (Date.now() >= deadline) throw new Error("startup deadline");
     await delay(100);
   }
+  stage = "admission";
   const admitted = await request("/v1/submissions", {
     method: "POST",
     body: JSON.stringify({
@@ -43,6 +45,7 @@ try {
   });
   if (admitted.status !== 202) throw new Error("admission failed");
   const { id } = await admitted.json();
+  stage = "result";
   const deadlineResult = Date.now() + 20000;
   for (;;) {
     const response = await request(`/v1/submissions/${id}`);
@@ -65,6 +68,7 @@ try {
       throw new Error("result deadline");
     await delay(100);
   }
+  stage = "shutdown";
   if (
     child.exitCode !== null ||
     child.signalCode !== null ||
@@ -78,6 +82,6 @@ try {
   );
 } catch {
   child.kill("SIGKILL");
-  console.error("Candidate isolated preflight failed");
+  console.error(`Candidate isolated preflight failed stage=${stage}`);
   process.exitCode = 1;
 }

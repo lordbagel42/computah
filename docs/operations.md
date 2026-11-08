@@ -56,6 +56,18 @@ The managed engine validates 4 GiB of free filesystem capacity for its configure
 log shard even when the smoke records are tiny. Small tmpfs mounts fail
 that validation; do not reserve gigabytes of RAM on the small host or change
 production engine storage sizing to make a candidate test pass.
+Apply checks that free capacity on the candidate filesystem before launching it.
+On capacity or candidate failure, it retains a root-only, exclusive-created JSON
+receipt under `/var/log/computah-deploy/computah-preflight-*.json`: selected
+revision/image, fixed stage, available/required bytes, child status/signal and
+the last 8 KiB of each captured output stream. Synthetic preflight credentials
+and terminal control bytes are scrubbed; live process environments are never
+included. The synthetic server forwards output to that bounded capture; failures
+also identify a fixed startup/admission/result/shutdown stage. Child capture is
+limited to 128 KiB per stream. The protected host request log records the receipt
+path; Actions receives only the generic failure, never the path or its contents.
+Receipts have manual retention;
+their existence is failure evidence, not permission to retry or claim adoption.
 A failed preflight leaves the old
 backend serving; it does not relax the conservative activation high-water mark
 already advanced by the installed updater. This is artifact validation, **not**

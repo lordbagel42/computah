@@ -9,6 +9,7 @@ import {
   readFile,
   rename,
   rm,
+  statfs,
   writeFile,
 } from "node:fs/promises";
 import { Effect } from "effect";
@@ -48,7 +49,14 @@ process.umask(0o077);
 // Use the disk filesystem, never a large RAM reservation or production data.
 const candidateHome = await mkdtemp("/var/lib/computah/preflight-");
 let cleanupFailed = false;
+let preflightStage = "capacity";
+let availableBytes: number | undefined;
 try {
+  const space = await statfs(candidateHome);
+  availableBytes = space.bavail * space.bsize;
+  if (availableBytes < 4 * 1024 ** 3)
+    throw new Error("Insufficient candidate filesystem capacity");
+  preflightStage = "candidate";
   await chown(candidateHome, 1000, 1000);
   await chmod(candidateHome, 0o700);
   execFileSync(
@@ -101,11 +109,55 @@ try {
       "--eval",
       await readFile(new URL("./preflight.mjs", import.meta.url), "utf8"),
     ],
-    { timeout: 120000, stdio: ["ignore", "pipe", "pipe"] },
+    {
+      timeout: 120000,
+      maxBuffer: 128 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
   );
-} catch {
+} catch (error) {
+  const failure = error as {
+    status?: number;
+    signal?: string;
+    stdout?: unknown;
+    stderr?: unknown;
+  };
+  // The candidate has synthetic credentials only. Never retain live process env
+  // or forward child output into Actions; keep two bounded, scrubbed tails local.
+  const tail = (value: unknown) =>
+    Buffer.isBuffer(value)
+      ? value
+          .subarray(-8192)
+          .toString("utf8")
+          .replace(
+            /synthetic-deployment-preflight-(secret|token)/g,
+            "[redacted]",
+          )
+          .replace(/\p{Cc}/gu, (value) =>
+            value === "\n" || value === "\t" ? value : "",
+          )
+      : "";
+  const diagnostic = `/var/log/computah-deploy/${candidate}.json`;
+  await mkdir("/var/log/computah-deploy", { recursive: true, mode: 0o700 });
+  await writeFile(
+    diagnostic,
+    JSON.stringify({
+      version: 1,
+      observedAt: new Date().toISOString(),
+      revision: process.env.COMPUTAH_REVISION,
+      image,
+      stage: preflightStage,
+      availableBytes,
+      requiredBytes: 4 * 1024 ** 3,
+      status: failure.status ?? null,
+      signal: failure.signal ?? null,
+      stdout: tail(failure.stdout),
+      stderr: tail(failure.stderr),
+    }),
+    { mode: 0o600, flag: "wx" },
+  );
   throw new Error(
-    "Candidate preflight failed; production container was not replaced",
+    `Candidate preflight failed; protected diagnostics: ${diagnostic}; production container was not replaced`,
   );
 } finally {
   // Only our unique disposable container, including after a preflight timeout.
