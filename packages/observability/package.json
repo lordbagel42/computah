@@ -1,0 +1,28 @@
+{
+  "name": "@computah/observability",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./effect": "./src/effect.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --ignoreConfig --noEmit --strict --skipLibCheck --types node --target es2023 --module nodenext src/*.ts test/*.ts",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@effect/opentelemetry": "4.1.2",
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "0.219.0",
+    "@opentelemetry/resources": "2.8.0",
+    "@opentelemetry/sdk-trace-base": "2.8.0",
+    "@opentelemetry/sdk-trace-node": "2.8.0",
+    "effect": "4.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

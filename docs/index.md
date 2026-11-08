@@ -118,6 +118,8 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
   main-only integration and evidence requirements.
 - [nest-bagel operations](operations.md): persistent storage, private credentials,
   serialized Alchemy delivery, readiness receipts and recovery limitations.
+- [Axiom observability](observability.md): full emitted trace export, privacy relay,
+  credential/provisioning boundaries and actual ingestion/activation evidence.
 - [Slack prototype](slack.md): dedicated app setup, private identity mapping,
   durable inbox, DM routing, delivery uncertainty and local/live verification.
 - [Native tools and credential boundaries](tools.md): first-class browser/search,

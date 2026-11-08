@@ -1,3 +1,4 @@
+import { traceModelStream, traceOperation } from "@computah/observability";
 import type {
   Api,
   AssistantMessage,
@@ -121,10 +122,8 @@ export function priorityModels(
     "stream" | "streamSimple" | "complete" | "completeSimple"
   > = {
     stream(model, context, input) {
-      const stream = models.stream<Api>(
-        model,
-        context,
-        options(model, input ?? {}),
+      const stream = traceModelStream(model.id, () =>
+        models.stream<Api>(model, context, options(model, input ?? {})),
       );
       void stream.result().then(
         (message) => terminal(model, message),
@@ -140,10 +139,12 @@ export function priorityModels(
       return stream;
     },
     streamSimple(model, context, input) {
-      const stream = models.streamSimple(model, context, {
-        ...options(model, input ?? {}),
-        reasoning: "high",
-      });
+      const stream = traceModelStream(model.id, () =>
+        models.streamSimple(model, context, {
+          ...options(model, input ?? {}),
+          reasoning: "high",
+        }),
+      );
       void stream.result().then(
         (message) => terminal(model, message),
         () => {
@@ -160,16 +161,20 @@ export function priorityModels(
     async complete(model, context, input) {
       return terminal(
         model,
-        await models.complete<Api>(model, context, options(model, input ?? {})),
+        await traceOperation("model", () =>
+          models.complete<Api>(model, context, options(model, input ?? {})),
+        ),
       );
     },
     async completeSimple(model, context, input) {
       return terminal(
         model,
-        await models.completeSimple(model, context, {
-          ...options(model, input ?? {}),
-          reasoning: "high",
-        }),
+        await traceOperation("model", () =>
+          models.completeSimple(model, context, {
+            ...options(model, input ?? {}),
+            reasoning: "high",
+          }),
+        ),
       );
     },
   };

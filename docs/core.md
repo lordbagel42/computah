@@ -133,7 +133,8 @@ tokens. An already-running Worker is not retroactively cancelled by revocation.
 
 Application logs emit only `computah.pi.report`, not SDK reports/messages/tool
 arguments. SDK logs may include actor IDs/keys and fixed error categories; treat
-runtime logs as operator-only. No telemetry exporter is configured or verified.
+runtime logs as operator-only. The optional [Axiom exporter](observability.md)
+ships sanitized spans, not raw logs; see its separate local/live activation status.
 
 ## Runnable protected service
 

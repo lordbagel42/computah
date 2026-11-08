@@ -1,3 +1,8 @@
+import {
+  startObservability,
+  traceEvent,
+  traceHttp,
+} from "@computah/observability";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createClient } from "rivetkit/client";
@@ -8,6 +13,7 @@ import { priorityModels } from "./model-policy.js";
 import { smokeProvider } from "./smoke-model.js";
 
 async function main() {
+  const telemetry = await startObservability("backend");
   const config = readConfig(process.env);
   // PORT belongs to this ingress, not to native child services.
   delete process.env.PORT;
@@ -46,6 +52,7 @@ async function main() {
     models: models
       ? priorityModels(models, (diagnostic) => {
           console.info(`computah.model ${JSON.stringify(diagnostic)}`);
+          traceEvent("model", diagnostic);
         })
       : undefined,
     apiKeys:
@@ -68,6 +75,8 @@ async function main() {
       if (http?.listening) await closeHttp(http);
       await core.close();
       await client?.dispose();
+      traceEvent("stopped");
+      await telemetry.close();
     })());
   const shutdown = () => {
     void stop().then(
@@ -96,11 +105,13 @@ async function main() {
       revision: process.env.COMPUTAH_REVISION,
       ready: () => !stopping,
     });
+    traceHttp(http);
     await new Promise<void>((resolve, reject) => {
       http?.once("error", reject);
       http?.listen(config.port, "0.0.0.0", resolve);
     });
     console.info(`computah.http.ready mode=${config.mode} port=${config.port}`);
+    traceEvent("ready");
   })();
   try {
     await startup;

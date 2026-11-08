@@ -1,0 +1,118 @@
+# Axiom observability
+
+Computah exports every emitted trace, without sampling, from the instrumented
+backend, Slack and bus entry points when `COMPUTAH_AXIOM_INGEST_TOKEN` is present.
+This is operational tracing, not a copy of user histories. No automatic
+DEBUGSHARE collection, diagnostics bundles or diagnostic-agent spawning is added.
+
+## Collection boundaries
+
+- Node OpenTelemetry records HTTP request lifetime/status, existing Effect gateway
+  spans, explicit injected-model call lifetimes, safe provider tier/outcome events,
+  and ready/stopped/report events.
+- The native Rivet exporter records actor invocations. Pi's existing OTel adapter
+  records submission admission, task phases, tool/delegation activity, compaction,
+  checkpoints/replays and model calls on its default model runtime. The injected
+  real model runtime needs the explicit wrapper because Pi bypasses its default
+  model-tracing wrapper when `models` is supplied.
+- Slack records admitted event/ACK lifetime, delivery-loop steps, core requests,
+  Web API operations and lifecycle/report categories. Bodies never enter spans.
+- The separate bus entry point records HTTP, native actor spans and lifecycle.
+  It remains dispatch-disabled and does not mount backend/provider credentials.
+  Provision only its Axiom credential, not the backend's provider env file.
+
+All JS and native Rust traces go through one process-local, loopback-only OTLP
+HTTP/JSON relay before Axiom. The relay rebuilds the payload from a positive
+schema, retaining trace/span IDs, parent/link relationships, timestamps, kind,
+status codes and explicitly allowed scalar/category attributes. Raw actor keys,
+tenant/user/principal IDs, conversation/task IDs, personal identifiers, URLs,
+headers, prompts, reasoning, email/Slack text, tool arguments/results, exception
+messages/stacks, baggage and original resource attributes are not forwarded.
+Unknown span/event names become `runtime.operation`; the span is not sampled out.
+Registered code-owned names can be added to the allowlist as needed.
+
+The workspace pins one compatible OTel API minor. A newer API used by Pi than the
+one registering the global SDK silently produces no Pi spans. The native tracing
+regression test exercises actual Interaction → Task → Worker activity to detect
+that failure, rather than just sending an artificial OTLP payload.
+
+Export is best-effort, not a durable audit log: Node buffers at most 4096 spans,
+exports batches of at most 256, and the relay permits eight concurrent requests
+of at most 2 MiB with a five-second Axiom deadline. Native Rivet uses its own SDK
+buffer. Overload, process crashes or sustained destination failure can lose spans.
+Shutdown drains native runtime telemetry before the Node exporter and relay.
+Export failures log categories only and do not fail application work. No history
+backfill is performed and no model call is needed for ingestion verification.
+
+## What this does not measure
+
+This does not automatically instrument every function, socket frame, SQL
+statement or external library. It exports all spans those configured runtimes
+emit and adds the explicit boundaries above. Raw stdout/SDK logs are not shipped:
+they can contain private actor keys and content. Dedicated OTLP logs/metrics
+pipelines, host metrics and the [analytics](analytics.md) rollup hooks are not
+wired by this change. Per-call SDK token scalars, where available, are
+`sdk_unverified`; native default model spans can also contain SDK usage scalars.
+SDK defaults/zeros are not proof of actual provider usage. Missing counters remain
+missing, not fabricated zeros. Provider-returned tiers are distinct from requested
+priority. Cost attributes are excluded: SDK pricing-derived cost is not an invoice
+or proof that priority was served.
+
+## Provisioning and secrets
+
+The [official Alchemy guide](https://alchemy.run/axiom/) informed the independent
+`deploy/axiom.run.ts` stack, separate from serving-container reconciliation.
+`deploy/setup-axiom.ts` keeps state under `~/.local/state/computah-axiom`, rejects
+plans containing replacements/deletions/orphans, and marks the dataset retained.
+Never rename a live dataset or change its kind to fix a setup error. Dataset
+management requires additional permissions beyond ingest/query.
+
+Axiom's current official API/MCP docs specify **Events** (`axiom:events:v1`) for
+OTLP traces, despite Alchemy's example using `otel:traces:v1`. The existing
+`computah-prod-traces` dataset was provisioned through the authorized Axiom MCP
+connector. Normal OTLP ingestion uses `/v1/traces` with `X-Axiom-Dataset`.
+
+The owner's `AXIOM_TOKEN` lives in Amp project secret storage. It successfully
+lists/reads datasets and ingests traces, but dataset creation and token management
+returned 403. The setup therefore reuses that authorized token; it is **not** a
+newly minted least-privilege ingest-only credential. The optional Alchemy
+management apply remains permission-gated; it has not successfully reconciled
+this MCP-created dataset. Narrower token provisioning needs Axiom token-management
+authority, not another copy of the same credential in chat.
+
+Runtime reads only `COMPUTAH_AXIOM_INGEST_TOKEN`; an ambient management token does
+not enable collection. The deployment owner must securely map the injected
+project credential into that variable in `/etc/computah/provider.env` under
+the deployment lock, preserving all other entries and root-only mode. Normal
+Actions/Alchemy replacement then consumes it. Slack and bus use their own
+protected env files and independent release mechanisms; source publication
+alone does not activate either service. Never transfer credentials in messages,
+artifacts, Git, build arguments or logs. No account-setting CLI workaround is
+permitted when the orb's credentials cannot write secrets.
+
+## Verified status
+
+- **Live dataset and synthetic ingestion verified, 2026-11-08 06:59 UTC:** Axiom
+  accepted a harmless `computah.synthetic` trace with HTTP 200. The connected MCP
+  returned exact trace `cdaef19880af286c1508dc3c4f89e95f` and span
+  `c43afdfd5a5586c7` from `computah-prod-traces`.
+  [Saved Axiom query](https://app.axiom.co/bagel-w3ue/query?qid=9HmXbtdYWUO-to68qv).
+- **Actual exporter → Axiom verified, 2026-11-08 07:07 UTC:** the local Node
+  exporter and privacy relay sent `computah.synthetic`, service
+  `computah-backend`, trace `69814343a1d8cf835b97c24213ad6a74`. The MCP query
+  returned that exact row, not merely an HTTP acknowledgement.
+  [Exporter ingestion query](https://app.axiom.co/bagel-w3ue/query?qid=J1LeADMb449-to6958).
+  This was a local synthetic emitter, not the production service.
+- **Local actual runtime verified:** synthetic Interaction/Worker execution
+  exports Pi phases, Rivet actor actions and Effect spans through the privacy
+  relay; private-content/identity canaries are absent. Relay tests exercise SDK,
+  HTTP and Effect spans, parentage, redaction and destination failure.
+- **Production collection not yet verified:** the existing nest-bagel operator
+  thread does not receive the saved project secret in its shell. No runtime token
+  was written and no service was restarted to bypass normal deployment. Secure
+  runner injection/private local bootstrap is the remaining activation gate.
+
+Axiom queries can correlate these content-free trace IDs across operational
+boundaries. Native private diagnostics still provide details deliberately absent
+from Axiom. DEBUGSHARE remains identifier-only and separately authorized; an
+Axiom query is not permission to export a private diagnostic history.

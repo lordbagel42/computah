@@ -8,6 +8,7 @@
     "typecheck": "tsc --ignoreConfig --types node --noEmit --strict --skipLibCheck --target es2023 --module nodenext *.ts"
   },
   "dependencies": {
+    "@alchemy.run/axiom": "2.0.0-beta.85",
     "@alchemy.run/docker": "2.0.0-beta.85",
     "@effect/platform-node": "4.1.2",
     "alchemy": "2.0.0-beta.85",

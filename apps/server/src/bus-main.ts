@@ -1,5 +1,10 @@
 import { mkdir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import {
+  startObservability,
+  traceEvent,
+  traceHttp,
+} from "@computah/observability";
 import { DurableStreamTestServer } from "@durable-streams/server";
 import { createBus, createBusClient } from "./bus.js";
 import {
@@ -10,6 +15,7 @@ import {
 } from "./bus-http.js";
 
 async function main() {
+  const telemetry = await startObservability("bus");
   const secret = process.env.COMPUTAH_BUS_SECRET;
   const home = process.env.HOME;
   const dataDir = process.env.COMPUTAH_BUS_DATA_DIR;
@@ -90,6 +96,7 @@ async function main() {
   bus.registry.config.shutdown = { disableSignalHandlers: true };
   const client = createBusClient(bus);
   const http = createBusHttp(bus, client, principals);
+  traceHttp(http);
   let stopping: Promise<void> | undefined;
   const stop = () =>
     (stopping ??= (async () => {
@@ -101,6 +108,8 @@ async function main() {
       await client.dispose();
       await bus.registry.shutdown();
       await streams.stop();
+      traceEvent("stopped");
+      await telemetry.close();
     })());
   process.once("SIGTERM", () => {
     void stop().then(
@@ -121,6 +130,7 @@ async function main() {
       http.listen(port, "0.0.0.0", resolve);
     });
     console.info("computah.bus.ready dispatch=disabled");
+    traceEvent("ready");
   } catch (error) {
     await stop();
     throw error;

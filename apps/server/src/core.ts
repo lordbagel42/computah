@@ -1,4 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { traceEvent } from "@computah/observability";
+import { effectTracing } from "@computah/observability/effect";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { applyImmutable } from "@earendil-works/chord/delta";
 import {
@@ -325,6 +327,7 @@ export function createCore(options: CoreOptions) {
     // Log categories only; SDK reports can contain model/tool content.
     onReport: () => {
       console.warn("computah.pi.report");
+      traceEvent("report");
     },
     actions: {
       sleep: (c: { sleep(): void }) => {
@@ -618,7 +621,10 @@ export function createCore(options: CoreOptions) {
             try: body,
             catch: (error) =>
               error instanceof CoreError ? error : new CoreError("runtime"),
-          }).pipe(Effect.withSpan(`computah.${operation}`)),
+          }).pipe(
+            Effect.withSpan(`computah.${operation}`),
+            Effect.provide(effectTracing),
+          ),
         );
       return {
         interactionId: interactionId(scope),

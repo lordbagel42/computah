@@ -1,6 +1,9 @@
 packages:
   - packages/*
   - apps/*
+overrides:
+  # One compatible global API: Pi's newer minor otherwise silently ignores the SDK.
+  "@opentelemetry/api": "1.9.1"
 allowBuilds:
   "@google/genai": false
   cbor-extract: false

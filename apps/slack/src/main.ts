@@ -1,11 +1,17 @@
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import {
+  startObservability,
+  traceEvent,
+  traceOperation,
+} from "@computah/observability";
 import { SocketModeClient } from "@slack/socket-mode";
 import { LogLevel, WebClient } from "@slack/web-api";
 import { type Binding, type Ingress, SlackAdapter } from "./adapter.js";
 
 async function main() {
+  const telemetry = await startObservability("slack");
   process.umask(0o077);
   const required = (name: string) => {
     const value = process.env[name];
@@ -79,8 +85,12 @@ async function main() {
   const logger = {
     debug() {},
     info() {},
-    warn() {},
-    error() {},
+    warn() {
+      traceEvent("report");
+    },
+    error() {
+      traceEvent("report");
+    },
     setLevel() {},
     getLevel: () => LogLevel.ERROR,
     setName() {},
@@ -100,7 +110,7 @@ async function main() {
       timeout: 15_000,
     },
   });
-  const auth = await web.auth.test();
+  const auth = await traceOperation("slack.api", () => web.auth.test());
   if (
     !auth.user_id ||
     bindings.some(
@@ -119,20 +129,21 @@ async function main() {
     );
   if (process.env.COMPUTAH_SLACK_STATUS_ENABLED === "true" && !statusEnabled)
     console.info("computah.slack.status_disabled_missing_grants");
-  const request = async (binding: Binding, path: string, body?: unknown) => {
-    const response = await fetch(new URL(path, base), {
-      method: body === undefined ? "GET" : "POST",
-      headers: {
-        authorization: `Bearer ${binding.coreToken}`,
-        "content-type": "application/json",
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: AbortSignal.timeout(30_000),
-      redirect: "error",
+  const request = async (binding: Binding, path: string, body?: unknown) =>
+    traceOperation("slack.core", async () => {
+      const response = await fetch(new URL(path, base), {
+        method: body === undefined ? "GET" : "POST",
+        headers: {
+          authorization: `Bearer ${binding.coreToken}`,
+          "content-type": "application/json",
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(30_000),
+        redirect: "error",
+      });
+      if (!response.ok) throw new Error("Core unavailable");
+      return response.json();
     });
-    if (!response.ok) throw new Error("Core unavailable");
-    return response.json();
-  };
   for (const binding of bindings.flatMap((b) => [
     b,
     ...(b.channelBindings ?? []).map((channel) => ({ ...b, ...channel })),
@@ -159,30 +170,34 @@ async function main() {
     {
       request,
       async openDm(user) {
-        const result = await web.conversations.open({ users: user });
+        const result = await traceOperation("slack.api", () =>
+          web.conversations.open({ users: user }),
+        );
         if (!result.channel?.id?.startsWith("D"))
           throw new Error("No private DM");
         return result.channel.id;
       },
       async post(channel, text, thread) {
-        await web.chat.postMessage({
-          channel,
-          text: text
-            .replaceAll("&", "&amp;")
-            .replaceAll("<", "&lt;")
-            .replaceAll(">", "&gt;"),
-          mrkdwn: false,
-          parse: "none",
-          unfurl_links: false,
-          unfurl_media: false,
-          blocks: [
-            {
-              type: "section",
-              text: { type: "plain_text", text, emoji: false },
-            },
-          ],
-          ...(thread ? { thread_ts: thread } : {}),
-        });
+        await traceOperation("slack.api", () =>
+          web.chat.postMessage({
+            channel,
+            text: text
+              .replaceAll("&", "&amp;")
+              .replaceAll("<", "&lt;")
+              .replaceAll(">", "&gt;"),
+            mrkdwn: false,
+            parse: "none",
+            unfurl_links: false,
+            unfurl_media: false,
+            blocks: [
+              {
+                type: "section",
+                text: { type: "plain_text", text, emoji: false },
+              },
+            ],
+            ...(thread ? { thread_ts: thread } : {}),
+          }),
+        );
       },
       async threadContext(channel, thread, before, signal) {
         const scope = channel.startsWith("G")
@@ -199,11 +214,13 @@ async function main() {
           inclusive: "false",
           limit: "15",
         }).toString();
-        const response = await fetch(url, {
-          headers: { authorization: `Bearer ${required("SLACK_BOT_TOKEN")}` },
-          signal,
-          redirect: "error",
-        });
+        const response = await traceOperation("slack.api", () =>
+          fetch(url, {
+            headers: { authorization: `Bearer ${required("SLACK_BOT_TOKEN")}` },
+            signal,
+            redirect: "error",
+          }),
+        );
         const result = (await response.json()) as {
           ok?: boolean;
           messages?: unknown;
@@ -216,9 +233,8 @@ async function main() {
         try {
           // Separate, cancellable HTTP request: optional status never consumes the
           // delivery client's queue or its 15s request budget. No automatic retries.
-          const response = await fetch(
-            "https://slack.com/api/agents.sessions.setStatus",
-            {
+          const response = await traceOperation("slack.api", () =>
+            fetch("https://slack.com/api/agents.sessions.setStatus", {
               method: "POST",
               headers: {
                 authorization: `Bearer ${required("SLACK_BOT_TOKEN")}`,
@@ -231,7 +247,7 @@ async function main() {
               }),
               signal,
               redirect: "error",
-            },
+            }),
           );
           const result = (await response.json()) as {
             ok?: boolean;
@@ -270,14 +286,19 @@ async function main() {
   let stopping = false;
   socket.on("slack_event", async ({ body, ack }) => {
     try {
-      if (stopping) return;
-      adapter.admit(body as Ingress);
-      await ack();
+      await traceOperation("slack.receive", async () => {
+        if (stopping) return;
+        adapter.admit(body as Ingress);
+        await ack();
+      });
     } catch {
       console.error("computah.slack.admission_failed");
     }
   });
-  socket.on("error", () => console.error("computah.slack.connection_error"));
+  socket.on("error", () => {
+    console.error("computah.slack.connection_error");
+    traceEvent("report");
+  });
   let shutdownDeadline: ReturnType<typeof setTimeout> | undefined;
   const stopped = new Promise<void>((resolve) => {
     const stop = () => {
@@ -292,9 +313,12 @@ async function main() {
   });
   try {
     await Promise.race([socket.start(), stopped]);
-    if (!stopping) console.info("computah.slack.ready");
+    if (!stopping) {
+      console.info("computah.slack.ready");
+      traceEvent("ready");
+    }
     while (!stopping) {
-      await adapter.step();
+      await traceOperation("slack.step", () => adapter.step());
       await delay(1000);
     }
   } finally {
@@ -303,6 +327,8 @@ async function main() {
     adapter.close();
     clearTimeout(shutdownDeadline);
     console.info("computah.slack.stopped");
+    traceEvent("stopped");
+    await telemetry.close();
   }
 }
 
