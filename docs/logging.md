@@ -36,9 +36,70 @@ No span is fabricated for every static byte, schema, asset or pure transformatio
 `startRuntimeLogging(service)` is a process singleton: first bootstrap wins,
 including disabled/closed state. It does not hot-reload credentials or restart
 after close. Supported services: `backend`, `slack`, `bus`, `native`, `dashboard`,
-`rune-pi`. The lower-level `createRuntimeLogger({service, token?, dataset?, fetch?})`
+`rune-pi`, `observatory`. This is a Node module; Cloudflare/other runtime
+compatibility and request-lifecycle flushing must be verified by that owner,
+not inferred from the service catalog. The lower-level
+`createRuntimeLogger({service, token?, dataset?, revision?, fetch?})`
 creates an isolated instance for tests and explicitly authorized synthetic proof;
 application code should use the singleton, not create competing pipelines.
+
+## Analytics observation hook
+
+The separately authorized `runtimeMetric(sample: RuntimeMetricSample)` emits
+one `analytics.sample` log through **the same queue and exporter**, not a meter
+provider. The integration owner additionally re-exports `runtimeMetric`,
+`RuntimeMetricName` and `RuntimeMetricSample`. An isolated instance exposes the
+equivalent `metric(sample)` method. Generic `runtimeLog` cannot emit analytics
+samples or bypass the stricter schema.
+
+The analytics owner invokes this only after its local SQLite deduplication and
+commit, once per observation map. Never export cumulative snapshots, native
+usage totals on refresh, local receipt IDs, HMACs or principal/task correlation.
+The common generated `log.id` and active OTel trace/span IDs remain operational
+metadata, not local receipt identifiers. Remote delivery is not transactional
+with SQLite; drops/crashes may lose samples and no retry is implied.
+
+Required sample fields:
+
+- `measurements`: partial map of the exact shipped `ANALYTICS_METRICS` keys in
+  `apps/server/src/analytics.ts`. The exporter mirrors that closed catalog without
+  importing the server application. Units are catalog-defined, never supplied by
+  callers. Each value is finite, nonnegative and at most `MAX_SAFE_INTEGER`.
+  Unknown/invalid measurements are omitted; no valid measurements rejects the row.
+- `role`: `interaction`, `worker`, `slack`, `runtime`.
+- `operation`: `submit`, `wait`, `result`, `history`, `cancel`, `compact`, `sleep`,
+  `Task`, `observe`, `unknown`.
+- `outcome`: `ok`, `error`, `aborted`, `unknown`, `accepted`, `duplicate`, `ignored`,
+  `uncertain`, `rate_limited`.
+- `model`: `openai-codex/gpt-6.1-terra`, `openai-codex/gpt-6.1-sol`, `unknown`;
+  `provider`: `openai-codex`, `unknown`. Unknown model/provider must pair together.
+- `sdk`: exactly `pi-ai@1.5.0`. Invalid required labels reject the entire sample.
+
+Optional `reportedFromProvider: true` permits `model.cost.reported` only for a
+known configured model/provider. The caller must derive it from the SDK's
+explicit per-request `cost.totalFromProvider === true`, not infer it from an
+opaque/default/cumulative SDK cost. The helper stamps
+`analytics.cost.reported.basis=sdk-provider-reported-not-invoice`.
+
+Optional `rate` permits `model.cost.estimated` only for a known model/provider:
+`version` exactly `pi-ai@1.5.0/runtime-model`, `currency` exactly `USD`, required
+numeric `input`, `output`, `cacheRead`, `cacheWrite`, optional `cacheWrite1h` and
+`inputTokensAbove`. All are finite nonnegative bounded numbers; prices are per
+million tokens. The helper stamps
+`analytics.cost.estimated.basis=base-catalog-estimate-excludes-tier-account-adjustments`
+and exports selected numeric rates/version. The caller calculates the estimate
+from actual available token scalars and these selected rates; the exporter does
+not perform billing or validate upstream financial truth. These are not actual
+priority spend, provider invoices, subscription allocations or account discounts.
+
+Measurements become `analytics.<metric>`, labels become `analytics.<field>`, rate
+fields become `analytics.rate.<field>`. Accepted costs carry `analytics.currency=USD`.
+Reported and estimated remain separate scalars and bases, never a generic total.
+No rate fields are exported without an accepted estimate. Unknown costs are
+omitted, never fabricated zeros; an SDK-default all-zero usage observation must
+be represented by `model.usage_missing`, not measured zero token/cost counters.
+Trace export's cost exclusion is unchanged. This helper is source-supported;
+actual analytics hook activation and production row verification remain separate.
 
 ## Positive schema
 
@@ -71,12 +132,21 @@ Fields:
   also `web.search`, `web.extract`, `operator.history` and the exact `native.*`,
   `dashboard.*`, `rune-pi.*`, `bus.*` events above except `bus.delivery`;
   `sentinel.review`, `sentinel.enforce`, `sentinel.cancel`, `gmail.bind`,
-  `gmail.sync`, `gmail.import`, `gmail.drain`, `gmail.authority`, `gmail.retrieval`.
+  `gmail.sync`, `gmail.import`, `gmail.drain`, `gmail.authority`, `gmail.retrieval`;
+  `files.read`, `files.write`, `files.edit`, `slack.receive`, `slack.step`,
+  `slack.api`, `slack.core`, `slack.delivery`, `slack.job`, `slack.admit`,
+  `slack.queue`, `slack.prepare`, `slack.submit`, `slack.wait`, `slack.retry`,
+  `slack.status`, `slack.ack`, `slack.recover`, `slack.finalize`, `slack.timing`,
+  `bus.admit`, `bus.receipt`,
+  `bus.dispatch`, `observatory.http`, `observatory.poll`.
 - `attempt`, `count`, `duration_ms`, `status_code`: finite numbers from zero
   through `Number.MAX_SAFE_INTEGER` inclusive; `resumed`: boolean.
 
 Numeric keys are for the named operational scalars, not encoding content or IDs.
-Resource attributes contain only fixed `service.name`; scope is `computah`.
+Resource attributes contain fixed `service.name` and optional `service.version`
+from `COMPUTAH_REVISION` (or the isolated instance's `revision` option), accepted
+only as exactly 40 lowercase hex characters. Invalid versions are omitted;
+arbitrary resource values never pass. Scope is `computah`.
 OTLP body is the fixed event name; attributes carry approved fields and generated
 `log.id`. No ambient OTel resources, baggage or tracestate are copied.
 
@@ -135,4 +205,5 @@ Shared bootstrap/re-exports, conversion of current executable runtime reports
 to safe categories, protected host config and real-runtime logs remain integration
 owner work. Existing trace activation is independent. No claim of exhaustive
 repository coverage, static-byte logging, analytics/cost export or host metrics
-is made; [observability](observability.md) records broader trace coverage gaps.
+is made for running services by this source packet;
+[observability](observability.md) records broader trace coverage gaps.

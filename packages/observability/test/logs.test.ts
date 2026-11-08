@@ -7,7 +7,11 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { sanitizeTraces } from "../src/index.js";
-import { createRuntimeLogger, type RuntimeLogFields } from "../src/logs.js";
+import {
+  createRuntimeLogger,
+  type RuntimeLogFields,
+  type RuntimeMetricSample,
+} from "../src/logs.js";
 
 const sink = new InMemorySpanExporter();
 const provider = new NodeTracerProvider({
@@ -19,6 +23,7 @@ const config = {
   service: "backend" as const,
   token: "synthetic-token-not-real",
   dataset: "test-logs",
+  revision: "d".repeat(40),
 };
 
 test("structured logs preserve active correlation and approved scalars, never arbitrary content", async () => {
@@ -73,6 +78,10 @@ test("structured logs preserve active correlation and approved scalars, never ar
   );
   const result = await logger.close();
   const parsed = JSON.parse(payload);
+  assert.deepEqual(parsed.resourceLogs[0].resource.attributes, [
+    { key: "service.name", value: { stringValue: "computah-backend" } },
+    { key: "service.version", value: { stringValue: config.revision } },
+  ]);
   const row = parsed.resourceLogs[0].scopeLogs[0].logRecords[0];
   assert.equal(row.traceId, parent.spanContext().traceId);
   assert.equal(row.spanId, parent.spanContext().spanId);
@@ -130,9 +139,13 @@ test("queue includes in-flight records, drops newest on overload, batches serial
   });
   const logger = createRuntimeLogger({
     ...config,
+    revision: "private-invalid-revision",
     fetch: async (_, init) => {
-      const records = JSON.parse(String(init?.body)).resourceLogs[0]
-        .scopeLogs[0].logRecords;
+      const resource = JSON.parse(String(init?.body)).resourceLogs[0];
+      assert.deepEqual(resource.resource.attributes, [
+        { key: "service.name", value: { stringValue: "computah-backend" } },
+      ]);
+      const records = resource.scopeLogs[0].logRecords;
       batches.push(records.length);
       if (batches.length === 1) await gate;
       return new Response("{}");
@@ -249,6 +262,7 @@ test("missing or invalid protected configuration disables collection with no amb
   for (const options of [
     { token: "", dataset: "test-logs" },
     { token: "test", dataset: "" },
+    { token: "test", dataset: "computah-prod-traces" },
     { token: "test", dataset: "https://private.invalid" },
   ]) {
     const logger = createRuntimeLogger({
@@ -263,4 +277,139 @@ test("missing or invalid protected configuration disables collection with no amb
     assert.equal(stats.enabled, false);
     assert.equal(stats.accepted, 0);
   }
+});
+
+test("analytics samples use only the fixed scalar catalog and distinct cost provenance through the same queue", async () => {
+  const rows: {
+    body: { stringValue: string };
+    attributes: {
+      key: string;
+      value: { stringValue?: string; doubleValue?: number };
+    }[];
+  }[] = [];
+  const logger = createRuntimeLogger({
+    ...config,
+    fetch: async (_, init) => {
+      rows.push(
+        ...JSON.parse(String(init?.body)).resourceLogs[0].scopeLogs[0]
+          .logRecords,
+      );
+      return new Response("{}");
+    },
+  });
+  const sample: RuntimeMetricSample = {
+    measurements: {
+      "model.requests": 1,
+      "model.tokens.input": 71,
+      "model.cost.reported": 0.25,
+      "model.cost.estimated": 0.004,
+    },
+    role: "worker",
+    operation: "Task",
+    outcome: "error",
+    model: "openai-codex/gpt-6.1-sol",
+    provider: "openai-codex",
+    sdk: "pi-ai@1.5.0",
+    reportedFromProvider: true,
+    rate: {
+      version: "pi-ai@1.5.0/runtime-model",
+      currency: "USD",
+      input: 3,
+      output: 12,
+      cacheRead: 0.3,
+      cacheWrite: 4,
+      cacheWrite1h: 6,
+      inputTokensAbove: 200000,
+    },
+  };
+  const canary = "private-principal-task-credential";
+  const id = logger.metric({
+    ...sample,
+    measurements: {
+      ...sample.measurements,
+      "model.tokens.output": Number.POSITIVE_INFINITY,
+      [canary]: 1,
+    },
+    [canary]: canary,
+  } as RuntimeMetricSample);
+  assert.ok(id);
+  // A cast cannot bypass the typed, runtime-validated analytics-only route.
+  assert.equal(logger.emit("analytics.sample" as "runtime.ready"), undefined);
+  assert.ok(
+    logger.metric({
+      ...sample,
+      reportedFromProvider: undefined,
+      rate: undefined,
+    }),
+  );
+  assert.equal(
+    logger.metric({
+      ...sample,
+      model: canary,
+    } as unknown as RuntimeMetricSample),
+    undefined,
+  );
+  assert.equal(
+    logger.metric({
+      ...sample,
+      sdk: "future-sdk",
+    } as unknown as RuntimeMetricSample),
+    undefined,
+  );
+  assert.equal(
+    logger.metric({
+      ...sample,
+      measurements: {
+        "model.duration": -1,
+        "model.requests": Number.MAX_SAFE_INTEGER + 1,
+      },
+    }),
+    undefined,
+  );
+  assert.ok(
+    logger.metric({
+      ...sample,
+      measurements: {
+        "model.requests": 0,
+        "runtime.restart_streak": Number.MAX_SAFE_INTEGER,
+      },
+      model: "unknown",
+      provider: "unknown",
+    }),
+  );
+  const stats = await logger.close();
+  assert.equal(stats.exported, 3);
+  assert.equal(rows.length, 3);
+  const attrs = (i: number) =>
+    Object.fromEntries(
+      rows[i].attributes.map(({ key, value }) => [
+        key,
+        value.stringValue ?? value.doubleValue,
+      ]),
+    );
+  const first = attrs(0);
+  assert.equal(rows[0].body.stringValue, "analytics.sample");
+  assert.equal(first["log.id"], id);
+  assert.equal(first["analytics.model.tokens.input"], 71);
+  assert.equal(first["analytics.model.cost.reported"], 0.25);
+  assert.equal(first["analytics.model.cost.estimated"], 0.004);
+  assert.equal(
+    first["analytics.cost.reported.basis"],
+    "sdk-provider-reported-not-invoice",
+  );
+  assert.equal(
+    first["analytics.cost.estimated.basis"],
+    "base-catalog-estimate-excludes-tier-account-adjustments",
+  );
+  assert.equal(first["analytics.rate.inputTokensAbove"], 200000);
+  assert.equal(first["analytics.rate.cacheWrite1h"], 6);
+  assert.equal(first["analytics.currency"], "USD");
+  assert.equal(attrs(1)["analytics.model.cost.reported"], undefined);
+  assert.equal(attrs(1)["analytics.model.cost.estimated"], undefined);
+  assert.equal(attrs(2)["analytics.model.requests"], 0);
+  assert.equal(
+    attrs(2)["analytics.runtime.restart_streak"],
+    Number.MAX_SAFE_INTEGER,
+  );
+  assert.ok(!JSON.stringify(rows).includes(canary));
 });

@@ -78,6 +78,28 @@ const operations = [
   "export",
   "web.search",
   "web.extract",
+  "files.read",
+  "files.write",
+  "files.edit",
+  "slack.receive",
+  "slack.step",
+  "slack.api",
+  "slack.core",
+  "slack.delivery",
+  "slack.job",
+  "slack.admit",
+  "slack.queue",
+  "slack.prepare",
+  "slack.submit",
+  "slack.wait",
+  "slack.retry",
+  "slack.status",
+  "slack.ack",
+  "slack.recover",
+  "slack.finalize",
+  "slack.timing",
+  "observatory.http",
+  "observatory.poll",
   "operator.history",
   "sentinel.review",
   "sentinel.enforce",
@@ -103,6 +125,9 @@ const operations = [
   "bus.stream.create",
   "bus.stream.append",
   "bus.replay",
+  "bus.admit",
+  "bus.receipt",
+  "bus.dispatch",
   "other",
 ] as const;
 export type RuntimeLogFields = {
@@ -126,7 +151,7 @@ type Record = {
   timeUnixNano: string;
   severityNumber: number;
   severityText: string;
-  body: { stringValue: RuntimeLogEvent };
+  body: { stringValue: RuntimeLogEvent | "analytics.sample" };
   attributes: Attribute[];
   traceId?: string;
   spanId?: string;
@@ -137,25 +162,123 @@ type RuntimeLogService =
   | "bus"
   | "native"
   | "dashboard"
-  | "rune-pi";
+  | "rune-pi"
+  | "observatory";
+
+// Mirrors the shipped server ANALYTICS_METRICS vocabulary without depending on the app.
+const metricNames = [
+  "model.requests",
+  "model.duration",
+  "model.first_output",
+  "model.tokens.input",
+  "model.tokens.output",
+  "model.tokens.cache_read",
+  "model.tokens.cache_write",
+  "model.tokens.cache_write_1h",
+  "model.tokens.reasoning",
+  "model.tokens.total",
+  "model.cost.reported",
+  "model.cost.estimated",
+  "model.usage_missing",
+  "model.length_limited",
+  "task.duration",
+  "task.queue_wait",
+  "task.active",
+  "task.queued",
+  "worker.duration",
+  "tool.duration",
+  "operation.duration",
+  "operation.retries",
+  "operation.cancellations",
+  "slack.admissions",
+  "slack.delivery",
+  "slack.delivery_duration",
+  "slack.rate_limits",
+  "slack.retry_after",
+  "slack.queue_age",
+  "memory.compactions",
+  "memory.compaction_duration",
+  "memory.context_tokens",
+  "runtime.wakes",
+  "runtime.reports",
+  "runtime.phase_duration",
+  "runtime.replays",
+  "runtime.resumed_phases",
+  "runtime.restart_streak",
+] as const;
+export type RuntimeMetricName = (typeof metricNames)[number];
+export type RuntimeMetricSample = {
+  measurements: Partial<{ [K in RuntimeMetricName]: number }>;
+  role: "interaction" | "worker" | "slack" | "runtime";
+  operation:
+    | "submit"
+    | "wait"
+    | "result"
+    | "history"
+    | "cancel"
+    | "compact"
+    | "sleep"
+    | "Task"
+    | "observe"
+    | "unknown";
+  outcome:
+    | "ok"
+    | "error"
+    | "aborted"
+    | "unknown"
+    | "accepted"
+    | "duplicate"
+    | "ignored"
+    | "uncertain"
+    | "rate_limited";
+  model: "openai-codex/gpt-6.1-terra" | "openai-codex/gpt-6.1-sol" | "unknown";
+  provider: "openai-codex" | "unknown";
+  sdk: "pi-ai@1.5.0";
+  reportedFromProvider?: true;
+  rate?: {
+    version: "pi-ai@1.5.0/runtime-model";
+    currency: "USD";
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    cacheWrite1h?: number;
+    inputTokensAbove?: number;
+  };
+};
+const finiteScalar = (value: unknown): value is number =>
+  typeof value === "number" &&
+  Number.isFinite(value) &&
+  value >= 0 &&
+  value <= Number.MAX_SAFE_INTEGER;
 
 /** Code-owned categories only. Never pass console text, errors, histories or arbitrary IDs. */
 export function createRuntimeLogger(options: {
   service: RuntimeLogService;
   dataset?: string;
   token?: string;
+  revision?: string;
   /** Transport injection for tests; production must retain the fixed HTTPS destination. */
   fetch?: typeof globalThis.fetch;
 }) {
   const token = options.token ?? process.env.COMPUTAH_AXIOM_INGEST_TOKEN;
   const dataset = options.dataset ?? process.env.COMPUTAH_AXIOM_LOG_DATASET;
+  const service = options.service;
+  const revision = options.revision ?? process.env.COMPUTAH_REVISION;
   const enabled = Boolean(
     token &&
       dataset &&
+      dataset !== "computah-prod-traces" &&
       /^[a-zA-Z0-9_-]{1,128}$/.test(dataset) &&
-      ["backend", "slack", "bus", "native", "dashboard", "rune-pi"].includes(
-        options.service,
-      ),
+      [
+        "backend",
+        "slack",
+        "bus",
+        "native",
+        "dashboard",
+        "rune-pi",
+        "observatory",
+      ].includes(service),
   );
   const transport = options.fetch ?? globalThis.fetch;
   const queue: Record[] = [];
@@ -178,13 +301,17 @@ export function createRuntimeLogger(options: {
     rejected,
   });
 
-  function emit(
-    event: RuntimeLogEvent,
-    fields: RuntimeLogFields = {},
-    level: "info" | "warn" | "error" = "info",
+  function enqueue(
+    event: RuntimeLogEvent | "analytics.sample",
+    fields: RuntimeLogFields,
+    level: "info" | "warn" | "error",
+    extra: Attribute[] = [],
   ): string | undefined {
     if (!enabled || closed) return undefined;
-    if (!events.includes(event) || !["info", "warn", "error"].includes(level)) {
+    if (
+      (event !== "analytics.sample" && !events.includes(event)) ||
+      !["info", "warn", "error"].includes(level)
+    ) {
       rejected++;
       return undefined;
     }
@@ -193,7 +320,7 @@ export function createRuntimeLogger(options: {
       return undefined;
     }
     try {
-      const attributes: Attribute[] = [];
+      const attributes: Attribute[] = [...extra];
       for (const [key, allowed] of [
         ["outcome", outcomes],
         ["reason", reasons],
@@ -213,18 +340,14 @@ export function createRuntimeLogger(options: {
         "status_code",
       ] as const) {
         const value = fields[key];
-        if (
-          typeof value === "number" &&
-          Number.isFinite(value) &&
-          value >= 0 &&
-          value <= Number.MAX_SAFE_INTEGER
-        )
+        if (finiteScalar(value))
           attributes.push({ key, value: { doubleValue: value } });
       }
-      if (typeof fields.resumed === "boolean")
+      const resumed = fields.resumed;
+      if (typeof resumed === "boolean")
         attributes.push({
           key: "resumed",
-          value: { boolValue: fields.resumed },
+          value: { boolValue: resumed },
         });
       const logId = randomUUID();
       attributes.push({ key: "log.id", value: { stringValue: logId } });
@@ -241,6 +364,157 @@ export function createRuntimeLogger(options: {
       });
       accepted++;
       return logId;
+    } catch {
+      rejected++;
+      return undefined;
+    }
+  }
+
+  function emit(
+    event: RuntimeLogEvent,
+    fields: RuntimeLogFields = {},
+    level: "info" | "warn" | "error" = "info",
+  ) {
+    // Analytics must go through metric's stricter provenance schema, never the generic hook.
+    if (!events.includes(event)) {
+      if (enabled && !closed) rejected++;
+      return undefined;
+    }
+    return enqueue(event, fields, level);
+  }
+
+  function metric(sample: RuntimeMetricSample): string | undefined {
+    if (!enabled || closed) return undefined;
+    try {
+      const attrs: Attribute[] = [];
+      const labels = {
+        role: ["interaction", "worker", "slack", "runtime"],
+        operation: [
+          "submit",
+          "wait",
+          "result",
+          "history",
+          "cancel",
+          "compact",
+          "sleep",
+          "Task",
+          "observe",
+          "unknown",
+        ],
+        outcome: [
+          "ok",
+          "error",
+          "aborted",
+          "unknown",
+          "accepted",
+          "duplicate",
+          "ignored",
+          "uncertain",
+          "rate_limited",
+        ],
+        model: [
+          "openai-codex/gpt-6.1-terra",
+          "openai-codex/gpt-6.1-sol",
+          "unknown",
+        ],
+        provider: ["openai-codex", "unknown"],
+        sdk: ["pi-ai@1.5.0"],
+      } as const;
+      for (const key of [
+        "role",
+        "operation",
+        "outcome",
+        "model",
+        "provider",
+        "sdk",
+      ] as const) {
+        const value = sample[key];
+        if (!(labels[key] as readonly string[]).includes(value)) {
+          rejected++;
+          return undefined;
+        }
+        attrs.push({ key: `analytics.${key}`, value: { stringValue: value } });
+      }
+      const knownModel =
+        sample.model !== "unknown" && sample.provider === "openai-codex";
+      if ((sample.model === "unknown") !== (sample.provider === "unknown")) {
+        rejected++;
+        return undefined;
+      }
+      const rate = sample.rate;
+      const validRate =
+        rate?.version === "pi-ai@1.5.0/runtime-model" &&
+        rate.currency === "USD" &&
+        [rate.input, rate.output, rate.cacheRead, rate.cacheWrite].every(
+          finiteScalar,
+        ) &&
+        (rate.cacheWrite1h === undefined || finiteScalar(rate.cacheWrite1h)) &&
+        (rate.inputTokensAbove === undefined ||
+          finiteScalar(rate.inputTokensAbove));
+      let measurements = 0;
+      for (const key of metricNames) {
+        const value = sample.measurements[key];
+        if (!finiteScalar(value)) continue;
+        if (
+          key === "model.cost.reported" &&
+          (!knownModel || sample.reportedFromProvider !== true)
+        )
+          continue;
+        if (key === "model.cost.estimated" && (!knownModel || !validRate))
+          continue;
+        attrs.push({ key: `analytics.${key}`, value: { doubleValue: value } });
+        measurements++;
+        if (key === "model.cost.reported") {
+          attrs.push({
+            key: "analytics.cost.reported.basis",
+            value: { stringValue: "sdk-provider-reported-not-invoice" },
+          });
+        }
+        if (key === "model.cost.estimated" && rate && validRate) {
+          attrs.push({
+            key: "analytics.cost.estimated.basis",
+            value: {
+              stringValue:
+                "base-catalog-estimate-excludes-tier-account-adjustments",
+            },
+          });
+          attrs.push({
+            key: "analytics.rate.version",
+            value: { stringValue: "pi-ai@1.5.0/runtime-model" },
+          });
+          for (const rateKey of [
+            "input",
+            "output",
+            "cacheRead",
+            "cacheWrite",
+            "cacheWrite1h",
+            "inputTokensAbove",
+          ] as const) {
+            const price = rate[rateKey];
+            if (finiteScalar(price))
+              attrs.push({
+                key: `analytics.rate.${rateKey}`,
+                value: { doubleValue: price },
+              });
+          }
+        }
+      }
+      if (!measurements) {
+        rejected++;
+        return undefined;
+      }
+      if (
+        attrs.some(
+          (attr) =>
+            attr.key === "analytics.model.cost.reported" ||
+            attr.key === "analytics.model.cost.estimated",
+        )
+      )
+        attrs.push({
+          key: "analytics.currency",
+          value: { stringValue: "USD" },
+        });
+      return enqueue("analytics.sample", {}, "info", attrs);
     } catch {
       rejected++;
       return undefined;
@@ -289,8 +563,16 @@ export function createRuntimeLogger(options: {
                   attributes: [
                     {
                       key: "service.name",
-                      value: { stringValue: `computah-${options.service}` },
+                      value: { stringValue: `computah-${service}` },
                     },
+                    ...(revision && /^[a-f0-9]{40}$/.test(revision)
+                      ? [
+                          {
+                            key: "service.version",
+                            value: { stringValue: revision },
+                          },
+                        ]
+                      : []),
                   ],
                 },
                 scopeLogs: [
@@ -381,6 +663,7 @@ export function createRuntimeLogger(options: {
   interval?.unref();
   return {
     emit,
+    metric,
     flush,
     stats,
     /** Stop admission immediately, then drain once; failed records are not retried. */
@@ -407,4 +690,9 @@ export function runtimeLog(
   level: "info" | "warn" | "error" = "info",
 ) {
   return runtime?.emit(event, fields, level);
+}
+
+/** Emit one safe scalar observation only after local deduplication and commit. */
+export function runtimeMetric(sample: RuntimeMetricSample) {
+  return runtime?.metric(sample);
 }
