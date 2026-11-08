@@ -122,6 +122,15 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  apps/dashboard:
+    devDependencies:
+      '@types/node':
+        specifier: 24.10.0
+        version: 24.10.0
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+
   apps/server:
     dependencies:
       '@computah/contracts':

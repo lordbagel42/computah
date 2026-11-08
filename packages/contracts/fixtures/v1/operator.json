@@ -1,0 +1,103 @@
+{
+  "snapshot": {
+    "version": 1,
+    "observedAt": "2026-01-01T12:00:00.000Z",
+    "mode": "faux",
+    "viewer": {
+      "tenantId": "synthetic-tenant",
+      "userId": "synthetic-owner",
+      "agentId": "computah",
+      "displayName": "Synthetic operator",
+      "capabilities": ["history.read", "operator.read"]
+    },
+    "interaction": {
+      "id": "synthetic-interaction",
+      "availability": "present",
+      "messages": [
+        {
+          "id": "synthetic-user-message",
+          "submissionId": null,
+          "role": "user",
+          "createdAt": "2026-01-01T11:59:00.000Z",
+          "revision": 1,
+          "blocks": [
+            {
+              "id": "synthetic-user-text",
+              "kind": "text",
+              "text": "Synthetic fixture: explain the saved example."
+            }
+          ]
+        }
+      ],
+      "nextCursor": "synthetic-interaction-continuation",
+      "truncatedMessageIds": []
+    },
+    "tasks": [
+      {
+        "id": "synthetic-task-1",
+        "workerId": "synthetic-worker-primary",
+        "workerLabel": "primary",
+        "entryId": "synthetic-entry-2",
+        "status": "result-recorded",
+        "createdAt": "2026-01-01T11:59:10.000Z"
+      },
+      {
+        "id": "synthetic-task-2",
+        "workerId": "synthetic-worker-secondary",
+        "workerLabel": "secondary",
+        "entryId": "synthetic-entry-5",
+        "status": "recorded",
+        "createdAt": "2026-01-01T11:59:20.000Z"
+      }
+    ],
+    "workers": [
+      {
+        "id": "synthetic-worker-primary",
+        "label": "primary",
+        "availability": "present",
+        "messages": [],
+        "nextCursor": "synthetic-worker-continuation",
+        "truncatedMessageIds": []
+      },
+      {
+        "id": "synthetic-worker-secondary",
+        "label": "secondary",
+        "availability": "missing",
+        "messages": [],
+        "nextCursor": null,
+        "truncatedMessageIds": []
+      }
+    ],
+    "limitations": [
+      "Synthetic fixture, not a live backend response; cursor strings are not valid credentials.",
+      "Discovery and Task result evidence cover this Interaction page only, not all Workers or current runtime status.",
+      "Empty present history is distinct from a missing actor."
+    ]
+  },
+  "history": {
+    "version": 1,
+    "actorId": "synthetic-worker-primary",
+    "availability": "present",
+    "messages": [
+      {
+        "id": "synthetic-worker-message",
+        "submissionId": null,
+        "role": "assistant",
+        "createdAt": "2026-01-01T11:59:15.000Z",
+        "revision": 1,
+        "blocks": [
+          {
+            "id": "synthetic-worker-text",
+            "kind": "text",
+            "text": "Synthetic truncated final answer prefix."
+          }
+        ]
+      }
+    ],
+    "nextCursor": null,
+    "truncatedMessageIds": ["synthetic-worker-message"],
+    "limitations": [
+      "Text is truncated in this synthetic response; advancing the entry cursor does not recover the omitted suffix."
+    ]
+  }
+}

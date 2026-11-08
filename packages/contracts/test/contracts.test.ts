@@ -7,6 +7,8 @@ import {
   BusOutput,
   BusReceipt,
   BusSendRequest,
+  OperatorHistoryPage,
+  OperatorSnapshot,
   Snapshot,
   StreamEvent,
   SubmissionObservationEvent,
@@ -319,6 +321,45 @@ test("portable snapshot fixture validates and rejects executable component props
   assert.deepEqual(state.messages[2]?.blocks, [
     { id: "b2", kind: "text", text: "Hello from the synthetic fixture." },
   ]);
+});
+
+test("operator fixture distinguishes missing actors and transcript evidence from live status", async () => {
+  const fixture = JSON.parse(
+    await readFile(
+      new URL("../fixtures/v1/operator.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const decode = Schema.decodeUnknownSync(OperatorSnapshot);
+  const snapshot = decode(fixture.snapshot);
+  assert.deepEqual(
+    snapshot.workers.map((worker) => [worker.availability, worker.messages]),
+    [
+      ["present", []],
+      ["missing", []],
+    ],
+  );
+  assert.deepEqual(
+    snapshot.tasks.map((task) => task.status),
+    ["result-recorded", "recorded"],
+  );
+  assert.throws(() =>
+    decode({
+      ...fixture.snapshot,
+      tasks: [{ ...fixture.snapshot.tasks[0], status: "running" }],
+    }),
+  );
+  assert.throws(() => decode({ ...fixture.snapshot, mode: "synthetic" }));
+  const page = Schema.decodeUnknownSync(OperatorHistoryPage)(fixture.history);
+  assert.equal(page.actorId, snapshot.workers[0]?.id);
+  assert.equal(page.nextCursor, null);
+  assert.deepEqual(page.truncatedMessageIds, [page.messages[0]?.id]);
+  assert.throws(() =>
+    Schema.decodeUnknownSync(OperatorHistoryPage)({
+      ...fixture.history,
+      availability: "sleeping",
+    }),
+  );
 });
 
 test("observation fixtures preserve source identity and reject nonterminal results", async () => {

@@ -1,0 +1,14 @@
+{
+  "name": "@computah/dashboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.mjs",
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc --ignoreConfig --noEmit --allowJs --checkJs --strict --skipLibCheck --types node --target es2023 --module nodenext src/*.mjs public/app.js"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "typescript": "7.0.2"
+  }
+}

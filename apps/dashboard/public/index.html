@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Computah — operator view</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" type="module"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a href="/" class="brand">Computah <span>Operator view</span></a>
+      <div class="actions">
+        <span class="readonly">Read only</span>
+        <button id="refresh" type="button" hidden>Refresh evidence</button>
+        <button id="logout" type="button" hidden>Sign out</button>
+      </div>
+    </header>
+    <main>
+      <section id="login" class="login" hidden aria-labelledby="login-title">
+        <h1 id="login-title">Behind the conversation.</h1>
+        <p>Follow Computah’s interactions into the durable actors doing the work.</p>
+        <form id="login-form">
+          <label for="password">Operator password</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024" />
+          <button type="submit">Open operator view</button>
+        </form>
+        <p class="note">Private, server-bound access. This does not sign you into Rivet or grant access to other users.</p>
+      </section>
+      <p id="notice" role="status" aria-live="polite">Checking operator session…</p>
+      <section id="dashboard" hidden aria-labelledby="page-title">
+        <div class="page-heading">
+          <div><h1 id="page-title">The work behind the words.</h1><p id="scope"></p></div>
+          <p id="observed" class="note"></p>
+        </div>
+        <div class="workspace">
+          <section class="conversation surface" aria-labelledby="conversation-title">
+            <div class="section-head"><h2 id="conversation-title">Conversation</h2><span class="tag interaction">Interaction</span></div>
+            <p class="note">Persisted text, not a live stream</p>
+            <div id="messages" class="messages"></div>
+            <button id="more" type="button" hidden>Read next history page</button>
+          </section>
+          <div class="execution">
+            <section class="path surface" aria-labelledby="path-title">
+              <div class="section-head"><h2 id="path-title">From conversation to execution</h2><span id="mode" class="tag"></span></div>
+              <ol class="actor-path">
+                <li><span class="actor-dot interaction-dot"></span><strong>Interaction</strong><p>Receives the conversation</p><code id="interaction-id"></code></li>
+                <li><span class="actor-dot task-dot"></span><strong>Task</strong><p>Recorded delegation</p><span id="task-count" class="note"></span></li>
+                <li><span class="actor-dot worker-dot"></span><strong>Worker</strong><p>Persistent execution context</p><span id="worker-count" class="note"></span></li>
+              </ol>
+              <p class="note">Rivet owns actor identity and persistence. Pi owns the transcript and model loop. Effect binds trusted scope and orchestration.</p>
+            </section>
+            <div class="evidence-columns">
+              <section class="delegations surface" aria-labelledby="tasks-title">
+                <div class="section-head"><h2 id="tasks-title">Delegations</h2><span class="tag task">Task</span></div>
+                <p class="note">Select a recorded Task to follow its Worker.</p>
+                <div id="tasks" class="task-list"></div>
+              </section>
+              <section class="worker surface" aria-labelledby="worker-title">
+                <div class="section-head"><h2 id="worker-title">Worker evidence</h2><span class="tag worker-tag">Worker</span></div>
+                <div id="worker-detail"><p class="empty">Select a delegation to inspect its persistent Worker.</p></div>
+              </section>
+            </div>
+            <section class="limits" aria-labelledby="limits-title"><h2 id="limits-title">What this evidence can tell you</h2><ul id="limitations"></ul></section>
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer>Computah <span>Interaction → Task → Worker</span><span>No mutations. No privileged engine inspector.</span></footer>
+  </body>
+</html>

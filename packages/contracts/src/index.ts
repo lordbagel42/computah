@@ -80,6 +80,52 @@ export const Message = Schema.Struct({
 });
 export type Message = typeof Message.Type;
 
+/** Read-only operator projections, not atomic snapshots or live actor status. */
+const operatorActorFields = {
+  id: Id,
+  availability: Schema.Literals(["present", "missing"]),
+  messages: Schema.Array(Message),
+  nextCursor: Schema.NullOr(Id),
+  truncatedMessageIds: Schema.Array(Id),
+};
+export const OperatorActor = Schema.Struct(operatorActorFields);
+export type OperatorActor = typeof OperatorActor.Type;
+export const OperatorWorker = Schema.Struct({
+  ...operatorActorFields,
+  label: Id,
+});
+export type OperatorWorker = typeof OperatorWorker.Type;
+export const OperatorTask = Schema.Struct({
+  id: Id,
+  workerId: Id,
+  workerLabel: Id,
+  entryId: Id,
+  status: Schema.Literals(["recorded", "result-recorded"]),
+  createdAt: Schema.String,
+});
+export type OperatorTask = typeof OperatorTask.Type;
+export const OperatorSnapshot = Schema.Struct({
+  version: WireVersion,
+  observedAt: Schema.String,
+  mode: Schema.Literals(["real", "faux"]),
+  viewer: Viewer,
+  interaction: OperatorActor,
+  tasks: Schema.Array(OperatorTask),
+  workers: Schema.Array(OperatorWorker),
+  limitations: Schema.Array(Schema.String),
+});
+export type OperatorSnapshot = typeof OperatorSnapshot.Type;
+export const OperatorHistoryPage = Schema.Struct({
+  version: WireVersion,
+  actorId: Id,
+  availability: Schema.Literals(["present", "missing"]),
+  messages: Schema.Array(Message),
+  nextCursor: Schema.NullOr(Id),
+  truncatedMessageIds: Schema.Array(Id),
+  limitations: Schema.Array(Schema.String),
+});
+export type OperatorHistoryPage = typeof OperatorHistoryPage.Type;
+
 export const Submission = Schema.Struct({
   id: Id,
   clientMutationId: Id,
