@@ -154,6 +154,32 @@ activation. Deployment verifies exact revision, current grants and tool executio
 separately. The same scoped brain serves Slack/native; there is no transport-specific
 key or implementation. Credential input is already resolved.
 
+### Deployed native-adapter acceptance
+
+On 2026-11-08, the deployment owner applied only the explicitly authorized
+requesting-owner `web.search` / `web.extract` delta under the shared deployment
+lock. Tokens, other fields and other principals were preserved. Supported serialized
+Alchemy reconciliation consumed the protected configuration; an authenticated
+viewer check established both grants before any model request.
+
+One bounded run through the unchanged `apps/native/scripts/backend.mjs` completed
+at exact runtime `99962a537eb9448f7d7d1d09514e4149f35f0c45`, unchanged before/after,
+from 07:43:40.332Z to 07:43:54.400Z. The real Interaction delegated to its persistent
+Worker, which searched an explicit public query and extracted one public official
+documentation URL. The native adapter received one completed assistant result
+containing the acceptance marker and official citation. No raw histories or tool
+results were emitted by the validation script.
+
+Independent [Axiom tool receipts](https://app.axiom.co/bagel-w3ue/query?qid=17kuj79bwqv-to6au0)
+show `computah.web.search` and `computah.web.extract` both `ready` on trace
+`882ac53cf7d80de89b7e4dc9840a67d1`. The
+[native phase ancestry](https://app.axiom.co/bagel-w3ue/query?qid=rXUzT1POOiV-to6aug)
+also records both actual `pi.tool` executions as `done`, rather than relying on
+model prose to establish tool use. This is native REST-adapter delivery, not a
+Rust GUI test or genuine Slack-user ingress. Separate production log ingestion
+has not been established by this trace receipt; no general end-to-end caller
+linkage or exactly-once external effect guarantee is implied.
+
 Official API contracts inspected 2026-11-08:
 [Search](https://docs.tavily.com/documentation/api-reference/endpoint/search) and
 [Extract](https://docs.tavily.com/documentation/api-reference/endpoint/extract).
