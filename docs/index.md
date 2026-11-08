@@ -26,7 +26,10 @@ The next product exits, in order:
    verified mailbox, effectively
    full historical email indexing/private retrieval and continued updates, plus
    durable new email to its owner's Interaction agent, autonomous Task delegation
-   and a visibly unsent local draft. Not integrated or deployed yet.
+   and a visibly unsent local draft. The [Gmail runtime](gmail.md) now implements
+   protected adoption, history reconciliation, resumable indexing, private native
+   retrieval and source-generation fences. Host consumption and live new-email
+   Task/draft acceptance remain unverified.
 3. Join one product client to that same durable/email core and prove real send,
    delegated result, reconnect, cancellation and follow-up. Not delivered yet.
 
@@ -46,8 +49,10 @@ do not select Workers. Internal agent communication is a separate concern.
 The [external message actor contract](events.md) uses the official file-backed
 Durable Streams reference server for API-client replay: the pinned native Rivet
 route is unavailable. Current snapshot SSE is not that durable stream transport.
-Durable history and native compaction are implemented foundations, not the planned
-Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dreaming.
+Durable history and native compaction are implemented foundations. Gmail indexing,
+retrieval and private preload are source-supported with separate live acceptance;
+memory-driven Worker revival, Reflection and Dreaming remain planned. Source-enabled
+cores decline compaction until its retry boundary can enforce current source grants.
 
 ## Current status
 
@@ -97,7 +102,8 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
   follow-on Actions-only rollout. See [operations](operations.md) for receipts.
   Earlier timer rollout and post-rollout real history preservation also passed.
   No public ingress is provisioned.
-- **Planned:** Composio/Gmail onboarding, live Slack setup, adaptive recall/Dreaming,
+- **Planned:** client-facing integration onboarding, deployed Gmail acceptance,
+  live Slack setup, adaptive recall/Dreaming,
   selected json-render native migration, Reflection, deeper DEBUGSHARE actor/trace
   correlation and repair, and future Amp/Space handoff.
 - **Not claimed:** live integration-account onboarding, tested imported laptop
@@ -133,6 +139,8 @@ Gmail indexing/retrieval/preload, memory-driven Worker revival, Reflection or Dr
   Gmail/Executor, runtime secret references and later provider decisions.
 - [Tavily integration and tools inventory](tavily.md): native bounded web evidence,
   explicit principal grants, current-versus-reusable source and verification limits.
+- [Gmail runtime and source authority](gmail.md): protected account setup, GET-only
+  history reconciliation, private retrieval, native grant fences and acceptance limits.
 
 The detailed [research plan](https://ampcode.com/artifacts/computah-architecture-and-phased-implementation-plan-cc4c2e58-8a38-4977-9a06-c1c55aadbc13)
 is design context, not proof those features exist.

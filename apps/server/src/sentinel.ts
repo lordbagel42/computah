@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Models } from "@earendil-works/pi-ai";
 import { Schema } from "effect";
 import type { CoreSession } from "./core.js";
+import { sourceRequestOptions } from "./source-models.js";
 
 export const SentinelDecision = Schema.Struct({
   action: Schema.Literals(["allow", "pause", "cancel"]),
@@ -75,7 +76,10 @@ export function createSentinel(options: {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 60_000)
     throw new Error("Invalid Sentinel timeout");
 
-  async function review(input: SentinelInput): Promise<SentinelDecision> {
+  async function review(
+    input: SentinelInput,
+    current?: () => Promise<void>,
+  ): Promise<SentinelDecision> {
     // Project explicitly: structural typing permits extra private host fields.
     // Snapshot before awaiting; callers cannot change the target during review.
     const envelope: SentinelInput = {
@@ -112,6 +116,7 @@ export function createSentinel(options: {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      await current?.();
       const answer = await Promise.race([
         options.models.completeSimple(
           model,
@@ -121,7 +126,12 @@ export function createSentinel(options: {
               { role: "user", content: encoded, timestamp: Date.now() },
             ],
           },
-          { signal: controller.signal, maxTokens: 512 },
+          current
+            ? sourceRequestOptions(
+                { signal: controller.signal, maxTokens: 512 },
+                current,
+              )
+            : { signal: controller.signal, maxTokens: 512 },
         ),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
@@ -130,6 +140,7 @@ export function createSentinel(options: {
           }, timeoutMs);
         }),
       ]);
+      await current?.();
       if (answer.stopReason !== "stop") return unavailable();
       const text = answer.content
         .filter((part) => part.type === "text")

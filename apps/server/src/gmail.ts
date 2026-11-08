@@ -5,9 +5,34 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import {
+  createTraceCarrier,
+  currentTraceHeaders,
+  traceOperation,
+} from "@computah/observability";
 import type { Scope } from "./core.js";
 
 export const GMAIL_READONLY = "https://www.googleapis.com/auth/gmail.readonly";
+export const GMAIL_FULL_MAIL = "https://mail.google.com/";
+function allowedScopes(scopes: string[], approved = false) {
+  return (
+    scopes.length === 1 &&
+    (scopes[0] === GMAIL_READONLY ||
+      (approved && scopes[0] === GMAIL_FULL_MAIL))
+  );
+}
+export class GmailHistoryExpired extends Error {
+  constructor() {
+    super("Gmail history expired");
+  }
+}
+export interface GmailHistoryPage {
+  historyId: string;
+  next: string | null;
+  added: string[];
+  deleted: string[];
+  changed: string[];
+}
 export class GmailError extends Error {
   constructor(readonly code: "denied" | "invalid" | "provider" | "conflict") {
     super(`Gmail ${code}`);
@@ -79,6 +104,13 @@ export interface GmailProvider {
     to: number,
     cursor: string | null,
   ): Promise<{ ids: string[]; next: string | null }>;
+  checkpoint?(owner: string, account: string): Promise<string>;
+  history?(
+    owner: string,
+    account: string,
+    startHistoryId: string,
+    pageToken: string | null,
+  ): Promise<GmailHistoryPage>;
   revoke(account: string): Promise<void>;
 }
 
@@ -169,6 +201,7 @@ export function normalizeGmailMessage(
 export function createComposioGmail(options: {
   apiKey: string;
   authConfigId: string;
+  approvedManagedFullMail?: boolean;
   transport?: typeof fetch;
 }): GmailProvider {
   text(options.apiKey, 4096);
@@ -239,7 +272,7 @@ export function createComposioGmail(options: {
         object(result.auth_config).is_disabled === true ||
         (result.experimental &&
           object(result.experimental).account_type !== "PRIVATE") ||
-        (result.user_id !== undefined && result.user_id !== owner)
+        result.user_id !== owner
       )
         deny();
       const requestedScopes = Array.isArray(result.requested_scopes)
@@ -248,12 +281,8 @@ export function createComposioGmail(options: {
           )
         : [];
       if (
-        !requestedScopes.includes(GMAIL_READONLY) ||
-        requestedScopes.some(
-          (scope) =>
-            scope === "https://mail.google.com/" ||
-            (scope.includes("/auth/gmail.") && scope !== GMAIL_READONLY),
-        )
+        !allowedScopes(requestedScopes, options.approvedManagedFullMail) ||
+        requestedScopes.length !== (result.requested_scopes as unknown[]).length
       )
         deny();
       const profile = await read(owner, account, "/gmail/v1/users/me/profile");
@@ -324,6 +353,47 @@ export function createComposioGmail(options: {
         next: result.nextPageToken ? text(result.nextPageToken, 1800) : null,
       };
     },
+    async checkpoint(owner, account) {
+      const profile = await read(owner, account, "/gmail/v1/users/me/profile");
+      if (!profile) throw new GmailError("provider");
+      return text(profile.historyId);
+    },
+    async history(owner, account, startHistoryId, pageToken) {
+      const query = new URLSearchParams({
+        startHistoryId: text(startHistoryId),
+        maxResults: "25",
+      });
+      if (pageToken) query.set("pageToken", text(pageToken, 1800));
+      const result = await read(
+        owner,
+        account,
+        `/gmail/v1/users/me/history?${query}`,
+      );
+      if (!result) throw new GmailHistoryExpired();
+      const records = result.history ?? [];
+      if (!Array.isArray(records) || records.length > 25)
+        throw new GmailError("provider");
+      const ids = (keys: string[]) => [
+        ...new Set(
+          records.flatMap((record) =>
+            keys.flatMap((key) => {
+              const entries = object(record)[key] ?? [];
+              if (!Array.isArray(entries)) throw new GmailError("provider");
+              return entries.map((entry) =>
+                messageId(object(object(entry).message).id),
+              );
+            }),
+          ),
+        ),
+      ];
+      return {
+        historyId: text(result.historyId),
+        next: result.nextPageToken ? text(result.nextPageToken, 1800) : null,
+        added: ids(["messagesAdded"]),
+        deleted: ids(["messagesDeleted"]),
+        changed: ids(["labelsAdded", "labelsRemoved"]),
+      };
+    },
     async revoke(account) {
       await request(
         `/connected_accounts/${encodeURIComponent(account)}/revoke`,
@@ -380,6 +450,7 @@ interface ReceiptRow {
   version: string;
   message: string;
   live: number;
+  trace: string | null;
   coverage: string | null;
   frozen: string | null;
   draft: string | null;
@@ -396,6 +467,8 @@ export class GmailIngress {
     path: string,
     readonly options: {
       provider: GmailProvider;
+      approvedManagedFullMail?: boolean;
+      authConfigId?: string;
       authorize(
         scope: Scope,
         handle: string,
@@ -431,7 +504,21 @@ export class GmailIngress {
         id UNINDEXED,handle UNINDEXED,version UNINDEXED,content);
       CREATE TABLE IF NOT EXISTS gmail_imports(handle TEXT PRIMARY KEY, version TEXT NOT NULL,
         from_ms INTEGER NOT NULL, to_ms INTEGER NOT NULL, cursor TEXT,
-        pages INTEGER NOT NULL DEFAULT 0, done INTEGER NOT NULL DEFAULT 0);`);
+        pages INTEGER NOT NULL DEFAULT 0, done INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS gmail_sync(handle TEXT PRIMARY KEY, version TEXT NOT NULL,
+        history TEXT NOT NULL, page TEXT, phase TEXT NOT NULL, cutoff INTEGER NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS gmail_sync_seen(handle TEXT NOT NULL, version TEXT NOT NULL,
+        message TEXT NOT NULL, PRIMARY KEY(handle,version,message));
+      CREATE TABLE IF NOT EXISTS gmail_deleted(handle TEXT NOT NULL, version TEXT NOT NULL,
+        message TEXT NOT NULL, PRIMARY KEY(handle,version,message));`);
+    if (
+      !this.#db
+        .prepare("PRAGMA table_info(gmail_receipts)")
+        .all()
+        .some((column) => column.name === "trace")
+    )
+      this.#db.exec("ALTER TABLE gmail_receipts ADD COLUMN trace TEXT");
   }
   close() {
     this.#db.close();
@@ -474,6 +561,101 @@ export class GmailIngress {
     const after = this.#binding(binding.handle);
     if (!after.active || after.version !== binding.version) deny();
   }
+  #verified(
+    account: GmailAccount,
+    owner: string,
+    id: string,
+    binding?: GmailBinding,
+  ) {
+    if (
+      account.id !== id ||
+      account.owner !== owner ||
+      !account.readAccessVerified ||
+      !allowedScopes(
+        account.requestedScopes,
+        this.options.approvedManagedFullMail,
+      ) ||
+      !account.authConfigId ||
+      (this.options.authConfigId !== undefined &&
+        account.authConfigId !== this.options.authConfigId) ||
+      (binding &&
+        (account.authConfigId !== binding.authConfigId ||
+          account.mailbox !== binding.mailbox ||
+          JSON.stringify(account.requestedScopes) !==
+            JSON.stringify(binding.requestedScopes)))
+    )
+      deny();
+  }
+  /** Native generation/retry/result fence. Returns no mailbox content or identity. */
+  async authority(
+    scope: Scope,
+    handle: string,
+    version: string,
+  ): Promise<void> {
+    const binding = this.#binding(handle);
+    if (binding.version !== version) deny();
+    await this.#current(binding, scope);
+    const verified = await this.options.provider.verify(
+      binding.owner,
+      binding.account,
+    );
+    await this.#current(binding, scope);
+    this.#verified(verified, binding.owner, binding.account, binding);
+  }
+  /** Trusted host-only adoption of an already connected account, never a browser DTO. */
+  async adoptConnected(scope: Scope, owner: string, account: string) {
+    text(owner);
+    text(account);
+    scopeKey(scope);
+    if (!(await this.options.authorize({ ...scope }, "", ""))) deny();
+    const verified = await this.options.provider.verify(owner, account);
+    this.#verified(verified, owner, account);
+    if (!(await this.options.authorize({ ...scope }, "", ""))) deny();
+    const key = scopeKey(scope);
+    const ownerRow = this.#db
+      .prepare("SELECT scope,owner FROM gmail_owners WHERE scope=? OR owner=?")
+      .all(key, owner);
+    if (ownerRow.some((row) => row.scope !== key || row.owner !== owner))
+      deny();
+    const previous = this.#db
+      .prepare("SELECT value FROM gmail_accounts WHERE account=?")
+      .get(account);
+    const old: GmailBinding | null = previous
+      ? JSON.parse(String(previous.value))
+      : null;
+    if (
+      old &&
+      (!old.active ||
+        scopeKey(old.scope) !== key ||
+        old.owner !== owner ||
+        old.authConfigId !== verified.authConfigId ||
+        old.disconnectState !== "idle")
+    )
+      deny();
+    if (old?.active) {
+      this.#verified(verified, owner, account, old);
+      await this.authority(scope, old.handle, old.version);
+      return { handle: old.handle, version: old.version };
+    }
+    const binding: GmailBinding = {
+      handle: old?.handle ?? randomUUID(),
+      scope: { ...scope },
+      owner,
+      account,
+      authConfigId: verified.authConfigId,
+      mailbox: verified.mailbox,
+      requestedScopes: [...verified.requestedScopes],
+      version: randomUUID(),
+      active: true,
+      disconnectState: "idle",
+      triggerId: null,
+    };
+    this.#db
+      .prepare("INSERT OR IGNORE INTO gmail_owners(scope,owner) VALUES(?,?)")
+      .run(key, owner);
+    this.#save(binding);
+    return { handle: binding.handle, version: binding.version };
+  }
   async begin(scope: Scope) {
     const boundScope = JSON.parse(JSON.stringify(scope)) as Scope;
     scopeKey(boundScope);
@@ -515,13 +697,7 @@ export class GmailIngress {
     const owner = String(row.owner);
     const account = await this.options.provider.complete(owner, sessionUri);
     const verified = await this.options.provider.verify(owner, account);
-    if (
-      verified.id !== account ||
-      verified.owner !== owner ||
-      !verified.requestedScopes.includes(GMAIL_READONLY) ||
-      !verified.readAccessVerified
-    )
-      deny();
+    this.#verified(verified, owner, account);
     if (!(await this.options.authorize({ ...scope }, "", ""))) deny();
     const previous = this.#db
       .prepare("SELECT value FROM gmail_accounts WHERE account=?")
@@ -533,6 +709,8 @@ export class GmailIngress {
       old &&
       (old.active ||
         old.disconnectState !== "idle" ||
+        old.owner !== owner ||
+        old.authConfigId !== verified.authConfigId ||
         scopeKey(old.scope) !== scopeKey(scope))
     )
       deny();
@@ -552,6 +730,7 @@ export class GmailIngress {
     this.#save(binding);
     return {
       handle: binding.handle,
+      version: binding.version,
       mailbox: binding.mailbox,
       requestedScopes: binding.requestedScopes,
       readAccessVerified: true,
@@ -570,7 +749,7 @@ export class GmailIngress {
     const receipt = `gmail:${digest(JSON.stringify([binding.handle, binding.version, messageId(id)]))}`;
     this.#db
       .prepare(
-        "INSERT OR IGNORE INTO gmail_receipts(id,handle,version,message,coverage) VALUES(?,?,?,?,?)",
+        "INSERT OR IGNORE INTO gmail_receipts(id,handle,version,message,coverage,trace) VALUES(?,?,?,?,?,?)",
       )
       .run(
         receipt,
@@ -578,8 +757,12 @@ export class GmailIngress {
         binding.version,
         id,
         coverage ? JSON.stringify(coverage) : null,
+        JSON.stringify(
+          createTraceCarrier("gmail.sync", [currentTraceHeaders()]),
+        ),
       );
-    // Only an authenticated live event removes historical coverage restrictions.
+    // Only trusted live admission removes historical coverage restrictions
+    // (history additions, or signed events for legacy providers without history).
     if (!coverage)
       this.#db
         .prepare(`UPDATE gmail_receipts SET coverage=NULL,live=1,
@@ -653,7 +836,15 @@ export class GmailIngress {
     const mailId = messageId(object(event.data).id);
     this.#db.exec("BEGIN IMMEDIATE");
     try {
-      const receipt = this.#enqueue(binding, mailId);
+      // With history support triggers are hints only. Only history additions may
+      // promote a receipt to live; this also prevents replay of old trigger mail.
+      const receipt = this.#enqueue(
+        binding,
+        mailId,
+        this.options.provider.history
+          ? { from: 0, to: this.#now() }
+          : undefined,
+      );
       this.#db
         .prepare(
           "INSERT INTO gmail_events(id,hash,receipt,handle,version) VALUES(?,?,?,?,?)",
@@ -693,6 +884,233 @@ export class GmailIngress {
          to_ms=excluded.to_ms,cursor=NULL,pages=0,done=0`,
       )
       .run(handle, binding.version, from, to);
+  }
+  /** Capture the history anchor BEFORE listing any historical message. */
+  async initializeSync(scope: Scope, handle: string) {
+    const binding = this.#binding(handle);
+    await this.authority(scope, handle, binding.version);
+    const provider = this.options.provider;
+    if (!provider.checkpoint || !provider.history)
+      throw new GmailError("provider");
+    let row = this.#db
+      .prepare("SELECT * FROM gmail_sync WHERE handle=? AND version=?")
+      .get(handle, binding.version);
+    if (!row) {
+      const history = text(
+        await provider.checkpoint(binding.owner, binding.account),
+      );
+      await this.#current(binding, scope);
+      this.#db
+        .prepare(`INSERT INTO gmail_sync(handle,version,history,phase,cutoff) VALUES(?,?,?,'import',?)
+        ON CONFLICT(handle) DO UPDATE SET version=excluded.version,history=excluded.history,page=NULL,
+        phase='import',cutoff=excluded.cutoff,revision=gmail_sync.revision+1 WHERE gmail_sync.version<>excluded.version`)
+        .run(handle, binding.version, history, this.#now());
+      row = this.#db
+        .prepare("SELECT * FROM gmail_sync WHERE handle=?")
+        .get(handle);
+    }
+    if (row?.phase === "import")
+      await this.startImport(scope, handle, 0, Number(row.cutoff));
+    return { phase: String(row?.phase) };
+  }
+  #deleteSource(binding: GmailBinding, id: string) {
+    const sourceId = `gmail:${digest(JSON.stringify([binding.handle, messageId(id)]))}`;
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      this.#db
+        .prepare(
+          "INSERT OR IGNORE INTO gmail_deleted(handle,version,message) VALUES(?,?,?)",
+        )
+        .run(binding.handle, binding.version, id);
+      this.#db
+        .prepare("DELETE FROM gmail_sources WHERE id=? AND version=?")
+        .run(sourceId, binding.version);
+      this.#db
+        .prepare("DELETE FROM gmail_source_search WHERE id=? AND version=?")
+        .run(sourceId, binding.version);
+      this.#db
+        .prepare(
+          "UPDATE gmail_receipts SET status='ignored' WHERE handle=? AND version=? AND message=? AND status='pending'",
+        )
+        .run(binding.handle, binding.version, id);
+      this.#db.exec("COMMIT");
+    } catch (error) {
+      this.#db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+  /** One resumable history (or repair-list) page; host paces retries/drains. */
+  async reconcilePage(scope: Scope, handle: string) {
+    const binding = this.#binding(handle);
+    await this.authority(scope, handle, binding.version);
+    const provider = this.options.provider;
+    if (!provider.history || !provider.checkpoint)
+      throw new GmailError("provider");
+    const row = this.#db
+      .prepare("SELECT * FROM gmail_sync WHERE handle=? AND version=?")
+      .get(handle, binding.version);
+    if (!row) deny();
+    // History catch-up must not wait for a potentially multi-day full import.
+    // gmail_imports owns an entirely separate cursor and completion state.
+    // Durable optimistic epoch: a newer overlapping page invalidates all stale
+    // refreshes, including across independent instances of this journal.
+    const revision = Number(row.revision) + 1;
+    const claimed = this.#db
+      .prepare(
+        "UPDATE gmail_sync SET revision=? WHERE handle=? AND version=? AND revision=?",
+      )
+      .run(revision, handle, binding.version, row.revision);
+    if (!claimed.changes) throw new GmailError("conflict");
+    const assertCurrent = () => {
+      const active = this.#binding(handle);
+      if (!active.active || active.version !== binding.version) deny();
+      const fresh = this.#db
+        .prepare("SELECT revision FROM gmail_sync WHERE handle=? AND version=?")
+        .get(handle, binding.version);
+      if (fresh?.revision !== revision) throw new GmailError("conflict");
+    };
+    const current = async () => {
+      await this.authority(scope, handle, binding.version);
+      assertCurrent();
+    };
+    const refresh = async (id: string) => {
+      messageId(id);
+      const mail = await provider.message(binding.owner, binding.account, id);
+      await current();
+      assertCurrent();
+      if (!mail) {
+        this.#deleteSource(binding, id);
+        return false;
+      }
+      if (mail.id !== id) throw new GmailError("provider");
+      this.#index(binding, mail);
+      return true;
+    };
+    const pageToken = row.page === null ? null : String(row.page);
+    if (row.phase === "repair") {
+      const page = await provider.list(
+        binding.owner,
+        binding.account,
+        0,
+        Number(row.cutoff),
+        pageToken,
+      );
+      await current();
+      if (page.ids.length > 25) throw new GmailError("provider");
+      for (const id of page.ids) {
+        await refresh(id);
+        assertCurrent();
+        this.#db
+          .prepare(
+            "INSERT OR IGNORE INTO gmail_sync_seen(handle,version,message) VALUES(?,?,?)",
+          )
+          .run(handle, binding.version, id);
+      }
+      await current();
+      assertCurrent();
+      if (!page.next) {
+        const sources = this.#db
+          .prepare(
+            "SELECT value FROM gmail_sources WHERE handle=? AND version=?",
+          )
+          .all(handle, binding.version);
+        for (const sourceRow of sources) {
+          const source: GmailSource = JSON.parse(String(sourceRow.value));
+          if (
+            source.message.internalDate < Number(row.cutoff) &&
+            !this.#db
+              .prepare(
+                "SELECT 1 FROM gmail_sync_seen WHERE handle=? AND version=? AND message=?",
+              )
+              .get(handle, binding.version, source.message.id)
+          )
+            this.#deleteSource(binding, source.message.id);
+        }
+        // A historical fetch may still be in flight and not have a source row
+        // yet. Fence absent pre-cutoff receipts as well, without resetting the
+        // independent initial listing cursor or touching newer live evidence.
+        const receipts = this.#db
+          .prepare(`SELECT message,coverage FROM gmail_receipts
+          WHERE handle=? AND version=? AND coverage IS NOT NULL AND status='pending'`)
+          .all(handle, binding.version);
+        for (const receipt of receipts) {
+          const coverage: Coverage = JSON.parse(String(receipt.coverage));
+          if (
+            coverage.to <= Number(row.cutoff) &&
+            !this.#db
+              .prepare(
+                "SELECT 1 FROM gmail_sync_seen WHERE handle=? AND version=? AND message=?",
+              )
+              .get(handle, binding.version, receipt.message)
+          )
+            this.#deleteSource(binding, String(receipt.message));
+        }
+      }
+      this.#db
+        .prepare(
+          "UPDATE gmail_sync SET page=?,phase=? WHERE handle=? AND version=? AND revision=?",
+        )
+        .run(
+          page.next,
+          page.next ? "repair" : "history",
+          handle,
+          binding.version,
+          revision,
+        );
+      return { phase: page.next ? "repair" : "history", done: !page.next };
+    }
+    let page: GmailHistoryPage;
+    try {
+      page = await provider.history(
+        binding.owner,
+        binding.account,
+        String(row.history),
+        pageToken,
+      );
+    } catch (error) {
+      if (!(error instanceof GmailHistoryExpired)) throw error;
+      const history = text(
+        await provider.checkpoint(binding.owner, binding.account),
+      );
+      await current();
+      assertCurrent();
+      this.#db
+        .prepare("DELETE FROM gmail_sync_seen WHERE handle=? AND version=?")
+        .run(handle, binding.version);
+      this.#db
+        .prepare(
+          "UPDATE gmail_sync SET history=?,page=NULL,phase='repair',cutoff=? WHERE handle=? AND version=? AND revision=?",
+        )
+        .run(history, this.#now(), handle, binding.version, revision);
+      return { phase: "repair", done: false };
+    }
+    await current();
+    // Re-fetch current state for every specific change. A later add/delete in
+    // the same page cannot revive an obsolete snapshot from an earlier record.
+    const added = new Set(page.added.map(messageId));
+    for (const id of new Set([
+      ...page.added,
+      ...page.deleted,
+      ...page.changed,
+    ])) {
+      const exists = await refresh(id);
+      assertCurrent();
+      if (exists && added.has(id)) this.#enqueue(binding, id);
+    }
+    await current();
+    assertCurrent();
+    this.#db
+      .prepare(
+        "UPDATE gmail_sync SET history=?,page=?,phase='history' WHERE handle=? AND version=? AND revision=?",
+      )
+      .run(
+        page.next ? row.history : text(page.historyId),
+        page.next,
+        handle,
+        binding.version,
+        revision,
+      );
+    return { phase: "history", done: !page.next };
   }
   async importPage(scope: Scope, handle: string) {
     const binding = this.#binding(handle);
@@ -741,11 +1159,28 @@ export class GmailIngress {
   async drainOne() {
     const rows = this.#db
       .prepare(
-        "SELECT * FROM gmail_receipts WHERE status='pending' ORDER BY attempted_at,rowid LIMIT 100",
+        "SELECT * FROM gmail_receipts WHERE status='pending' ORDER BY live DESC,attempted_at,rowid LIMIT 100",
       )
       .all() as unknown as ReceiptRow[];
     const row = rows.find((candidate) => !this.#busy.has(candidate.id));
     if (!row) return null;
+    return traceOperation(
+      "gmail.drain",
+      async (span) => {
+        const result = await this.#drain(row);
+        if (
+          this.#db
+            .prepare("SELECT status FROM gmail_receipts WHERE id=?")
+            .get(row.id)?.status === "revoked"
+        )
+          span.setAttribute("outcome", "denied");
+        return result;
+      },
+      row.trace ? JSON.parse(row.trace) : {},
+      [currentTraceHeaders()],
+    );
+  }
+  async #drain(row: ReceiptRow) {
     this.#busy.add(row.id);
     this.#db
       .prepare("UPDATE gmail_receipts SET attempted_at=? WHERE id=?")
@@ -758,23 +1193,18 @@ export class GmailIngress {
           .run(row.id);
         return null;
       }
-      const current = () => this.#current(binding);
+      const current = async () => {
+        await this.authority(binding.scope, binding.handle, binding.version);
+        if (
+          this.#db
+            .prepare(
+              "SELECT 1 FROM gmail_deleted WHERE handle=? AND version=? AND message=?",
+            )
+            .get(binding.handle, binding.version, row.message)
+        )
+          deny();
+      };
       await current();
-      // Verify live provider status/scopes again on retry; missing authority is not a transient success.
-      const verified = await this.options.provider.verify(
-        binding.owner,
-        binding.account,
-      );
-      await current();
-      if (
-        verified.id !== binding.account ||
-        verified.owner !== binding.owner ||
-        verified.mailbox !== binding.mailbox ||
-        verified.authConfigId !== binding.authConfigId ||
-        !verified.requestedScopes.includes(GMAIL_READONLY) ||
-        !verified.readAccessVerified
-      )
-        deny();
       let mail: GmailMessage;
       if (row.frozen) mail = JSON.parse(row.frozen);
       else {
@@ -809,7 +1239,21 @@ export class GmailIngress {
           .run(JSON.stringify(mail), row.id);
       }
       await current();
-      this.#index(binding, mail);
+      if (
+        this.#db
+          .prepare(
+            "SELECT 1 FROM gmail_deleted WHERE handle=? AND version=? AND message=?",
+          )
+          .get(binding.handle, binding.version, row.message)
+      )
+        deny();
+      const sourceId = `gmail:${digest(JSON.stringify([binding.handle, mail.id]))}`;
+      if (
+        !this.#db
+          .prepare("SELECT 1 FROM gmail_sources WHERE id=? AND version=?")
+          .get(sourceId, binding.version)
+      )
+        this.#index(binding, mail);
       const latest = this.#db
         .prepare("SELECT live FROM gmail_receipts WHERE id=?")
         .get(row.id);
@@ -876,12 +1320,13 @@ export class GmailIngress {
   }
   async drafts(scope: Scope, handle: string): Promise<LocalGmailDraft[]> {
     const binding = this.#binding(handle);
-    await this.#current(binding, scope);
+    await this.authority(scope, handle, binding.version);
     const rows = this.#db
       .prepare(
         "SELECT draft FROM gmail_receipts WHERE handle=? AND version=? AND status='done' AND draft IS NOT NULL ORDER BY rowid DESC LIMIT 25",
       )
       .all(handle, binding.version);
+    await this.authority(scope, handle, binding.version);
     return rows.map((row) => JSON.parse(String(row.draft)));
   }
   #index(binding: GmailBinding, message: GmailMessage) {
@@ -899,6 +1344,11 @@ export class GmailIngress {
     };
     this.#db.exec("BEGIN IMMEDIATE");
     try {
+      this.#db
+        .prepare(
+          "DELETE FROM gmail_deleted WHERE handle=? AND version=? AND message=?",
+        )
+        .run(binding.handle, binding.version, message.id);
       this.#db
         .prepare(`INSERT INTO gmail_sources(id,handle,version,value) VALUES(?,?,?,?)
         ON CONFLICT(id,version) DO UPDATE SET value=excluded.value`)
@@ -934,7 +1384,7 @@ export class GmailIngress {
     query: string,
   ): Promise<GmailSource[]> {
     const binding = this.#binding(handle);
-    await this.#current(binding, scope);
+    await this.authority(scope, handle, binding.version);
     const terms = text(query, 256)
       .match(/[\p{L}\p{N}]+/gu)
       ?.slice(0, 10);
@@ -951,7 +1401,7 @@ export class GmailIngress {
   }
   async progress(scope: Scope, handle: string) {
     const binding = this.#binding(handle);
-    await this.#current(binding, scope);
+    await this.authority(scope, handle, binding.version);
     const coverage =
       this.#db
         .prepare(

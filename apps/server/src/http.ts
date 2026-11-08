@@ -24,6 +24,7 @@ import {
   type CoreSession,
   type Scope,
 } from "./core.js";
+import type { createGmailRuntime } from "./gmail-runtime.js";
 import { createOperatorProjection } from "./operator.js";
 
 class HttpError extends Error {
@@ -164,6 +165,7 @@ export function createHttpServer(options: {
   bind(scope: Scope): CoreSession;
   operatorRedactValues?: readonly string[];
   privilegedUrlPrefixes?: readonly string[];
+  gmail?: Pick<ReturnType<typeof createGmailRuntime>, "status" | "drafts">;
 }) {
   const sign = (principal: Principal, purpose: string, data: string) =>
     createHmac("sha256", options.secret)
@@ -295,6 +297,30 @@ export function createHttpServer(options: {
           reply(200, value);
         } finally {
           response.off("close", closed);
+        }
+        return;
+      }
+      if (
+        request.method === "GET" &&
+        ["/v1/gmail/status", "/v1/gmail/drafts"].includes(url.pathname)
+      ) {
+        permit("history.read");
+        if (url.search) throw new HttpError(400, "invalid-request");
+        if (!options.gmail) throw new HttpError(503, "unavailable");
+        const scope = {
+          tenantId: principal.tenantId,
+          userId: principal.userId,
+          agentId: principal.agentId,
+        };
+        try {
+          reply(
+            200,
+            url.pathname.endsWith("/status")
+              ? await options.gmail.status(scope)
+              : { drafts: await options.gmail.drafts(scope) },
+          );
+        } catch {
+          throw new HttpError(403, "forbidden");
         }
         return;
       }

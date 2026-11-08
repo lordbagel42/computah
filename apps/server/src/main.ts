@@ -13,7 +13,13 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { createClient } from "rivetkit/client";
 import { OperationalAnalytics, observeModels } from "./analytics.js";
 import { principalKey, readConfig } from "./config.js";
-import { type CoreOptions, createCore } from "./core.js";
+import {
+  type CoreOptions,
+  type CoreSession,
+  createCore,
+  type Scope,
+} from "./core.js";
+import { createGmailRuntime, gmailConfig } from "./gmail-runtime.js";
 import { closeHttp, createHttpServer } from "./http.js";
 import { priorityModels } from "./model-policy.js";
 import { createSentinel } from "./sentinel.js";
@@ -80,6 +86,26 @@ async function main() {
     byScope.get(principalKey(scope))?.capabilities.includes(capability) ??
     false;
   const timing = readTransportTimingConfig(process.env);
+  let bind: ((scope: Scope) => CoreSession) | undefined;
+  const gmailSettings = gmailConfig(process.env, config.principals.values());
+  if (gmailSettings && config.mode !== "real")
+    throw new Error("COMPUTAH_GMAIL_JSON requires real mode");
+  const gmail = gmailSettings
+    ? createGmailRuntime({
+        config: gmailSettings,
+        authorize: (scope) => {
+          const principal = byScope.get(principalKey(scope));
+          return (
+            !!principal?.capabilities.includes("history.read") &&
+            principal.capabilities.includes("task.send")
+          );
+        },
+        bind: (scope) => {
+          if (!bind) throw new Error("Runtime unavailable");
+          return bind(scope);
+        },
+      })
+    : undefined;
   const core = createCore({
     connectionSecret: config.secret,
     authorize,
@@ -90,6 +116,18 @@ async function main() {
     analytics,
     workerModel: config.workerModel,
     thinkingLevel: config.mode === "real" ? "high" : undefined,
+    // A removed connection configuration cannot authorize old source-bearing
+    // native checkpoints. Retain the hard boundary in the real model runtime.
+    sources:
+      config.mode === "real"
+        ? (gmail?.sources ?? {
+            available: () => false,
+            check: async () => {
+              throw new Error("Source access denied");
+            },
+            preload: async () => null,
+          })
+        : undefined,
     tavily: process.env.COMPUTAH_TAVILY_API_KEY
       ? { apiKey: process.env.COMPUTAH_TAVILY_API_KEY }
       : undefined,
@@ -129,6 +167,7 @@ async function main() {
       const server = http;
       if (server?.listening)
         await traceLifecycle("http_drain", () => closeHttp(server));
+      await gmail?.close();
       await traceLifecycle("registry_drain", () => core.close());
       await traceLifecycle("client_drain", async () => client?.dispose());
       analytics?.close();
@@ -146,6 +185,8 @@ async function main() {
   // Host owns signal shutdown: stop public admissions before draining the actors.
   core.registry.config.shutdown = { disableSignalHandlers: true };
   startup = (async () => {
+    // Bind authority before native checkpoint recovery can issue requests.
+    await gmail?.initialize();
     await traceLifecycle("registry", () => core.registry.startAndWait());
     if (stopping) return;
     const runtime = core.registry.parseConfig();
@@ -156,6 +197,8 @@ async function main() {
       poolName: runtime.node.poolName,
       headers: runtime.headers,
     });
+    bind = core.attach(client);
+    gmail?.start();
     http = createHttpServer({
       ...config,
       operatorRedactValues: [
@@ -166,7 +209,8 @@ async function main() {
         ...config.privilegedUrlPrefixes,
         runtime.endpoint,
       ].filter((value): value is string => Boolean(value)),
-      bind: core.attach(client),
+      bind,
+      gmail,
       revision: process.env.COMPUTAH_REVISION,
       ready: () => !stopping,
     });

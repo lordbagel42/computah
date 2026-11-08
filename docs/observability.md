@@ -224,3 +224,16 @@ edge exporter is isolated from the Node bootstrap and explicitly credential-gate
 Public shell hosting is enabled; actual Worker query/edge-ingest acceptance,
 browser interaction export, static/rejection Axiom coverage and real visitor
 disconnect proof remain gaps. A successful MCP query is not runtime activation.
+
+## Gmail runtime boundary
+
+The Gmail runtime uses the existing fixed `gmail.bind/sync/import/drain/authority/retrieval`
+operations and automatic bounded `operation.completed` logs. Each new durable receipt
+stores one fresh root carrier linked to the admitting operation. Retry/reopen drains
+restore that carrier and link the current pump, without exporting mailbox identity,
+source text, account handles or credentials. Existing pre-carrier receipts drain as
+new roots. Native `root.submit(tx, ...)` still uses `BACKGROUND_CONTEXT`; the pinned
+public Pi API supplies no supported caller-context bridge. Consequently receipt-to-
+native admission/Task trace parentage remains a documented gap, not inferred from
+ambient context. Atomic native admission/dedup and private grant lineage stay intact.
+Live Axiom ingestion of the deployed Gmail path remains a separate acceptance check.

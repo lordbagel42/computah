@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { currentTraceHeaders } from "@computah/observability";
 import {
   createFauxCore,
   fauxAssistantMessage,
@@ -12,8 +13,10 @@ import { afterEach, expect, test } from "vitest";
 import { createCore, type Scope } from "../src/core.js";
 import {
   createComposioGmail,
+  GMAIL_FULL_MAIL,
   GMAIL_READONLY,
   GmailError,
+  GmailHistoryExpired,
   GmailIngress,
   type GmailMessage,
   type GmailProvider,
@@ -36,6 +39,7 @@ function fixture(
     work: Readonly<GmailWork>,
     current: () => Promise<void>,
   ) => Promise<string>,
+  approvedManagedFullMail = false,
 ) {
   const dir = mkdtempSync(join(tmpdir(), "computah-gmail-"));
   cleanup.push(() => rmSync(dir, { recursive: true, force: true }));
@@ -93,6 +97,7 @@ function fixture(
   };
   const options = {
     provider,
+    approvedManagedFullMail,
     authorize: (_scope: Scope, _handle: string, _version: string) => allowed,
     now: () => clock,
     run:
@@ -505,6 +510,488 @@ test("June-derived normalizer excludes outbound/draft mail, HTML, attachments an
     ).toBeNull();
 });
 
+test("trusted adoption retains active authority across restart, rejects identity/config changes and remote revocation", async () => {
+  const f = fixture();
+  const a = await f.connect();
+  const expected = { handle: a.handle, version: a.version };
+  expect(await f.ingress.adoptConnected(alice, a.owner, a.account)).toEqual(
+    expected,
+  );
+  f.restart();
+  expect(await f.ingress.adoptConnected(alice, a.owner, a.account)).toEqual(
+    expected,
+  );
+  expect(await f.ingress.authority(alice, a.handle, a.version)).toBeUndefined();
+  await expect(
+    f.ingress.adoptConnected(bob, a.owner, a.account),
+  ).rejects.toThrow("denied");
+  await expect(f.ingress.authority(bob, a.handle, a.version)).rejects.toThrow(
+    "denied",
+  );
+  await expect(
+    f.ingress.authority(alice, a.handle, "old-version"),
+  ).rejects.toThrow("denied");
+  const verify = f.provider.verify;
+  f.provider.verify = async (...args) => ({
+    ...(await verify(...args)),
+    authConfigId: "another-config",
+  });
+  await expect(
+    f.ingress.adoptConnected(alice, a.owner, a.account),
+  ).rejects.toThrow("denied");
+  await expect(f.ingress.authority(alice, a.handle, a.version)).rejects.toThrow(
+    "denied",
+  );
+  f.provider.verify = async () => {
+    throw new GmailError("denied");
+  };
+  await expect(f.ingress.search(alice, a.handle, "Question")).rejects.toThrow(
+    "denied",
+  );
+});
+
+test("standing host adoption cannot undo a confirmed disconnect on restart", async () => {
+  const f = fixture();
+  const a = await f.connect();
+  expect(await f.ingress.disconnect(alice, a.handle)).toHaveProperty(
+    "upstream",
+    "revoked",
+  );
+  f.restart();
+  await expect(
+    f.ingress.adoptConnected(alice, a.owner, a.account),
+  ).rejects.toThrow("denied");
+  await expect(f.ingress.authority(alice, a.handle, a.version)).rejects.toThrow(
+    "denied",
+  );
+});
+
+test("adoption creates opaque host binding without OAuth and blocks unresolved revocation", async () => {
+  const f = fixture(undefined, true);
+  f.provider.verify = async (owner, id) => ({
+    id,
+    owner,
+    authConfigId: "ac_read",
+    mailbox: "synthetic@example.invalid",
+    requestedScopes: [GMAIL_FULL_MAIL],
+    readAccessVerified: true,
+  });
+  const a = await f.ingress.adoptConnected(
+    alice,
+    "trusted-owner",
+    "trusted-account",
+  );
+  expect(a.handle).not.toContain("trusted");
+  expect(a.version).not.toBe(a.handle);
+  await expect(
+    f.ingress.adoptConnected(bob, "trusted-owner", "trusted-account"),
+  ).rejects.toThrow("denied");
+  f.failRevoke();
+  await f.ingress.disconnect(alice, a.handle);
+  f.restart();
+  await expect(
+    f.ingress.adoptConnected(alice, "trusted-owner", "trusted-account"),
+  ).rejects.toThrow("denied");
+});
+
+test("ingress full-mail policy is explicit and exact even with a permissive provider fake", async () => {
+  for (const approved of [false, true]) {
+    const f = fixture(undefined, approved);
+    for (const scopes of [
+      [GMAIL_FULL_MAIL],
+      [GMAIL_FULL_MAIL, GMAIL_READONLY],
+      [GMAIL_FULL_MAIL, "openid"],
+      ["https://www.googleapis.com/auth/gmail.modify"],
+      [GMAIL_READONLY, "https://www.googleapis.com/auth/contacts.readonly"],
+    ]) {
+      f.provider.verify = async (owner, id) => ({
+        id,
+        owner,
+        authConfigId: "ac_read",
+        mailbox: "synthetic@example.invalid",
+        requestedScopes: scopes,
+        readAccessVerified: true,
+      });
+      const result = f.ingress.adoptConnected(
+        alice,
+        "host-owner",
+        "host-account",
+      );
+      if (approved && scopes.length === 1 && scopes[0] === GMAIL_FULL_MAIL)
+        await expect(result).resolves.toHaveProperty("version");
+      else await expect(result).rejects.toThrow("denied");
+    }
+  }
+});
+
+test("checkpoint precedes backfill; history pages refresh labels, delete FTS and dedup live additions across restart", async () => {
+  const f = fixture();
+  const a = await f.connect();
+  const base = f.messages.get("a1") as GmailMessage;
+  const calls: (string | null)[][] = [];
+  f.provider.checkpoint = async () => "100";
+  let failed = false;
+  f.provider.history = async (_owner, _account, start, token) => {
+    calls.push([start, token]);
+    if (!token)
+      return {
+        historyId: "200",
+        next: "page-2",
+        added: ["b2"],
+        deleted: [],
+        changed: ["a1"],
+      };
+    if (!failed) {
+      failed = true;
+      throw new GmailError("provider");
+    }
+    return {
+      historyId: "300",
+      next: null,
+      added: ["b2"],
+      deleted: ["a1"],
+      changed: [],
+    };
+  };
+  await f.ingress.initializeSync(alice, a.handle);
+  await f.ingress.importPage(alice, a.handle);
+  await f.ingress.drainOne();
+  expect(f.work).toEqual([]);
+  f.messages.set("a1", { ...base, labels: ["SENT"], text: "updated pelican" });
+  f.messages.set("b2", {
+    ...base,
+    id: "b2",
+    internalDate: now + 1,
+    text: "live toucan",
+  });
+  await accept(f.ingress, event(a, "b2", "history-hint"));
+  await f.ingress.drainOne();
+  expect(f.work).toEqual([]);
+  await f.ingress.reconcilePage(alice, a.handle);
+  expect(
+    (await f.ingress.search(alice, a.handle, "updated pelican"))[0]?.message
+      .labels,
+  ).toEqual(["SENT"]);
+  await f.ingress.drainOne();
+  expect(f.work).toHaveLength(1);
+  await expect(f.ingress.reconcilePage(alice, a.handle)).rejects.toThrow(
+    "provider",
+  );
+  f.restart();
+  f.messages.delete("a1");
+  await f.ingress.reconcilePage(alice, a.handle);
+  expect(calls).toEqual([
+    ["100", null],
+    ["100", "page-2"],
+    ["100", "page-2"],
+  ]);
+  expect(await f.ingress.search(alice, a.handle, "updated pelican")).toEqual(
+    [],
+  );
+  expect(await f.ingress.drainOne()).toBeNull();
+  expect(f.work).toHaveLength(1);
+  await expect(f.ingress.reconcilePage(bob, a.handle)).rejects.toThrow(
+    "denied",
+  );
+});
+
+test("expired history repairs current sources without historical jobs and anchors a new checkpoint", async () => {
+  const f = fixture();
+  const a = await f.connect();
+  const base = f.messages.get("a1") as GmailMessage;
+  let checkpoint = "100";
+  f.provider.checkpoint = async () => checkpoint;
+  f.provider.history = async () => {
+    throw new GmailHistoryExpired();
+  };
+  await f.ingress.initializeSync(alice, a.handle);
+  await f.ingress.importPage(alice, a.handle);
+  await f.ingress.drainOne();
+  f.messages.delete("a1");
+  f.messages.set("b2", { ...base, id: "b2", text: "recovered puffin" });
+  checkpoint = "500";
+  expect(await f.ingress.reconcilePage(alice, a.handle)).toEqual({
+    phase: "repair",
+    done: false,
+  });
+  f.restart();
+  expect(await f.ingress.reconcilePage(alice, a.handle)).toEqual({
+    phase: "history",
+    done: true,
+  });
+  expect(await f.ingress.search(alice, a.handle, "Question")).toHaveLength(1);
+  expect(
+    (await f.ingress.search(alice, a.handle, "recovered puffin"))[0]?.message
+      .id,
+  ).toBe("b2");
+  expect(await f.ingress.search(alice, a.handle, "Please ignore")).toEqual([]);
+  f.provider.history = async (_owner, _account, start) => {
+    expect(start).toBe("500");
+    return {
+      historyId: "600",
+      next: null,
+      added: [],
+      deleted: [],
+      changed: [],
+    };
+  };
+  await f.ingress.reconcilePage(alice, a.handle);
+  expect(f.work).toEqual([]);
+  expect(await f.ingress.drainOne()).toBeNull();
+});
+
+test("new history mail bypasses pending bulk import and expiry preserves the independent initial listing cursor", async () => {
+  const f = fixture();
+  const a = await f.connect();
+  const base = f.messages.get("a1") as GmailMessage;
+  const ids = Array.from({ length: 50 }, (_, i) => (0x100 + i).toString(16));
+  f.messages.clear();
+  for (const id of ids) f.messages.set(id, { ...base, id });
+  const order: string[] = [];
+  f.provider.checkpoint = async () => {
+    order.push("checkpoint");
+    return "100";
+  };
+  f.provider.list = async (_owner, _account, _from, _to, token) => {
+    order.push(token ?? "first");
+    return {
+      ids: token ? ids.slice(25) : ids.slice(0, 25),
+      next: token ? null : "second",
+    };
+  };
+  let expired = false;
+  f.provider.history = async () => {
+    if (expired) throw new GmailHistoryExpired();
+    return {
+      historyId: "200",
+      next: null,
+      added: ["b2"],
+      deleted: [],
+      changed: [],
+    };
+  };
+  await f.ingress.initializeSync(alice, a.handle);
+  await f.ingress.importPage(alice, a.handle);
+  expect(order).toEqual(["checkpoint", "first"]);
+  expect(await f.ingress.progress(alice, a.handle)).toMatchObject({
+    pending: 25,
+    coverage: { pages: 1, done: 0 },
+  });
+  f.messages.set("b2", { ...base, id: "b2", internalDate: now + 1 });
+  await f.ingress.reconcilePage(alice, a.handle);
+  await f.ingress.drainOne();
+  expect(f.work).toHaveLength(1);
+  expect(f.work[0]?.text).toContain('"messageId":"b2"');
+  expect(await f.ingress.progress(alice, a.handle)).toMatchObject({
+    pending: 25,
+    coverage: { pages: 1, done: 0 },
+  });
+  expired = true;
+  await f.ingress.reconcilePage(alice, a.handle);
+  f.restart();
+  await f.ingress.importPage(alice, a.handle);
+  expect(order.at(-1)).toBe("second");
+  expect(await f.ingress.progress(alice, a.handle)).toMatchObject({
+    pending: 50,
+    coverage: { pages: 2, done: 1 },
+  });
+  expect(f.work).toHaveLength(1);
+});
+
+test("repair fences unindexed in-flight historical mail absent from the current listing", async () => {
+  const f = fixture();
+  const a = await f.connect();
+  f.provider.checkpoint = async () => "100";
+  f.provider.history = async () => {
+    throw new GmailHistoryExpired();
+  };
+  await f.ingress.initializeSync(alice, a.handle);
+  await f.ingress.importPage(alice, a.handle);
+  let release = () => {};
+  let entered = () => {};
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const fetching = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const message = f.provider.message;
+  f.provider.message = async (...args) => {
+    const snapshot = await message(...args);
+    entered();
+    await waiting;
+    return snapshot;
+  };
+  const drain = f.ingress.drainOne();
+  await fetching;
+  f.messages.clear();
+  await f.ingress.reconcilePage(alice, a.handle);
+  await f.ingress.reconcilePage(alice, a.handle);
+  release();
+  await expect(drain).rejects.toThrow("denied");
+  expect(await f.ingress.search(alice, a.handle, "Please ignore")).toEqual([]);
+  expect(f.work).toEqual([]);
+});
+
+test("draft reads recheck authority after SQL and cannot release a revoked projection", async () => {
+  const f = fixture();
+  const a = await f.connect();
+  await accept(f.ingress, event(a));
+  await f.ingress.drainOne();
+  const verify = f.provider.verify;
+  let calls = 0;
+  f.provider.verify = async (...args) => {
+    const result = await verify(...args);
+    if (++calls === 2) f.allowed(false);
+    return result;
+  };
+  await expect(f.ingress.drafts(alice, a.handle)).rejects.toThrow("denied");
+  expect(calls).toBe(2);
+});
+
+test("history deletion fences an already fetching receipt so stale mail cannot resurrect source or draft", async () => {
+  const f = fixture();
+  const a = await f.connect();
+  const base = f.messages.get("a1") as GmailMessage;
+  f.provider.checkpoint = async () => "100";
+  let deleted = false;
+  f.provider.history = async () => ({
+    historyId: deleted ? "300" : "200",
+    next: null,
+    added: deleted ? [] : ["b2"],
+    deleted: deleted ? ["b2"] : [],
+    changed: [],
+  });
+  await f.ingress.initializeSync(alice, a.handle);
+  await f.ingress.importPage(alice, a.handle);
+  await f.ingress.drainOne();
+  f.messages.set("b2", { ...base, id: "b2", text: "temporary pelican" });
+  await f.ingress.reconcilePage(alice, a.handle);
+  let release = () => {};
+  let entered = () => {};
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const fetching = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const message = f.provider.message;
+  let first = true;
+  f.provider.message = async (...args) => {
+    const snapshot = await message(...args);
+    if (first) {
+      first = false;
+      entered();
+      await waiting;
+    }
+    return snapshot;
+  };
+  const drain = f.ingress.drainOne();
+  await fetching;
+  deleted = true;
+  f.messages.delete("b2");
+  await f.ingress.reconcilePage(alice, a.handle);
+  release();
+  await expect(drain).rejects.toThrow("denied");
+  expect(await f.ingress.search(alice, a.handle, "temporary pelican")).toEqual(
+    [],
+  );
+  expect(f.work).toEqual([]);
+  expect(await f.ingress.drafts(alice, a.handle)).toEqual([]);
+});
+
+test("REST checkpoint/history uses GET and specific delta fields; only exact approved scope passes and history 404 is distinct", async () => {
+  const requests: Record<string, unknown>[] = [];
+  let scopes: unknown[] = [GMAIL_FULL_MAIL];
+  let expired = false;
+  const transport: typeof fetch = async (url, init) => {
+    if (String(url).endsWith("/ca_pinned"))
+      return Response.json({
+        id: "ca_pinned",
+        user_id: "host-owner",
+        toolkit: { slug: "gmail" },
+        auth_config: { id: "ac_read" },
+        status: "ACTIVE",
+        requested_scopes: scopes,
+      });
+    const body = JSON.parse(String(init?.body));
+    requests.push(body);
+    if (body.endpoint === "/gmail/v1/users/me/profile")
+      return Response.json({
+        status: 200,
+        data: { historyId: "123", emailAddress: "synthetic@example.invalid" },
+      });
+    if (String(body.endpoint).startsWith("/gmail/v1/users/me/history?"))
+      return Response.json({
+        status: expired ? 404 : 200,
+        data: {
+          historyId: "999",
+          nextPageToken: "next",
+          history: [
+            {
+              messages: [{ id: "bad-unused" }],
+              messagesAdded: [{ message: { id: "a1" } }],
+              messagesDeleted: [{ message: { id: "b2" } }],
+              labelsAdded: [{ message: { id: "c3" }, labelIds: ["INBOX"] }],
+              labelsRemoved: [{ message: { id: "d4" }, labelIds: ["INBOX"] }],
+            },
+          ],
+        },
+      });
+    return Response.json({ status: 200, data: {} });
+  };
+  const options = { apiKey: "synthetic", authConfigId: "ac_read", transport };
+  await expect(
+    createComposioGmail(options).verify("host-owner", "ca_pinned"),
+  ).rejects.toThrow("denied");
+  const provider = createComposioGmail({
+    ...options,
+    approvedManagedFullMail: true,
+  });
+  await expect(
+    provider.verify("host-owner", "ca_pinned"),
+  ).resolves.toHaveProperty("readAccessVerified", true);
+  for (const extra of [
+    "openid",
+    "https://www.googleapis.com/auth/contacts.readonly",
+    GMAIL_READONLY,
+    123,
+  ]) {
+    scopes = [GMAIL_FULL_MAIL, extra];
+    await expect(provider.verify("host-owner", "ca_pinned")).rejects.toThrow(
+      "denied",
+    );
+  }
+  expect(await provider.checkpoint?.("host-owner", "ca_pinned")).toBe("123");
+  expect(
+    await provider.history?.("host-owner", "ca_pinned", "123", "page-token"),
+  ).toEqual({
+    historyId: "999",
+    next: "next",
+    added: ["a1"],
+    deleted: ["b2"],
+    changed: ["c3", "d4"],
+  });
+  const query = new URL(
+    String(requests.at(-1)?.endpoint),
+    "https://example.invalid",
+  ).searchParams;
+  expect(query.get("startHistoryId")).toBe("123");
+  expect(query.get("pageToken")).toBe("page-token");
+  expect(
+    requests.every(
+      (r) =>
+        r.method === "GET" &&
+        r.user_id === "host-owner" &&
+        r.connected_account_id === "ca_pinned",
+    ),
+  ).toBe(true);
+  expired = true;
+  await expect(
+    provider.history?.("host-owner", "ca_pinned", "123", null),
+  ).rejects.toBeInstanceOf(GmailHistoryExpired);
+});
+
 test("REST broker pins owner/account and uses read-only proxy; requested scopes alone do not prove effective access", async () => {
   let readAllowed = false;
   const requests: { path: string; body: Record<string, unknown> }[] = [];
@@ -633,10 +1120,12 @@ test("accepted mail reaches tenant Interaction, autonomously delegates Task, and
     const { client } = await setupTest(context, core.registry);
     const bind = core.attach(client);
     const labels: string[] = [];
+    const carriers: string[] = [];
     let loseResponse = true;
     // This proves native admission/result/reuse, NOT a native generation grant fence.
     const f = fixture(async (work, current) => {
       await current();
+      carriers.push(currentTraceHeaders().traceparent);
       const session = bind(work.scope);
       const id = session.interactionId;
       labels.push(id);
@@ -679,6 +1168,8 @@ test("accepted mail reaches tenant Interaction, autonomously delegates Task, and
     );
     f.restart();
     await f.ingress.drainOne();
+    expect(carriers[0]).toMatch(/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/);
+    expect(carriers[1]).toBe(carriers[0]);
     expect((await f.ingress.drafts(alice, a.handle))[0]?.text).toBe(
       "A specific reply, pending human review.",
     );
@@ -698,6 +1189,7 @@ test("accepted mail reaches tenant Interaction, autonomously delegates Task, and
     });
     await accept(f.ingress, event(a, "b2", "followup"));
     await f.ingress.drainOne();
+    expect(carriers[2]).not.toBe(carriers[0]);
     expect(new Set(labels).size).toBe(1);
     expect(await f.ingress.drafts(alice, a.handle)).toHaveLength(2);
   } finally {

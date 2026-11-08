@@ -323,6 +323,33 @@ it does not cancel unrelated historical work or claim external-effect rollback.
 No Slack/Gmail/memory/DEBUGSHARE, UI files, cloud provisioning or production writes
 are part of this packet. See `contracts.md` for the separately owned wire seam.
 
+## Private Gmail source authority
+
+Optional host-only `CoreOptions.sources` supplies current account-generation
+checks, availability and bounded original-source preloads. It requires an injected
+Models runtime. `session.submitSource(description, receipt, grant, evidence)` admits
+only the description as public user text; private frozen evidence is projected in
+`beforeRequest`. Public HTTP requests remain `{clientMutationId,text}` only.
+The account/version document is cumulative: derived Worker evidence propagates
+back into Interaction before Task output is released. Each Task freezes inherited
+grants with its delegation receipt so native replay uses the same admission hash.
+Current grant checks remain independent of that immutable fingerprint.
+
+Pi1.5 generation hooks swallow errors. `source-models.ts` therefore requires a
+fresh native invocation-signal authority check at the actual Models boundary and
+each actual HTTP attempt, rather than trusting a hook throw. Fenced requests use
+SSE because WebSocket retries bypass injected fetch. Codex invokes its payload
+hook only once, so that hook alone cannot protect its transport retry loop. The
+same transport fence checks queued Sentinel reviews against their frozen grants.
+Tool execute wrappers
+cover initial and safe-replayed calls; history/result/observation release also
+rechecks authority. Grant revocation fences the conversation's derived history.
+Source-enabled cores decline native compaction and unknown deferred-poll signals,
+whose pinned retry phases lack a suitable hook, retaining original entries rather
+than sending them through an unfenced model call. The real bootstrap retains this
+deny-only boundary even after Gmail configuration is removed. See [Gmail](gmail.md)
+for protected configuration, runtime capabilities and live acceptance limits.
+
 ## API provenance
 
 - [Published @rivet-dev/pi 0.5.6 package](https://unpkg.com/@rivet-dev/pi@0.5.6/package.json): compatible peer ranges and Node minimum.
