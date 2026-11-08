@@ -51,6 +51,20 @@ protected-host activation and independently queried ingestion are separate state
   Retry/reopen and ambiguous sends retain their existing reconciliation rules.
   These are intercepted local exports, not proof of live revision-specific
   Axiom ingestion, real Slack rendering or one unified Slack→native Task tree.
+  Native phase-card checks exercise executable DM/channel start/append/stop with
+  trusted recipients and isolated channel credentials. They verify status→API
+  parentage, linked logs and explicit error/denial attributes, including uncertain
+  sends and bounded terminal cleanup. Closing a Slack display is not core
+  cancellation. Real-client card rendering and revision-specific live ingestion
+  remain unverified; no extra telemetry exporter or answer-text stream is added.
+  The separate causal-admission follow-up is in publication checks: new durable
+  Slack job carriers become actual children of receive, not independent roots
+  joined only by a link. The original carrier persists through duplicate/burst
+  admission, retry/reopen, phases, outgoing HTTP and delivery; additional receives
+  remain links and legacy NULL carriers remain independent roots. Local graph
+  regressions exercise these boundaries, actual wire-header ancestry and linked
+  error logs while retaining private-content gate assertions. This bounded Slack
+  graph proof is not proof of the complete native Task graph or live Axiom tree.
 - Slack core requests propagate only W3C traceparent IDs to the configured core;
   backend/bus HTTP ingress accepts strict valid v00 carriers, never baggage or
   tracestate. Invalid/zero/duplicate carriers start new roots. Correlation never
@@ -72,9 +86,12 @@ protected-host activation and independently queried ingestion are separate state
   attributes. Local sanitized-export tests cover success/denial/error/cancel and
   timeout, plus parent continuity; they do not prove live ingestion. The broker
   receipt carrier remains data, never authority to broaden Axiom trace queries.
-  The shipped broker deliberately ignores incoming trace headers and starts an
-  independent lookup root, so cross-process UDS lookup span continuity remains a
-  gap; local client-to-native-tool parent continuity is not that stronger claim.
+  The causal UDS update forwards current client trace headers, admits only strict
+  W3C `traceparent` through broker HTTP tracing and parents `slack.timing` under
+  that request. Baggage and `tracestate` are not accepted; correlation cannot
+  grant broker access or select a DB/root. This source update is undergoing
+  publication/validation, not deployed cross-process continuity proof. The
+  separate credential, frozen scope and final authorization remain mandatory.
 - The separate bus entry point records HTTP, native actor spans and lifecycle.
   It remains dispatch-disabled and does not mount backend/provider credentials.
   Provision only its Axiom credential, not the backend's provider env file.
