@@ -266,3 +266,78 @@ no blocking acceptance defect; it did identify a narrow remaining limitation:
 an inspector relationship button can lose keyboard focus when an updated span
 causes its detail subtree to be replaced. Close/Escape row-focus restoration
 passed, but continuous relationship-button focus is not claimed.
+
+## Dashboard and saved-query recreation
+
+The inspected 2026-11-09 native inventory is five dashboards, **zero dataset
+Views**, one saved live stream (`dash`), and the separately linked message-turn
+query. Authenticated native `/api/internal/views` returned an empty list; this
+is not an inference from the connector's unavailable Views API. Dashboard
+organization-only sharing and SAMEORIGIN / CSP self framing do not provide an
+anonymous iframe. Public pages recreate fixed queries, not authentication bypasses:
+
+| Public route                | Inspected Axiom source             | Public panels                                                                                                                                         |
+| --------------------------- | ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/dashboards/health`        | `computah-health`                  | Deduplicated spans/errors, HTTP counts/percentiles, service traffic, structured outcomes and service/revision freshness                               |
+| `/dashboards/delivery`      | `computah-delivery-execution`      | Slack job/delivery/queue attempts, phase durations/outcomes, Task calls, Worker/admission markers, named tool timings                                 |
+| `/dashboards/models`        | `computah-model-usage`             | Terminal logical calls, measured tokens, base-catalog USD estimates, coverage, cache/reasoning subsets, numeric rate provenance                       |
+| `/dashboards/generative-ai` | `genai.computah-prod-traces`       | Native request/error/duration/token populations, modeldb cost rules, per-bin expensive maxima, model reliability/performance/context and tool timings |
+| `/dashboards/traces`        | `otel.traces.computah-prod-traces` | Distinct traces/bin, incoming span rate, mean/error counts, operation percentiles and service → operation filtering                                   |
+| `/dashboards/dash`          | Saved stream `LnGfaFXUkbHU8aH30t`  | `name != computah.logs.export`, name/duration/opaque trace key, existing bounded SSE; declared parent state is additional context                     |
+| `/dashboards/turns`         | Linked query `diUP7Q0H3ks-to6i5y`  | Root Slack ingress + job, excluding control-only traces; per-trace spans/errors/reply-attempt outcomes and opaque stream links                        |
+
+Native numeric panels are represented; Notes/filters are incorporated into page
+descriptions/controls. Raw failure logs, exact native evidence/IDs, full status
+messages, latest errored full records, and Tool arguments/results cannot
+faithfully be made anonymous under the content boundary: their named panel slots
+explicitly remain authenticated with original links. No full-text content or raw
+trace-ID search is offered publicly. The turn query uses a selected rolling range
+instead of its original fixed Nov 7–8 investigation; delivery labels remain span
+proxies, not an actual-answer deadline guarantee.
+
+These are **not** aggregates of the clipped horizon feed. Each panel executes a
+fixed source-controlled query over 30m/1h/24h, aligned to five-minute cache windows,
+with fixed 30s/1m/24m bins. Requests select only allowlisted filters and hexadecimal
+revision prefix. Arbitrary APL/datasets/IDs/duplicate parameters are rejected.
+Unknown grouping labels collapse to `other` before aggregation; this deliberately
+combines unapproved categories rather than exposing identity. Native unranked
+"Top 10" per-bin maxima are labeled accurately, not globally ranked. Native
+GenAI modeldb estimates and terminal runtime-rate estimates stay separate.
+
+One existing Durable Object owns a 64-entry cache, four concurrent aggregate
+queries, 60 starts/minute, eight-second deadline, 512 KiB response bound and
+1,000 projected rows/panel. Success refreshes after five minutes, failure after
+30 seconds; stale rows retain their original window/fetch time. Excess work is
+`busy`, absent configuration `unconfigured`, query failure `unavailable`, partial
+or truncated data `partial`. No result becomes a fake empty successful result.
+An independent positive projection admits only declared scalars, approved
+dimension strings, timestamps, revision hex, bounded numeric histogram buckets
+and existing domain-separated HMAC trace keys. Raw records never reach browsers.
+
+Traces retain the existing traces-only `COMPUTAH_AXIOM_QUERY_TOKEN`. Logs panels
+require the **new optional** `COMPUTAH_AXIOM_DASHBOARD_LOGS_TOKEN`, QueryRead only
+on `computah-prod-logs`; no fallback to traces, ambient, MCP, ingest or org tokens.
+Absent/empty binding fails closed. No metrics permission is required for these
+dashboards. The live `computah-prod-metrics` integration is separate, not an
+invented eighth page. Provisioning, installed-token positive/negative controls
+and preserved-state deployment remain separate acceptance gates.
+
+Aggregate polls inherit the requesting HTTP span and use the same sanitized,
+bounded edge exporter and fixed outcomes (including typed failure/partial).
+The shared bounded runtime-log hook accepts the explicit current edge span without
+requiring a Node OTel context manager. Neither logger activation nor another
+exporter is introduced. Optional edge export remains disabled in the last
+production receipt; browser filter/refresh lifetimes, shared-query secondary-
+caller links and actual visitor-disconnect continuity remain gaps.
+
+Local acceptance executed all 57 fixed aggregate queries against the authorized
+private sources successfully; that research credential is not a Worker binding.
+Seven desktop and Chromium Pixel 7 touch-emulation routes exercised navigation,
+pause/resume, filters, turn-to-stream links and missing-source states with zero
+page-level horizontal overflow or page errors. Rendered chart captures replay
+those real positive-projected aggregates, not an installed production collector;
+the saved stream uses the existing public production SSE. No live dashboard
+deployment or newly provisioned logs credential is implied. lintapple still exits
+nonzero for unresolved contrast over SVG/scroll-clipped tables, the intentional
+offscreen skip link and the pure-black-root false positive; inspected captures
+and interaction checks are separate evidence, not a clean accessibility claim.

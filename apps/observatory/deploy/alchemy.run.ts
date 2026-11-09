@@ -37,6 +37,9 @@ export default Alchemy.Stack(
         COMPUTAH_AXIOM_QUERY_TOKEN: Redacted.make(
           process.env.COMPUTAH_AXIOM_QUERY_TOKEN ?? "",
         ),
+        COMPUTAH_AXIOM_DASHBOARD_LOGS_TOKEN: Redacted.make(
+          process.env.COMPUTAH_AXIOM_DASHBOARD_LOGS_TOKEN ?? "",
+        ),
         PUBLIC_ID_SECRET: Redacted.make(process.env.PUBLIC_ID_SECRET ?? ""),
         COMPUTAH_AXIOM_INGEST_TOKEN: Redacted.make(
           process.env.COMPUTAH_AXIOM_INGEST_TOKEN ?? "",

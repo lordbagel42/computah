@@ -753,3 +753,44 @@ test("redaction registry saturation stops private content without stopping scala
   assert.equal(stats.exported, 1);
   assert.equal(stats.dropped, 1);
 });
+
+test("edge lifecycle logs retain explicit span context without an active context manager", async () => {
+  let payload = "";
+  const logger = createRuntimeLogger({
+    ...config,
+    service: "observatory",
+    fetch: async (_url, init) => {
+      payload = String(init?.body);
+      return new Response("{}");
+    },
+  });
+  const span = {
+    traceId: "1234567890abcdef1234567890abcdef",
+    spanId: "1234567890abcdef",
+    traceFlags: 1,
+  };
+  logger.emit(
+    "operation.completed",
+    { operation: "observatory.poll", outcome: "timeout" },
+    "warn",
+    span,
+  );
+  logger.emit(
+    "operation.completed",
+    { operation: "observatory.http", outcome: "cancelled" },
+    "warn",
+    { ...span, traceId: "0".repeat(32) },
+  );
+  await logger.close();
+  const rows = JSON.parse(payload).resourceLogs[0].scopeLogs[0].logRecords;
+  assert.equal(rows[0].traceId, span.traceId);
+  assert.equal(rows[0].spanId, span.spanId);
+  assert.equal(rows[1].traceId, undefined);
+  assert.equal(rows[1].spanId, undefined);
+  assert.ok(
+    rows[0].attributes.some(
+      (a: { key: string; value: { stringValue: string } }) =>
+        a.key === "outcome" && a.value.stringValue === "timeout",
+    ),
+  );
+});

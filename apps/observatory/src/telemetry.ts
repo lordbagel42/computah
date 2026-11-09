@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { runtimeLog } from "../../../packages/observability/src/logs.ts";
 
 export type SafeSpan = {
   traceId: string;
@@ -51,9 +52,32 @@ export class Telemetry {
     return {
       span,
       end: async (outcome) => {
+        // Reuse the shared bounded logger, with the same edge span context. Its
+        // exporter remains inactive until a separately authorized bootstrap;
+        // this hook does not create a second exporter or reuse query credentials.
+        runtimeLog(
+          "operation.completed",
+          {
+            operation:
+              name === "computah.observatory.poll"
+                ? "observatory.poll"
+                : "observatory.http",
+            outcome:
+              outcome === "not_configured"
+                ? "denied"
+                : outcome === "ready"
+                  ? "success"
+                  : outcome,
+            ...(outcome === "not_configured"
+              ? { reason: "not_configured" as const }
+              : {}),
+          },
+          outcome === "ready" ? "info" : "warn",
+          { traceId: span.traceId, spanId: span.spanId, traceFlags: 1 },
+        );
         span.endTimeUnixNano = String(BigInt(Date.now()) * 1_000_000n);
         span.status = {
-          code: ["error", "timeout", "cancelled"].includes(outcome) ? 2 : 1,
+          code: outcome === "ready" ? 1 : 2,
         };
         span.attributes = [{ key: "outcome", value: { stringValue: outcome } }];
         if (!this.token) return;

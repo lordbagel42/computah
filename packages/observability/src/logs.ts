@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   context,
   isSpanContextValid,
+  type SpanContext,
   SpanStatusCode,
   trace,
 } from "@opentelemetry/api";
@@ -359,6 +360,7 @@ export function createRuntimeLogger(options: {
     fields: RuntimeLogFields,
     level: "info" | "warn" | "error",
     extra: Attribute[] = [],
+    explicitSpan?: SpanContext,
   ): string | undefined {
     if (!enabled || closed) return undefined;
     if (
@@ -407,7 +409,7 @@ export function createRuntimeLogger(options: {
         });
       const logId = randomUUID();
       attributes.push({ key: "log.id", value: { stringValue: logId } });
-      const span = trace.getSpanContext(context.active());
+      const span = explicitSpan ?? trace.getSpanContext(context.active());
       const record: Record = {
         timeUnixNano: (BigInt(Date.now()) * 1_000_000n).toString(),
         severityNumber: level === "error" ? 17 : level === "warn" ? 13 : 9,
@@ -446,13 +448,14 @@ export function createRuntimeLogger(options: {
     event: RuntimeLogEvent,
     fields: RuntimeLogFields = {},
     level: "info" | "warn" | "error" = "info",
+    span?: SpanContext,
   ) {
     // Analytics must go through metric's stricter provenance schema, never the generic hook.
     if (!events.includes(event)) {
       if (enabled && !closed) rejected++;
       return undefined;
     }
-    return enqueue(event, fields, level);
+    return enqueue(event, fields, level, [], span);
   }
 
   function slackReplyLatency(sample: RuntimeSlackReplyLatency): boolean {
@@ -859,8 +862,10 @@ export function runtimeLog(
   event: RuntimeLogEvent,
   fields: RuntimeLogFields = {},
   level: "info" | "warn" | "error" = "info",
+  /** Edge owners without an OTel context manager supply their current span. */
+  span?: SpanContext,
 ) {
-  return runtime?.emit(event, fields, level);
+  return runtime?.emit(event, fields, level, span);
 }
 
 /** Emit one safe scalar observation only after local deduplication and commit. */

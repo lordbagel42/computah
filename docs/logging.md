@@ -55,7 +55,9 @@ and cannot manufacture a `content.record` or analytics sample.
 This is the same bounded queue/exporter and private `computah-prod-logs` dataset,
 not a new exporter or raw stdout sink. Keep its query grants restricted to
 authorized operators; its configured dataset retention applies to content too.
-Do not grant the public observatory credential access to logs. Runtime code does
+Do not grant the public traces credential access to logs. The separately authorized
+dashboard recreation uses a new logs-only QueryRead credential solely behind fixed
+positive aggregate projections; it is never a raw-log proxy. Runtime code does
 not provision permissions/retention or certify their deployed configuration.
 
 OTLP body is fixed `content.record`. Attributes are:

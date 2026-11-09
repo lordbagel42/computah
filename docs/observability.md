@@ -683,3 +683,14 @@ currently verified through Computah's core sanitized Axiom exporter. Browser
 row-expand/reload telemetry and live query-account acceptance remain gaps, not
 claims of complete end-to-end tracing. See the
 [tracker](../integrations/debugshare/README.md) for the read-only account boundary.
+
+The public [dashboard recreations](public-observatory.md#dashboard-and-saved-query-recreation)
+reuse edge HTTP/poll spans for fixed aggregate queries, explicit failure/partial
+outcomes, bounded retries and sanitized exports. Their shared runtime-log hook
+passes the edge span explicitly (same logger/schema/queue, no competing exporter);
+default Node callers still capture active OTel context. Local tests cover
+parent/outcome/failure/cancellation export and explicit log context. Edge logger
+bootstrap and optional trace emitter remain disabled/unproved in production;
+these source hooks are not live Axiom ingestion evidence. Browser filters/pause/
+refresh and secondary shared-query caller links are not instrumented;
+cancellation of one visitor does not cancel a shared query.

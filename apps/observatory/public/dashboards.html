@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="Computah's public dashboard and saved-stream recreations. Bounded production aggregates, with explicit coverage and private-content boundaries." />
+    <title>Dashboards — Computah Observatory</title>
+    <link rel="preload" href="/fonts/geist.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/dashboards.css" />
+    <script src="/dashboards.js" defer></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to dashboard</a>
+    <header><a class="wordmark" href="/"><b>computah</b><span>observatory</span></a><a href="/">Trace horizon</a><span id="connection" role="status">Loading dashboard</span></header>
+    <nav id="pages" aria-label="Dashboards and saved views"></nav>
+    <main id="main" tabindex="-1">
+      <div class="heading"><h1 id="title">Dashboards</h1><button id="pause" type="button" aria-pressed="false">Pause refresh</button></div>
+      <p id="description" class="description">Reading the public dashboard definition.</p>
+      <form id="filters" aria-label="Dashboard filters"></form>
+      <p id="coverage" class="coverage" role="status">Aggregates query their selected window, not the clipped trace feed. No private messages or credentials are exposed.</p>
+      <section id="panels" class="panels" aria-label="Dashboard panels"></section>
+      <footer><p>Five native dashboards · one saved stream · one linked turn query. Native dataset Views inventory: empty, checked 9 Nov 2026.</p><p>Public dimensions are allowlisted; unknown labels group as other. Native trace-ID/content search and private evidence slots remain authenticated. Aggregates refresh every five minutes with shared caching; source ingestion may lag. Empty and unavailable are different states.</p><a href="/">Return to the live trace horizon</a></footer>
+    </main>
+    <noscript>JavaScript is required to load these live dashboards. No fallback sample data is shown.</noscript>
+  </body>
+</html>

@@ -2,6 +2,9 @@
   "name": "@computah/observatory",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "@computah/observability": "workspace:*"
+  },
   "scripts": {
     "test": "tsx --test test/*.test.ts",
     "typecheck": "tsc --ignoreConfig --noEmit --strict --skipLibCheck --types node --target es2023 --module nodenext --allowImportingTsExtensions src/projection.ts src/collector.ts test/*.ts"
