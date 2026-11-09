@@ -49,6 +49,14 @@ dispose the caller's client separately. Actor recovery uses a private client,
 independent of gateway/browser attachment or lifetime. Preserve the secret and
 Rivet storage when reopening. Do not run two owners against the same storage.
 
+The backend executable additionally supervises its SDK-owned embedded engine via
+the configured engine health endpoint, not the Node-only registry health route.
+Loss or a bounded probe failure fences new HTTP/Gmail admissions and drains the
+whole owner before nonzero exit for external supervision. It does not restart a
+fenced child in place, rewrite durable identities, replay a receipt, or interpret
+disconnection as cancellation. Remote-registry lifecycle behavior is unchanged;
+see [operations](operations.md) for detection and shutdown bounds.
+
 Pi owns the transcript, generation, tools and checkpoints. Rivet owns actor
 identity/SQLite/lifecycle. Effect wraps application calls with typed failure
 categories and content-free spans; it is not a second durable workflow engine.

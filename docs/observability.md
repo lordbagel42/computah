@@ -1,5 +1,19 @@
 # Axiom observability
 
+Embedded-engine supervision uses fixed `lifecycle` phases `engine_health` and
+`engine_watch`. Poll probes are children of the watch lifetime; a detected failure
+invokes shared shutdown within the failing probe's context, linking drain spans.
+Initial probe failures use that same fatal path. Normal watch/active-probe shutdown
+is cancelled rather than failed; dependency failures remain errors even when
+shutdown aborts the watcher. The shared logger emits linked lifecycle completion
+outcomes; fatal-drain deadline expiry emits a fixed timeout lifecycle outcome
+before exit (best effort: forced exit cannot guarantee exporter flush).
+Endpoint credentials, response bodies and native exceptions are never attached.
+Local intercepted sanitized Axiom export checks cover failure/cancellation and
+ancestry. These checks are not enabled production collection, installed adoption,
+or live Axiom ingestion evidence. Responsive engine health cannot establish
+complete actor/coordinator health or explain the trigger for a native lease lapse.
+
 DEBUGSHARE correlation accepts exact `computah_bug_[a-z0-9]{24}` IDs and legacy
 lowercase UUIDv4 IDs through the shared bounded validator. Only this opaque key
 passes the capture attribute allowlist; issue bodies do not. The public

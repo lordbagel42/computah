@@ -83,6 +83,20 @@ HTTP attempt), polled every 100 ms. This detects readiness sooner; it does not
 make the underlying engine start faster. No public traffic proxy or new platform
 is introduced. Connections go directly to the single loopback listener.
 
+For an SDK-owned embedded engine, startup also checks its configured `/health`
+endpoint. RivetKit 3.0.6's registry health route only describes the Node runtime:
+it can remain green after native lease fencing and engine exit. The backend
+checks the engine again one second after each completed probe, with a two-second
+request deadline and no redirects/retries. A failed probe immediately fences
+HTTP readiness/admissions and Gmail binding, then uses the shared drain and exits
+with code `1`. A 45-second fatal-drain deadline bounds a stuck native shutdown.
+The existing container `unless-stopped` restart policy owns whole-process recovery;
+no child respawn, identity changes, receipt replay or cancellation inference is
+added. Detection can take up to roughly three seconds; this is not atomic
+protection for already-admitted requests or proof of actor/coordinator health
+while the engine listener remains responsive. Remote endpoints retain their prior
+lifecycle contract and are not checked using an unverified `/health` route.
+
 Shutdown shares one promise across signals and startup errors, fences new HTTP
 admissions and waits for startup before closing the registry. Existing HTTP/SSE
 connections have the existing five-second close window; native registry shutdown

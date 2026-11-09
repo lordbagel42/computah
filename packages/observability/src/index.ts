@@ -246,6 +246,8 @@ const categories = new Set([
   "models",
   "registry",
   "listener",
+  "engine_health",
+  "engine_watch",
   "http_drain",
   "registry_drain",
   "client_drain",

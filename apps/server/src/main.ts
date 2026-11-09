@@ -11,6 +11,7 @@ import {
   traceEvent,
   traceHttp,
   traceLifecycle,
+  traceOperation,
 } from "@computah/observability";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
@@ -23,6 +24,7 @@ import {
   createCore,
   type Scope,
 } from "./core.js";
+import { watchEngine } from "./engine-health.js";
 import { createGmailRuntime, gmailConfig } from "./gmail-runtime.js";
 import { closeHttp, createHttpServer } from "./http.js";
 import { priorityModels } from "./model-policy.js";
@@ -108,7 +110,8 @@ async function main() {
           );
         },
         bind: (scope) => {
-          if (!bind) throw new Error("Runtime unavailable");
+          if (!bind || stopping || (engine && !engine.ready()))
+            throw new Error("Runtime unavailable");
           return bind(scope);
         },
       })
@@ -174,10 +177,13 @@ async function main() {
   let http: ReturnType<typeof createHttpServer> | undefined;
   let startup: Promise<void> | undefined;
   let stopping: Promise<void> | undefined;
+  let engine: Awaited<ReturnType<typeof watchEngine>> | undefined;
+  let failed = false;
   const stop = () =>
     (stopping ??= (async () => {
       // Do not race native startup/HTTP listen against storage shutdown.
       await startup?.catch(() => {});
+      await engine?.close();
       const server = http;
       if (server?.listening)
         await traceLifecycle("http_drain", () => closeHttp(server));
@@ -190,9 +196,22 @@ async function main() {
     })());
   const shutdown = () => {
     void stop().then(
-      () => process.exit(0),
+      () => process.exit(failed ? 1 : 0),
       () => process.exit(1),
     );
+  };
+  const engineFailed = () => {
+    if (stopping || failed) return;
+    failed = true;
+    // Native self-fencing is authoritative: never respawn a child in place.
+    // Bound a broken native drain inside the supervisor's 60-second budget.
+    setTimeout(() => {
+      void traceOperation("lifecycle", async (span) => {
+        span.setAttributes({ phase: "engine_watch", outcome: "timeout" });
+        console.error("computah.lifecycle phase=engine_watch outcome=timeout");
+      }).finally(() => process.exit(1));
+    }, 45_000).unref();
+    shutdown();
   };
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);
@@ -204,6 +223,10 @@ async function main() {
     await traceLifecycle("registry", () => core.registry.startAndWait());
     if (stopping) return;
     const runtime = core.registry.parseConfig();
+    // Remote endpoints retain their existing lifecycle contract. This watcher
+    // only supervises the native engine owned by this registry/process.
+    if (runtime.engineSpawn) engine = await watchEngine(runtime, engineFailed);
+    if (stopping) return;
     client = createClient<typeof core.registry>({
       endpoint: runtime.endpoint,
       namespace: runtime.namespace,
@@ -226,7 +249,7 @@ async function main() {
       bind,
       gmail,
       revision: process.env.COMPUTAH_REVISION,
-      ready: () => !stopping,
+      ready: () => !stopping && (!engine || engine.ready()),
     });
     traceHttp(http);
     await traceLifecycle(
