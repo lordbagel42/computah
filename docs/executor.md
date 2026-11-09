@@ -76,6 +76,8 @@ untrusted, not permission, executable instructions or evidence an app can run.
 Unavailable results use only fixed codes: `denied`, `not_configured`,
 `invalid_input`, `authorization_required`, `capacity`, `cancelled`, `timeout`,
 `transport`, `provider_error`, `invalid_response`, `response_too_large`.
+The Pi Durable tool result sets native `isError: true` for every unavailable
+result and `false` for ready catalogs; the bounded JSON output is preserved.
 No raw exception, credential, provider error body or stderr is checkpointed.
 Known PAT echoes fail closed before disclosure; this is not a universal scrubber
 for secrets an upstream app improperly embeds in catalog content.

@@ -533,6 +533,7 @@ async function exerciseWorker(context: TestContext) {
     models: [model],
   });
   const observed: unknown[] = [];
+  const nativeErrors: boolean[] = [];
   let grant = true;
   const core = createCore({
     connectionSecret: "a".repeat(64),
@@ -559,6 +560,7 @@ async function exerciseWorker(context: TestContext) {
             { stopReason: "toolUse" },
           );
           if (last?.role === "toolResult") {
+            nativeErrors.push(last.isError);
             const evidence = JSON.parse(
               last.content
                 .filter((p) => p.type === "text")
@@ -595,6 +597,7 @@ async function exerciseWorker(context: TestContext) {
     const first = await session.submit(worker, "discover", "first");
     await session.wait(worker, first.submissionId);
     expect(observed).toHaveLength(3);
+    expect(nativeErrors).toEqual([false, false, false]);
     expect(remote.calls.map((c) => c.name)).toEqual([
       "skills",
       "search",
@@ -605,6 +608,7 @@ async function exerciseWorker(context: TestContext) {
     const second = await session.submit(worker, "discover", "revoked");
     await session.wait(worker, second.submissionId);
     expect(observed.at(-1)).toMatchObject({ code: "denied" });
+    expect(nativeErrors.at(-1)).toBe(true);
     expect(remote.calls).toHaveLength(3);
     expect(JSON.stringify(await session.history(worker))).not.toContain(pat);
   } finally {

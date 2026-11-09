@@ -402,6 +402,7 @@ export function createExecutorExtension(options: {
         () => options.current(api, context),
       );
       return {
+        isError: result.status !== "ready",
         output: [{ type: "text" as const, text: JSON.stringify(result) }],
       };
     });
