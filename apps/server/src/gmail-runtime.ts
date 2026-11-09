@@ -120,6 +120,8 @@ export function createGmailRuntime(options: {
         stop.signal,
       );
       await current();
+      if (result.submission.status === "unanswered")
+        throw new GmailError("unanswered");
       if (result.submission.status !== "done") throw new GmailError("provider");
       return projectMessages(result.entries)
         .flatMap((message) =>

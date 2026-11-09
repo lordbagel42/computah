@@ -34,7 +34,14 @@ export interface GmailHistoryPage {
   changed: string[];
 }
 export class GmailError extends Error {
-  constructor(readonly code: "denied" | "invalid" | "provider" | "conflict") {
+  constructor(
+    readonly code:
+      | "denied"
+      | "invalid"
+      | "provider"
+      | "conflict"
+      | "unanswered",
+  ) {
     super(`Gmail ${code}`);
   }
 }
@@ -460,7 +467,7 @@ interface ReceiptRow {
   coverage: string | null;
   frozen: string | null;
   draft: string | null;
-  status: "pending" | "done" | "ignored" | "revoked";
+  status: "pending" | "done" | "ignored" | "revoked" | "failed";
 }
 
 /** One private persistent ingress journal, not an agent runtime/transcript engine.
@@ -483,7 +490,8 @@ export class GmailIngress {
       /** MUST enforce the same binding/version at native generation/retry, not only submit.
        * Submit to this scope's Interaction; only Interaction chooses Workers via Task.
        * Stable receipt is the native admission mutation ID. Returns final Interaction text.
-       * On replay, reuse/reconcile the same submission; never create a fresh request. */
+       * On replay, reuse/reconcile the same submission; never create a fresh request.
+       * Throw GmailError('unanswered') for a confirmed terminal native result. */
       run(
         work: Readonly<GmailWork>,
         current: () => Promise<void>,
@@ -1161,7 +1169,8 @@ export class GmailIngress {
       throw error;
     }
   }
-  /** Restart drain; rejected/ambiguous attempts stay pending under the SAME mutation ID. */
+  /** Restart drain; ambiguous attempts stay pending under the SAME mutation ID.
+   * Confirmed unanswered submissions fail terminally without replay or a draft. */
   async drainOne() {
     const rows = this.#db
       .prepare(
@@ -1315,10 +1324,15 @@ export class GmailIngress {
         .run(JSON.stringify(draft), row.id);
       return row.id;
     } catch (error) {
-      if (error instanceof GmailError && error.code === "denied")
+      if (
+        error instanceof GmailError &&
+        (error.code === "denied" || error.code === "unanswered")
+      )
         this.#db
-          .prepare("UPDATE gmail_receipts SET status='revoked' WHERE id=?")
-          .run(row.id);
+          .prepare(
+            "UPDATE gmail_receipts SET status=? WHERE id=? AND status='pending'",
+          )
+          .run(error.code === "denied" ? "revoked" : "failed", row.id);
       throw error;
     } finally {
       this.#busy.delete(row.id);
@@ -1424,7 +1438,17 @@ export class GmailIngress {
         "SELECT count(*) AS count FROM gmail_receipts WHERE handle=? AND version=? AND status='pending'",
       )
       .get(handle, binding.version)?.count;
-    return { indexed: Number(indexed), pending: Number(pending), coverage };
+    const failed = this.#db
+      .prepare(
+        "SELECT count(*) AS count FROM gmail_receipts WHERE handle=? AND version=? AND status='failed'",
+      )
+      .get(handle, binding.version)?.count;
+    return {
+      indexed: Number(indexed),
+      pending: Number(pending),
+      failed: Number(failed),
+      coverage,
+    };
   }
   async disconnect(scope: Scope, handle: string) {
     const binding = this.#binding(handle);

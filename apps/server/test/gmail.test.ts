@@ -278,6 +278,53 @@ test("signed ingress commits before return, rejects routing/signature/replay err
   );
 });
 
+test("terminal unanswered receipts survive restart without replay and cannot starve history or later live work", async () => {
+  const calls: string[] = [];
+  const f = fixture(async (work, current) => {
+    await current();
+    calls.push(work.receipt);
+    if (calls.length <= 2) throw new GmailError("unanswered");
+    return "A later successful local reply";
+  });
+  const a = await f.connect();
+  const base = f.messages.get("a1") as GmailMessage;
+  f.messages.set("b2", { ...base, id: "b2" });
+  f.messages.set("c3", { ...base, id: "c3" });
+  await f.ingress.startImport(alice, a.handle, 0, now);
+  await f.ingress.importPage(alice, a.handle);
+  await accept(f.ingress, event(a));
+  await accept(f.ingress, event(a, "b2", "second"));
+  await expect(f.ingress.drainOne()).rejects.toThrow("Gmail unanswered");
+  f.restart();
+  // Repeated provider delivery must not promote a failed receipt back to pending.
+  await accept(f.ingress, event(a, "a1", "redelivered"));
+  await expect(f.ingress.drainOne()).rejects.toThrow("Gmail unanswered");
+  expect(new Set(calls).size).toBe(2);
+  expect(await f.ingress.progress(alice, a.handle)).toMatchObject({
+    failed: 2,
+    pending: 1,
+    indexed: 2,
+  });
+  await f.ingress.drainOne();
+  expect(await f.ingress.drafts(alice, a.handle)).toEqual([]);
+  expect(calls).toHaveLength(2);
+  f.messages.set("d4", { ...base, id: "d4" });
+  await accept(f.ingress, event(a, "d4", "later"));
+  await f.ingress.drainOne();
+  f.restart();
+  expect(await f.ingress.drainOne()).toBeNull();
+  expect(calls).toHaveLength(3);
+  expect(await f.ingress.progress(alice, a.handle)).toMatchObject({
+    failed: 2,
+    pending: 0,
+    indexed: 4,
+  });
+  expect(await f.ingress.drafts(alice, a.handle)).toMatchObject([
+    { state: "UNSENT LOCAL DRAFT", source: { messageId: "d4" } },
+  ]);
+  await expect(f.ingress.progress(bob, a.handle)).rejects.toThrow("denied");
+});
+
 test("bounded import shares live dedup, preserves frozen retry input and enforces exact half-open coverage with live enabled", async () => {
   const f = fixture();
   const a = await f.connect();

@@ -116,6 +116,16 @@ inbox receipts pass a stable mutation ID, audience and grant version to `run`.
 to delegate through Task.** The adapter does not select a Worker. Incoming mail is
 untrusted evidence, not policy, tool authorization or a new system instruction.
 
+The runtime distinguishes native terminal `unanswered` from ambiguous/provider
+failures. A confirmed unanswered result throws categorical `GmailError('unanswered')`;
+the ingress persists that receipt as `failed`, emits the existing drain failure
+span/log and never manufactures a draft or retries it. Its frozen evidence,
+trace carrier and original admission ID remain unchanged. Re-delivery and restart
+do not rearm failed receipts. Ambiguous failures still retain `pending` and retry
+the same admission ID; denied access retains the existing revoked disposition.
+Failed live receipts therefore cannot indefinitely block historical drain. This
+does not explain why native execution was unanswered or authorize a reset/replay.
+
 The returned Interaction text is stored with source IDs and audience under the
 human-visible `UNSENT LOCAL DRAFT` state. Reads of drafts and sources require current
 account authorization. This local output projection is not provider email egress
@@ -261,7 +271,9 @@ public listener, TLS route, webhook registration or OAuth grant change is needed
 for GET-only provider history polling. The signed webhook simulator remains
 available locally but is not an activated production route.
 
-Authenticated `GET /v1/gmail/status` returns coverage/indexed/pending counters.
+Authenticated `GET /v1/gmail/status` returns coverage/indexed/pending/failed counters.
+`pending` combines unprocessed historical and live receipts, not native Tasks;
+`failed` counts current-generation terminal unanswered receipts, not drafts.
 `GET /v1/gmail/drafts` returns current-authorized UNSENT local drafts. Both require
 `history.read`, use only the bearer-bound scope and reject query parameters; they
 accept no account/grant selection. The native `gmail_read({query})` tool is offered
