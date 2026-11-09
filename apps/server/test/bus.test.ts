@@ -46,6 +46,53 @@ async function freePort() {
   return port;
 }
 
+async function stopBusProcess(child: ChildProcess, timeoutMs = 15000) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = once(child, "exit");
+  const timeout = new AbortController();
+  try {
+    child.kill("SIGTERM");
+    const result = await Promise.race([
+      exited,
+      delay(timeoutMs, null, { signal: timeout.signal }),
+    ]);
+    if (result === null) {
+      child.kill("SIGKILL");
+      await exited;
+      throw new Error("Bus shutdown timeout");
+    }
+    expect(result[0]).toBe(0);
+  } finally {
+    timeout.abort();
+  }
+}
+
+test("standalone fixture reaps a child that cannot finish shutdown", async () => {
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      'process.on("SIGTERM", () => {}); process.send("ready"); setInterval(() => {}, 1000);',
+    ],
+    { stdio: ["ignore", "ignore", "ignore", "ipc"] },
+  );
+  try {
+    await once(child, "message");
+    await expect(stopBusProcess(child, 30)).rejects.toThrow(
+      "Bus shutdown timeout",
+    );
+    expect(child.signalCode).toBe("SIGKILL");
+    expect(() => process.kill(child.pid as number, 0)).toThrow(/ESRCH/);
+    await stopBusProcess(child, 30);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, "exit");
+      child.kill("SIGKILL");
+      await exited;
+    }
+  }
+});
+
 test("standalone bus-only process persists receipts and actual Durable Streams replay, reconnect, dedup and audience isolation across restart", async () => {
   const home = await mkdtemp(join(tmpdir(), "computah-bus-process-"));
   const port = await freePort();
@@ -128,16 +175,7 @@ test("standalone bus-only process persists receipts and actual Durable Streams r
     throw new Error(`Bus readiness timeout: ${output.slice(-1500)}`);
   };
   const stop = async () => {
-    if (!processHandle || processHandle.exitCode !== null) return;
-    const exited = once(processHandle, "exit");
-    processHandle.kill("SIGTERM");
-    const result = await Promise.race([
-      exited,
-      delay(15000).then(() => {
-        throw new Error("Bus shutdown timeout");
-      }),
-    ]);
-    expect(result[0]).toBe(0);
+    if (processHandle) await stopBusProcess(processHandle);
   };
   const request = (path: string, token = aliceToken, init: RequestInit = {}) =>
     fetch(`${base}${path}`, {
@@ -290,9 +328,16 @@ test("standalone bus-only process persists receipts and actual Durable Streams r
       { version: 1, receipt: third, text: null },
     ]);
     expect(output).not.toContain("Forbidden model-runtime import");
+  } catch (error) {
+    // stop reaps before rejecting; retain the original readiness/assertion error.
+    await stop().catch(() => {});
+    throw error;
   } finally {
-    await stop();
-    await rm(home, { recursive: true, force: true });
+    try {
+      await stop();
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   }
 }, 120000);
 

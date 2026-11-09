@@ -32,6 +32,13 @@ runtime verification. `pnpm test` includes real Rivet/Pi SQLite tests with an
 in-process faux model, no account credentials. Actor sleep/wake and registry reopen
 are covered, not abrupt process death. Rune rendered/input checks remain separate.
 
+The managed native test engine requires at least 4 GiB free on its data filesystem
+at startup; leave additional headroom for concurrent test stores. Below that limit
+the engine rejects startup, not merely readiness. Check its stderr under the
+isolated test HOME's `.rivetkit/var/logs/rivet-engine/` before diagnosing a shutdown
+timeout. The standalone bus fixture force-kills and reaps a child that exceeds its
+unchanged shutdown deadline; teardown failures do not replace the original test error.
+
 The [Rune experiment](rune-pi.md) is an isolated Cargo workspace, not included in
 root pnpm tests. From `experiments/rune-pi` use Rust 1.99.1 and run `cargo fmt --check`,
 `cargo clippy --locked --all-targets -- -D warnings` and `cargo test --locked`.
