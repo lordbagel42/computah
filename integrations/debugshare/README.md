@@ -1,165 +1,199 @@
-# Computah issues — Executor app
+# Computah Debug
 
-Internal authenticated issue tracker, not a public sharing site. Executor owns
-browser/MCP authentication, app access and SQLite. App access is the operator
-boundary: grant this app only to operators allowed to see every captured scope
-in it; it is not a general multi-tenant customer portal. Do not publish its source
-as a public Executor app listing. Source in this repository contains no reports.
+Internal authenticated issue explorer targeting `https://debug.raygen.dev`.
+The SvelteKit/Cloudflare implementation replaces Executor hosting, **not** the
+private operator boundary. DNS publication does not publish reports. The previous
+Executor tracker remains intact at `https://computah-issues.raygen.executor.website`.
+Source implementation and synthetic checks are not migration/deployment acceptance.
 
-Multi-user uploads require the capture subscription's optional `enrollment` policy
-(`deniedUserIds`, `ownerSlackUserId`) to match the adapter's protected workspace
-policy; all Slack-delivered conversations are eligible without a channel list.
-Scope is independently derived from exact requester/channel,
-never accepted by tenant prefix alone. The legacy configured owner scope is then
-accepted only for the verified owner's DM. Existing deployments do not acquire
-this policy from source publication; unsupported reports remain local. See the
-[Slack identity contract](../../docs/slack-multiuser.md).
+## Authority
 
-Actual bounded Slack messages and participant/location/core-scope details are
-shown, with observed submission handles, activity, explicit missing evidence and
-revision-checked investigation state. No hidden model reasoning is available.
-Native actor/task/trace identifiers are not guessed from a timestamp or UUID.
-Optional `transport` records the command's actual durable receive request/trace/span
-IDs; it is not a core submission. Optional `capture` records the actual capture
-span's trace/span IDs. Older reports without these fields remain valid. Capture
-spans carry the internal queryable `computah.debugshare.id`; the public observatory
-projection excludes that attribute and remaps trace/span identities.
+Better Auth uses email/password (minimum **8**, no complexity rules), its default
+password hashing, eight-hour database sessions, secure HttpOnly host-only Strict
+cookies, database-backed login rate limits and origin/CSRF checks. Public signup
+is disabled. A session alone grants nothing: an enabled `operator_grants` row is
+required on every issue read or mutation. Provision only operators entitled to
+**all** captured scopes; this is not a self-service multi-tenant portal. Report
+requester, workspace, private/channel audience and actor scope remain evidence,
+not browser-supplied authority. Declared event actor/assignee is attribution,
+not an authenticated identity claim.
 
-The issue page's **Correlation** panel opens recorded capture and Slack transport
-trace IDs in the private `bagel-w3ue` Axiom organization: spans in
-`computah-prod-traces`, logs in `computah-prod-logs`, each span by `span_id`, and
-"Open in Axiom" for capture spans tagged with the issue ID. All links come from
-`ui/axiom.ts` (exact validated IDs only; synthetic reports get none). These are
-the diagnostic command's traces, not guessed correlations to an earlier reported
-conversation. The links select the exact validated nonzero trace ID and a bounded
-window one day before/after report time. Widen Axiom's time range for delayed
-capture; retention may remove old spans. Click a trace ID in the results to open
-the native waterfall. Missing correlations remain explicit for legacy reports.
-The **Traces** panel queries live spans server-side and renders their actual timing,
-parent hierarchy, errors and expandable fields. It is not an iframe: Axiom blocks
-cross-origin embedding. The small standalone renderer follows the shared-axis
-pattern used by [assistant-ui](https://www.assistant-ui.com/elements/trace-waterfall);
-Jaeger's [standalone React extraction](https://github.com/jaegertracing/grafana-plugin/blob/main/docs/adr/0001-jaeger-ui-in-grafana.md)
-is a proposal rather than a package we can drop in. No third-party viewer code or
-new UI dependency is bundled.
+Initial owner creation uses `/api/bootstrap`: same-origin JSON POST with a
+separate private `BOOTSTRAP_TOKEN` bearer and `{email,name,password}`. The singleton
+claim pins the first email; completion disables reuse. An interrupted creation
+can resume only with that same email and correct password. No default account or
+password exists. Enter credentials only through the private setup flow, never
+chat/Git. Revoke the bootstrap secret once the owner is verified. An existing
+protected account database must not be reset to repeat bootstrap.
 
-Connect exactly one `traces` app account through Executor's private account form,
-using a read-only Axiom API token restricted to `computah-prod-traces`. The token
-is an opaque credential handle, restricted to the HTTPS Axiom API authorization
-header; it never reaches browser code, reports or query results. An empty account
-collection leaves the rest of the tracker available and shows setup guidance.
-This grants the tracker's authorized operators access to the selected traces,
-including retained span fields; app access remains the operator boundary.
+Credentials are separate and deny-by-default:
 
-`getIssueTrace({id,correlation})` accepts only `capture` or `transport` for a stored
-issue. It does not accept raw trace IDs, datasets or APL from the browser. Reads
-are one-shot, manually reloadable, cancelled with the Executor invocation, and
-bounded to 15 seconds, 2 MB and 500 spans. Partial responses and missing parents
-are visible; duplicate span IDs are coalesced. Missing/expired spans and query
-failures do not remove the conversation snapshot. The full Axiom links remain.
-No public observatory projection or private-content telemetry policy is changed.
+| Credential                         | Authority                                           |
+| ---------------------------------- | --------------------------------------------------- |
+| Operator session + enabled grant   | Explorer and bounded operator APIs                  |
+| OAuth access token + enabled grant | MCP only, within consented scopes                   |
+| `AGENT_MCP_TOKEN`                  | Explicit all-scopes operator automation on MCP only |
+| `CAPTURE_SIGNING_SECRET`           | Signed capture only; no read permission             |
+| `NOTICE_TOKEN`                     | Notice scalar read/ACK only; no report bodies       |
+| `MIGRATION_TOKEN`                  | Bounded backup/import only; revoke after cutover    |
+| Callback capability URL            | Fixed outbound coordinator destination only         |
+| `AXIOM_TRACE_READ_TOKEN`           | Private read-only trace query, never exported       |
+| `AXIOM_TELEMETRY_TOKEN`            | Sanitized trace/log ingest, never query authority   |
 
-## Hosting and setup
+## Capture and notification
 
-Deploy these files through Executor appManagement.create/deploy, using exactly
-apps@0.0.1-beta.122. This integration is deliberately outside the pnpm workspace:
-it is built by Executor, not the Computah Docker image. Do not send node_modules,
-README or local verification files as UI assets. Keep the immutable migrations.
-Include `ids.ts`: this tracked symlink points to the canonical pure contract in
-`packages/contracts/src/debugshare.ts`. Materialize its UTF-8 contents in the
-Executor source snapshot (not the symlink target path). Slack and telemetry import
-the same contract; the standalone app needs no workspace dependency or Node crypto.
+`POST /api/capture` receives the original UTF-8 JSON bytes, at most 450,000 bytes.
+`CAPTURE_ENABLED` remains false (503) until source import reconciliation succeeds;
+the host retains pending captures and their original IDs during this gate.
+`x-computah-timestamp` is a 13-digit epoch-millisecond timestamp (±5 minutes);
+`x-computah-signature` is lowercase hex HMAC-SHA256 of `${timestamp}.${body}`.
+Protected `CAPTURE_POLICY` must include exact workspace/core scope and enrollment
+policy. Scope derives independently from requester/channel; denied users, wrong
+workspaces and forged private/channel scopes fail. HMAC authenticates the trusted
+adapter's assertions, not arbitrary Internet users' Slack membership.
 
-The `sources` app-account collection is optional for UI/MCP operation. Connect a
-source reference (a non-secret deployment label) to enable its `capture` manual
-webhook. The generated webhook secret is shown only in Executor's private setup
-page; transfer it directly into the protected runtime env, never chat or Git.
-Pin subscription config to the exact trusted team/tenantId/userId/agentId.
-The hosted `webhooks.configureSource` config is keyed by handler:
-`{capture:{team,tenantId,userId,agentId}}`, not the scope object alone.
-One subscription signs uploads for that scope; it grants no read/status authority.
-Separate scopes need separately pinned subscriptions and runtime routing.
+Issue and notice persist in one SQLite Durable Object transaction. Original IDs,
+immutable snapshots and successful `{id}` replies remain compatible with the
+Slack adapter's durable local pending captures. Exact retries do not append extra
+events; conflicting snapshots never overwrite. Missing legacy captures cannot be
+fabricated. Configure the protected runtime's ingest/report URLs and signing
+secret together; keep pending report IDs unchanged.
 
-Runtime variables and signing are documented in [Slack capture](../../docs/slack.md#durable-debugshare-capture).
-New IDs are `computah_bug_` plus exactly 24 cryptographically random lowercase
-alphanumeric characters. The shared validator also accepts existing lowercase
-UUIDv4 reports unchanged, without a migration or backfill. Event IDs are separate.
-Report URLs are the actual authenticated app URL with `#<id>`. A source-local
-pending report is not a hosted report and does not get a fabricated link.
+Notice dispatch is **at least once**, not exactly once. The fixed HTTPS callback
+gets exactly `{id,version:1}` and `Idempotency-Key: debugshare:<id>:v1`, after commit.
+No report text travels in the callback. Redirects are disabled, response bodies
+discarded, requests time out, and batches cap at ten. Pending/accepted/acknowledged
+state and retry deadlines are durable. Alarms are armed before commit and I/O,
+respect earlier outstanding wakes and recover on eviction. Accepted means queued,
+not notification completion; unacknowledged accepted notices retry with the same
+key and bounded exponential backoff. No timer/cron polling is needed.
 
-## Tools and lifecycle
+The receiver authenticates these fixed narrow endpoints:
 
-- `listIssues({})`: latest 100 summaries, newest update first.
-- `getIssue({id})`: exact immutable snapshot plus up to 200 earliest history
-  entries. Older identifier-only UUIDs truthfully return not found.
-- `explore({})`: explorer index. Up to 500 newest-updated issues with metadata
-  extracted by SQL from the stored snapshot (source, scope, trace/span IDs,
-  participants, submission handles, counts, latest event), the 500 newest
-  history events and table totals.
-- `search({text,author,channel,submission,trace,actor})`: case-insensitive text
-  over IDs, titles, assignees, full snapshot JSON and notes, plus exact entity
-  filters. Messages are deduplicated across overlapping snapshots (max 200).
-- `inspectIssue({id})`: `getIssue` plus stored byte size, SHA-256 of the stored
-  snapshot and related issues with explicit reasons (same conversation, shared
-  messages or submission handles, same trace, exact ID mentions).
-- `receiveIssue(report)`: authorized operator import. Exact duplicate is
-  idempotent; conflicting snapshot for an existing issue ID is rejected.
-- `updateIssue({id,expectedRevision,status,assignee,actor,note})`: authenticated
-  agent/operator update. States: open, investigating, blocked, resolved; reopening
-  is explicit by setting open. Every change appends a timestamped evidence note.
-  Stale revisions fail without overwriting another writer. Actor/assignee names
-  are declared attribution, not proof of authenticated identity; Executor audits
-  caller access separately. A resolved state is not proof of a deployed repair.
+- `GET /api/issue-notices/:id`
+- `POST /api/issue-notices/:id/ack`
 
-Credentials must be redacted at capture. The app is not a universal secret
-scanner; authorized imports and evidence notes must not contain credentials.
-HMAC delivery checks raw bytes and timestamp, validates bounded schema and source
-scope, then commits before returning `{id}`. Retries cannot overwrite snapshots.
+Both return `{issue:<exact scalar ID>,version:1,acknowledged:""|ISOtimestamp}`.
+ACK is idempotent and must return a nonempty timestamp. Reads join a real issue
+and notice. The token can ACK any identifiable eligible notice deployment-wide;
+it cannot create reports, mutate issue state or query MCP. The dedicated receiver
+owns append intent/reconciliation and coordinator deduplication. Operator-only
+`POST /api/reconcile` accepts at most 20 exact IDs; it cannot release migrated
+historical notifications. Delivery stays disabled until the receiver's readiness
+receipt, then requires an isolated synthetic delivery/duplicate/ACK proof.
 
-## Explorer UI
+## Remote MCP
 
-A dark Axiom-style React SPA using shadcn/ui-pattern components (Radix Slot and
-Tooltip, lucide, Geist), built by Executor with its built-in Tailwind v4.
-Executor's browser build fails on `cmdk`, `@radix-ui/react-dialog` and
-`@fontsource` imports, so the palette and mobile drawer use the native
-`<dialog>` element and the Geist fonts (OFL) are served from `ui/public/fonts`.
-Routes are hash
-fragments so existing `#<issue id>` links keep working; `#<id>/<section>` and
-`#<id>/m/<slack ts>` deep-link to a section or a captured message. Other routes:
-`#/issues`, `#/activity`, `#/search/<text>`, `#/tables/<table>` and entity pages
-`#/people|channels|traces|submissions|actors[/<value>]`. `/` or ⌘K opens a
-jump/search palette; `j`/`k` move through issues.
+Streamable HTTP endpoint: `https://debug.raygen.dev/mcp`, using the official MCP
+SDK, stateless JSON responses, authenticated POST requests and standard OAuth
+protected-resource/authorization-server discovery. Better Auth's OAuth provider
+supports dynamic registration and PKCE consent. OAuth tokens must have the exact
+MCP audience and an enabled operator subject. Scopes are `issues:read`,
+`issues:write`, `traces:read`; filters and payload IDs never broaden authority.
 
-Every identifier in stored text becomes a destination: issue IDs, Slack user and
-conversation IDs, trace and span IDs, Computah commit SHAs, Amp thread IDs and
-URLs. Axiom links are query URLs over `computah-prod-traces`/`-logs` (sign-in
-required); Slack links use `slack://` and `app_redirect` with team and channel.
-Slack message permalinks need `chat.getPermalink`, so messages link within the
-tracker instead. Synthetic reports (`SYNTHETIC` workspace) get no external links.
-The browser never sends SQL; all reads are the bounded queries above.
+| Tool              | Capability                                                    |
+| ----------------- | ------------------------------------------------------------- |
+| `explore_issues`  | Latest 500 projections/events, exact aggregate counts         |
+| `list_issues`     | Bounded keyset pagination, text and exact metadata filters    |
+| `search_evidence` | Stored messages/history with entity filters and dedup         |
+| `get_issue`       | Exact snapshot, metadata and first 200 lifecycle events       |
+| `inspect_issue`   | Snapshot hash/bytes, metadata, evidence-based related records |
+| `issue_history`   | Complete history via bounded oldest-first keyset pages        |
+| `update_issue`    | Revision-checked status/assignment/evidence change            |
+| `add_issue_note`  | Revision-checked note preserving current state/assignment     |
+| `get_issue_trace` | Authorized recorded capture/transport correlation only        |
 
-## Verification
+Statuses: open, investigating, blocked, resolved; reopening is explicit. Every
+mutation requires `expectedRevision` and an evidence note, and appends one event.
+Resolved is not proof of deployment or runtime acceptance. Refresh after a CAS
+conflict; never blindly retry a mutation. Cursors use timestamp+ID; concurrent
+edits can move entries. Exact UUIDv4 and `computah_bug_` + 24 lowercase random
+alphanumeric IDs are retained. The MCP also exposes a contract resource,
+`computah-debug://issues/{id}` and an evidence-first investigation prompt. It
+does not provide secret export, arbitrary SQL/APL, deletion or admin bypass.
 
-Install the exact package dependencies in this directory without changing the
-root workspace lockfile (`npm install --no-package-lock`). Typecheck `index.ts`,
-`ui/main.tsx` and `ui/assets.d.ts` with TypeScript strict, NodeNext, ES2022,
-react-jsx and the DOM lib. Deploy only source files: never `node_modules`. Root
-formatter/linter cover this source; root tests cover Slack durable capture.
-Run `pnpm exec tsx --test scripts/test-debugshare-traces.test.ts` from the repository
-root for exact query/time-window construction and invalid-ID rejection.
-Verify deployed tools and the actual authenticated page separately. A successful
-deploy or tool call is not browser-render evidence or live Slack capture proof.
+Connect this remote URL using Executor's supported custom OAuth MCP connection,
+then complete the private owner login/consent. Actual Executor discovery and
+representative authorized read/write, stale revision and denied-scope calls are
+separate acceptance gates, using disposable synthetic records only. A local SDK
+call or successful import of an MCP definition does not establish that acceptance.
 
-## Current deployment evidence
+## Explorer and traces
 
-The private app is deployed at <https://computah-issues.raygen.executor.website>.
-Authenticated synthetic import, exact UUID lookup, immutable retry/conflict,
-revision-CAS state changes and retention across app redeployment were exercised.
-Anonymous HTTP access returned 403 without reports. The UI was rendered against
-the actual browser SDK with synthetic responses; this is not signed-in hosted
-browser acceptance. Genuine new-format Slack-to-hosted capture was verified for
-`computah_bug_sezwk4oezhoi4y3lqmgtto2v` at 2026-11-08T10:21:56.893Z on source
-`855a7c0`: exact stored capture trace/span matched Axiom, with successful upload,
-delivery and finalization. No historical IDs were rewritten. Source-local SQLite
-capture remains independent of that upload setup. Explorer rendering and hosted
-adoption are verified separately from this capture receipt.
+SvelteKit preserves the dark explorer, Geist/Geist Mono local OFL fonts, command
+palette, responsive navigation, issue/evidence/history tables, JSON explorer,
+related records, search and inline trace waterfall. Existing `#<id>`,
+`#<id>/<section>`, `#<id>/m/<timestamp>`, `#/issues`, `#/activity`,
+`#/search/<text>`, `#/tables/<table>` and entity hashes remain supported.
+IDs become escaped navigation links, not executable HTML. Synthetic workspace
+records get no external links. No report or credential is embedded in static
+assets. Browser reads use same-origin cookies and bounded server APIs, not SQL.
+
+`get_issue_trace` accepts only capture/transport from a stored issue. The Worker
+uses a dedicated read-only Axiom token restricted to `computah-prod-traces`.
+Queries cap at 15 seconds, 2 MB and 500 spans; missing/expired correlations,
+partial results and missing parents remain explicit. No arbitrary trace/dataset
+or APL is accepted. Private Axiom links remain available. The read token never
+reaches browser/report/telemetry payloads. Empty provisioning leaves trace reads
+unavailable without removing the immutable report.
+
+## Build, deploy and migration
+
+This integration has its own dependency installation outside the core workspace.
+Use its pinned dependencies and pnpm; the Computah Docker image does not host it.
+The adapter uses a **separate build-only Wrangler configuration**, writing only
+`.svelte-kit/cloudflare/_worker.js`. Deployment `worker.ts` owns auth, APIs, MCP
+and the `IssueTracker` export. Never let the adapter overwrite that entry.
+
+Run root `pnpm format`, `pnpm check`, `pnpm typecheck`, `pnpm test`, plus integration
+build/typecheck and `node --test worker.test.mjs`. Worker tests run actual workerd,
+D1 and SQLite Durable Objects with synthetic secrets/data. Existing trace tests:
+`pnpm exec tsx --test scripts/test-debugshare-traces.test.ts`. Inspect rendered
+authenticated/denied UI and non-default deep-link states separately.
+
+Independent resources: Worker `computah-debugshare`, fixed DO name
+`operator-tracker-v1`, auth D1 `computah-debugshare-auth`, exact hostname route
+`debug.raygen.dev/*`. No observatory HMAC/DO/domain/state is reused. Wrangler
+disables workers.dev and preview URLs. Preserve the previous proxied DNS record
+as an infrastructure rollback receipt; unknown APIs must never fall through to
+that old origin. Apply D1 migrations, install private secrets from ignored
+owner-only files and deploy with delivery disabled. Do not print secret values.
+
+Migration uses only bounded tracker-owned supported APIs, not Slack bulk export:
+
+1. Re-read the authoritative source deployment; export explore→all exact
+   get/inspect→explore. Require stable IDs/revisions/counts, complete events and
+   per-record UTF-8 bytes/SHA256. Preserve rawReport bytes. Serialization is valid
+   only when its computed hash independently equals the stored hash per record.
+2. Transfer into an ignored mode0600 backup through supported private tooling.
+   A temporary protected KV sink is acceptable only with required API approval;
+   never print report histories or bridge by scraping credential storage.
+3. `POST /api/migration/import` with the dedicated bearer imports at most 100
+   issues/200 events each/8 MB atomically, preserving all metadata, event IDs,
+   timestamps and raw bytes. Exact retries are no-ops, conflicts roll back.
+   Migration creates `held` notices: historic imports and later capture retries
+   cannot wake the coordinator.
+4. `GET /api/migration/export` returns raw bytes, hashes, histories, notices and a
+   SQLite PITR bookmark. Export fails rather than silently truncating beyond the
+   bounded migration contract. Compare exact ID sets, all metadata/events,
+   snapshot hashes, totals, UUID/current lookups and anonymous denial.
+5. Revoke migration authority after acceptance, retain the protected backup and
+   source tracker, then hand off protected host activation and receiver readiness.
+   Source-local pending capture replay must be exact/idempotent, not a new capture.
+
+**Rollback is not just DNS.** Disable new writes/capture and notification delivery
+before switching routing. Preserve/export all Worker writes since cutover and its
+PITR bookmark; source and target otherwise diverge. Restore the old authenticated
+route only after reconciling new revisions/events through supported APIs. Never
+erase source records, reset the D1 owner state or force an old snapshot over new
+writes. Retain the target database until rollback reconciliation is verified.
+
+## Acceptance status
+
+Local Worker tests are synthetic proof only. The historical source receipt was
+9 issues / 33 events / 123 messages / 29,704 report bytes, with nine matching
+reconstructed raw hashes. It is not current-freshness or target acceptance.
+Record the actual deployment version, fresh migration manifest, authenticated UI,
+Executor MCP OAuth/read/write/denial, synthetic callback/duplicate/ACK, pending
+host capture and enabled Axiom ingestion receipts separately before calling the
+migration complete. No source tracker deletion is authorized by target replacement.

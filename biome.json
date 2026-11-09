@@ -2,7 +2,16 @@
   "$schema": "https://biomejs.dev/schemas/2.6.6/schema.json",
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!ui/pixel-presence.html", "!**/target", "!.amp"]
+    "includes": [
+      "**",
+      "!ui/pixel-presence.html",
+      "!**/target",
+      "!.amp",
+      "!integrations/debugshare/.svelte-kit",
+      "!integrations/debugshare/.wrangler",
+      "!integrations/debugshare/dist",
+      "!integrations/debugshare/worker-configuration.d.ts"
+    ]
   },
   "formatter": { "indentStyle": "space" },
   "css": { "parser": { "tailwindDirectives": true } },

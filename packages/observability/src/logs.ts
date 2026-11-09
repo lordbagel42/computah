@@ -131,6 +131,12 @@ const operations = [
   "slack.timing",
   "observatory.http",
   "observatory.poll",
+  "debugshare.http",
+  "debugshare.store",
+  "debugshare.notice",
+  "debugshare.auth",
+  "debugshare.mcp",
+  "debugshare.reconcile",
   "operator.history",
   "sentinel.review",
   "sentinel.enforce",
@@ -203,14 +209,15 @@ type Record = {
   traceId?: string;
   spanId?: string;
 };
-type RuntimeLogService =
+export type RuntimeLogService =
   | "backend"
   | "slack"
   | "bus"
   | "native"
   | "dashboard"
   | "rune-pi"
-  | "observatory";
+  | "observatory"
+  | "debugshare";
 
 // Mirrors the shipped server ANALYTICS_METRICS vocabulary without depending on the app.
 const metricNames = [
@@ -306,13 +313,22 @@ export function createRuntimeLogger(options: {
   token?: string;
   revision?: string;
   contentEnabled?: boolean;
+  /** Edge owners explicitly flush at operation end instead of retaining a timer. */
+  autoFlush?: boolean;
   /** Transport injection for tests; production must retain the fixed HTTPS destination. */
   fetch?: typeof globalThis.fetch;
 }) {
-  const token = options.token ?? process.env.COMPUTAH_AXIOM_INGEST_TOKEN;
-  const dataset = options.dataset ?? process.env.COMPUTAH_AXIOM_LOG_DATASET;
   const service = options.service;
-  const revision = options.revision ?? process.env.COMPUTAH_REVISION;
+  // Edge bindings are explicit; never consult process-global credentials there.
+  const token =
+    options.token ??
+    (service === "debugshare" ? "" : process.env.COMPUTAH_AXIOM_INGEST_TOKEN);
+  const dataset =
+    options.dataset ??
+    (service === "debugshare" ? "" : process.env.COMPUTAH_AXIOM_LOG_DATASET);
+  const revision =
+    options.revision ??
+    (service === "debugshare" ? "" : process.env.COMPUTAH_REVISION);
   const enabled = Boolean(
     token &&
       dataset &&
@@ -326,15 +342,19 @@ export function createRuntimeLogger(options: {
         "dashboard",
         "rune-pi",
         "observatory",
+        "debugshare",
       ].includes(service),
   );
   const transport = options.fetch ?? globalThis.fetch;
   const contentEnabled =
     service !== "observatory" &&
+    service !== "debugshare" &&
     (options.contentEnabled ??
       process.env.COMPUTAH_AXIOM_CONTENT_ENABLED === "1");
-  registerContentEnvironment(process.env);
-  registerContentSecrets(token ? [token] : []);
+  if (service !== "debugshare") {
+    registerContentEnvironment(process.env);
+    registerContentSecrets(token ? [token] : []);
+  }
   const queue: Record[] = [];
   let closed = false;
   let accepted = 0;
@@ -831,11 +851,12 @@ export function createRuntimeLogger(options: {
     }
     return stats();
   }
-  const interval = enabled
-    ? setInterval(() => {
-        void flush();
-      }, 1000)
-    : undefined;
+  const interval =
+    enabled && options.autoFlush !== false
+      ? setInterval(() => {
+          void flush();
+        }, 1000)
+      : undefined;
   interval?.unref();
   return {
     emit,

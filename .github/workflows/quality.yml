@@ -32,3 +32,10 @@ jobs:
       # Failure, cancellation and timeout remain failures, never soft passes.
       - run: pnpm test
       - run: node --import tsx --test scripts/quality/*.test.ts
+      - name: Verify private debug Worker
+        working-directory: integrations/debugshare
+        run: |
+          pnpm install --frozen-lockfile --lockfile-dir .
+          pnpm typecheck
+          pnpm build
+          pnpm test

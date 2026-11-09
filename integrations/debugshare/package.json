@@ -2,19 +2,35 @@
   "name": "computah-debugshare",
   "private": true,
   "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "typecheck": "wrangler types --config wrangler.jsonc && svelte-kit sync && svelte-check --tsconfig ./ui/tsconfig.json --fail-on-warnings && tsc --ignoreConfig --noEmit --strict --target es2022 --module esnext --moduleResolution bundler --types ./worker-configuration.d.ts,node --skipLibCheck worker.ts store.ts auth.ts catalog.ts mcp.ts assets.d.ts",
+    "test": "node --test worker.test.mjs",
+    "preview": "vite preview --host 0.0.0.0"
+  },
   "dependencies": {
-    "@radix-ui/react-slot": "1.5.0",
-    "@radix-ui/react-tooltip": "1.4.1",
+    "@better-auth/oauth-provider": "1.7.18",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "apps": "0.0.1-beta.122",
-    "class-variance-authority": "0.7.1",
+    "better-auth": "1.7.18",
     "clsx": "2.1.1",
-    "lucide-react": "1.70.0",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "tailwind-merge": "3.7.0"
+    "lucide-svelte": "1.0.1",
+    "svelte": "5.57.3",
+    "tailwind-merge": "3.7.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/react": "19.3.0",
-    "@types/react-dom": "19.3.0"
+    "@cloudflare/workers-types": "5.20261109.1",
+    "@sveltejs/adapter-cloudflare": "7.2.10",
+    "@sveltejs/kit": "2.70.4",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@tailwindcss/vite": "4.3.5",
+    "@types/node": "^24.0.0",
+    "svelte-check": "4.7.8",
+    "tailwindcss": "4.3.5",
+    "typescript": "^6.0.0",
+    "vite": "8.3.7",
+    "wrangler": "4.158.0"
   }
 }

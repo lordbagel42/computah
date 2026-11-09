@@ -1,23 +1,10 @@
-import {
-  array,
-  bearer,
-  defineApp,
-  defineProvider,
-  type Infer,
-  type MutationContext,
-  mutation,
-  number,
-  object,
-  plain,
-  type QueryContext,
-  query,
-  router,
-  secrets,
-  string,
-  type Webhook,
-  type WebhookContext,
-} from "apps";
+import { array, type Infer, number, object, string } from "apps";
 import { debugshareIdPattern, isDebugshareId } from "./ids.js";
+import {
+  type Context,
+  operation as mutation,
+  operation as query,
+} from "./operations.js";
 import {
   Detail,
   Explore,
@@ -30,40 +17,14 @@ import {
   Summary,
   statuses,
 } from "./schema.js";
-import { captureScopeAllowed } from "./scope.js";
 import { readTrace, TraceResult } from "./traces.js";
 
-// This account identifies the uploader, not an upstream API credential.
-// The webhook's separate generated signing secret is the only upload authority.
-const source = defineProvider({
-  name: "Computah diagnostic source",
-  auth: {
-    source: secrets({
-      label: "Source reference",
-      fields: object({ reference: plain(string({ minLength: 1 })) }),
-    }),
-  },
-});
-const axiom = defineProvider({
-  name: "Computah issue trace reader",
-  hosts: ["api.axiom.co"],
-  auth: {
-    token: secrets({
-      label: "Read-only Axiom token for computah-prod-traces",
-      fields: object({ token: string({ minLength: 1 }) }),
-      request: ({ token }) => bearer(token),
-    }),
-  },
-});
-const requirements = {
-  app: { accounts: { sources: source.many(), traces: axiom.many() } },
-};
-type Read = QueryContext<typeof requirements>;
-type Write = MutationContext<typeof requirements>;
+type Read = Context;
+type Write = Context;
 type IssueRow = Infer<typeof Summary> & { report: string };
 type ReportData = Infer<typeof Report>;
 
-function validateReport(value: ReportData) {
+export function validateReport(value: ReportData) {
   if (
     !isDebugshareId(value.id) ||
     !Number.isFinite(Date.parse(value.requestedAt)) ||
@@ -89,7 +50,7 @@ function validateReport(value: ReportData) {
       throw new Error("Invalid diagnostic trace correlation");
 }
 
-function receive(sql: Write["sql"], report: ReportData) {
+export function receive(sql: Write["sql"], report: ReportData) {
   validateReport(report);
   return sql.transaction(() => {
     const prior = sql
@@ -538,19 +499,18 @@ export const getIssueTrace = query(
         partial: false,
         spans: [],
       };
-    const accounts = ctx.app.accounts.traces;
-    if (accounts.length !== 1)
+    if (!ctx.traceToken)
       return {
         traceId,
         notice:
-          "An app manager must connect exactly one read-only Axiom account to the tracker’s traces account slot. Existing issue reports remain available.",
+          "An operator must provision the Worker's dedicated read-only Axiom trace credential. Existing issue reports remain available.",
         partial: false,
         spans: [],
       };
     return readTrace(
       ctx.fetch,
       ctx.signal,
-      accounts[0].headers(),
+      { Authorization: `Bearer ${ctx.traceToken}` },
       traceId,
       report.requestedAt,
     );
@@ -619,108 +579,3 @@ export const updateIssue = mutation(
     });
   },
 );
-
-const config = object({
-  team: string(),
-  tenantId: string(),
-  userId: string(),
-  agentId: string(),
-  enrollment: object({
-    deniedUserIds: array(string()),
-    ownerSlackUserId: string(),
-  }).optional(),
-});
-const empty = object({});
-const capture = {
-  account: { app: "sources" },
-  config,
-  state: empty,
-  setup: {
-    instructions:
-      "Copy callback URL and generated signing secret directly into the protected Slack runtime environment, never into chat. Configure COMPUTAH_DEBUGSHARE_INGEST_URL and COMPUTAH_DEBUGSHARE_SIGNING_SECRET. Pin the trusted owner Slack/core scope. Optional enrollment must match the adapter's exact workspace, owner Slack ID and denied user IDs. Enrollment covers all conversations where Slack delivers the bot's messages; it accepts only exact requester/location-bound per-user scopes, never arbitrary scope prefixes. Set COMPUTAH_DEBUGSHARE_REPORT_URL to the authenticated app URL.",
-    signingSecret: "executor",
-  },
-  async handle(ctx, { request, secret, config }) {
-    if (request.method !== "POST") return new Response(null, { status: 405 });
-    const timestamp = request.headers.get("x-computah-timestamp") ?? "";
-    const signature = request.headers.get("x-computah-signature") ?? "";
-    if (
-      !/^\d{13}$/.test(timestamp) ||
-      Math.abs(Date.now() - Number(timestamp)) > 300_000 ||
-      !/^[a-f0-9]{64}$/.test(signature)
-    )
-      return new Response(null, { status: 401 });
-    const reader = request.body?.getReader();
-    if (!reader) return new Response(null, { status: 400 });
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 450_000) {
-        await reader.cancel();
-        return new Response(null, { status: 413 });
-      }
-      chunks.push(value);
-    }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    const body = new TextDecoder().decode(bytes);
-    const key = await crypto.subtle.importKey(
-      "raw",
-      new TextEncoder().encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["verify"],
-    );
-    const valid = await crypto.subtle.verify(
-      "HMAC",
-      key,
-      Uint8Array.from(signature.match(/../g) ?? [], (s) =>
-        Number.parseInt(s, 16),
-      ),
-      new TextEncoder().encode(`${timestamp}.${body}`),
-    );
-    if (!valid) return new Response(null, { status: 401 });
-    try {
-      const report = Report.parse(JSON.parse(body));
-      if (!captureScopeAllowed(report, config))
-        return new Response(null, { status: 403 });
-      return Response.json(receive(ctx.sql, report));
-    } catch {
-      return Response.json(
-        { error: "Invalid report or conflicting immutable issue ID" },
-        { status: 409 },
-      );
-    }
-  },
-} satisfies Webhook<
-  WebhookContext<typeof requirements, "app">,
-  typeof config,
-  typeof empty
->;
-
-export default defineApp(requirements, {
-  tools: router(
-    {
-      listIssues,
-      getIssue,
-      getIssueTrace,
-      explore,
-      search,
-      inspectIssue,
-      receiveIssue,
-      updateIssue,
-    },
-    {
-      instructions:
-        "Use exact DEBUGSHARE issue ID lookup (new computah_bug_ IDs or legacy UUIDs). explore, search and inspectIssue are bounded read-only views for cross-issue navigation. Reports show actual bounded messages and location. Use updateIssue with current revision and concise investigation evidence; do not claim repair from status alone. Actor attribution is self-declared; Executor authenticates callers and controls app access. Never insert credentials or hidden model reasoning. This app is an operator boundary, not a multi-tenant public service.",
-    },
-  ),
-  webhooks: { capture },
-});

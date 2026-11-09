@@ -7,6 +7,7 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 import { registerContentSecrets } from "../src/content.js";
+import { type EdgeOutcome, Telemetry } from "../src/edge.js";
 import { runtimeSlackReplyLatency, sanitizeTraces } from "../src/index.js";
 import {
   createRuntimeLogger,
@@ -793,4 +794,177 @@ test("edge lifecycle logs retain explicit span context without an active context
         a.key === "outcome" && a.value.stringValue === "timeout",
     ),
   );
+});
+
+test("DEBUGSHARE end flushes isolated sanitized logs correlated to edge spans without bootstrap", async () => {
+  const requests: {
+    url: string;
+    token: string | null;
+    dataset: string | null;
+    body: string;
+  }[] = [];
+  const transport: typeof fetch = async (url, init) => {
+    const headers = new Headers(init?.headers);
+    requests.push({
+      url: String(url),
+      token: headers.get("Authorization"),
+      dataset: headers.get("X-Axiom-Dataset"),
+      body: String(init?.body),
+    });
+    return new Response("{}");
+  };
+  const telemetry = new Telemetry("synthetic-edge-ingest", transport);
+  const parent = telemetry.start("computah.debugshare.http");
+  const expected: [EdgeOutcome, string][] = [
+    ["ready", "success"],
+    ["not_configured", "denied"],
+    ["error", "error"],
+    ["cancelled", "cancelled"],
+    ["denied", "denied"],
+    ["queued", "queued"],
+    ["retry", "retry"],
+  ];
+  for (const [outcome, mapped] of expected) {
+    const child = telemetry.start("computah.debugshare.store", parent.span);
+    Object.assign(child.span, { body: "PRIVATE-body", name: "PRIVATE-path" });
+    await child.end(outcome);
+    const logRequest = requests.at(-1);
+    assert.ok(logRequest);
+    assert.equal(logRequest.url, "https://api.axiom.co/v1/logs");
+    assert.equal(logRequest.token, "Bearer synthetic-edge-ingest");
+    assert.equal(logRequest.dataset, "computah-prod-logs");
+    const logResource = JSON.parse(logRequest.body).resourceLogs[0];
+    assert.equal(
+      logResource.resource.attributes[0].value.stringValue,
+      "computah-debugshare",
+    );
+    const row = logResource.scopeLogs[0].logRecords[0];
+    assert.equal(row.traceId, parent.span.traceId);
+    assert.equal(row.spanId, child.span.spanId);
+    const attrs = Object.fromEntries(
+      row.attributes.map(
+        (a: { key: string; value: { stringValue: string } }) => [
+          a.key,
+          a.value.stringValue,
+        ],
+      ),
+    );
+    assert.equal(attrs.operation, "debugshare.store");
+    assert.equal(attrs.outcome, mapped);
+    const spanRequest = requests.at(-2);
+    assert.ok(spanRequest);
+    const span = JSON.parse(spanRequest.body).resourceSpans[0].scopeSpans[0]
+      .spans[0];
+    assert.equal(span.parentSpanId, parent.span.spanId);
+    assert.equal(span.spanId, row.spanId);
+  }
+  await parent.end("success");
+  assert.ok(!JSON.stringify(requests).includes("PRIVATE"));
+  const other = new Telemetry(undefined, transport, Date.now, {
+    logsToken: "synthetic-dedicated-logs",
+    logsDataset: "edge-test-logs",
+  });
+  await other.start("computah.debugshare.auth").end("denied");
+  assert.equal(requests.at(-1)?.token, "Bearer synthetic-dedicated-logs");
+  assert.equal(requests.at(-1)?.dataset, "edge-test-logs");
+  const count = requests.length;
+  await new Telemetry(undefined, transport)
+    .start("computah.debugshare.notice")
+    .end("queued");
+  assert.equal(requests.length, count);
+});
+
+test("DEBUGSHARE edge log flushes bound concurrent admission and settle failures without retries", async () => {
+  const batches: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const telemetry = new Telemetry(
+    undefined,
+    async (url, init) => {
+      assert.equal(url, "https://api.axiom.co/v1/logs");
+      batches.push(String(init?.body));
+      if (batches.length === 1) await gate;
+      return new Response("PRIVATE-response", { status: 503 });
+    },
+    Date.now,
+    { logsToken: "synthetic-edge-logs" },
+  );
+  const endings = Array.from({ length: 540 }, () =>
+    telemetry.start("computah.debugshare.reconcile").end("retry"),
+  );
+  assert.equal(batches.length, 1);
+  release();
+  await Promise.all(endings);
+  const rows = batches.flatMap(
+    (batch) => JSON.parse(batch).resourceLogs[0].scopeLogs[0].logRecords,
+  );
+  assert.equal(rows.length, 512);
+  assert.ok(
+    batches.every(
+      (batch) =>
+        JSON.parse(batch).resourceLogs[0].scopeLogs[0].logRecords.length <= 64,
+    ),
+  );
+  assert.equal(new Set(rows.map((row) => row.spanId)).size, 512);
+  assert.ok(!batches.join("").includes("PRIVATE"));
+  let calls = 0;
+  const failing = new Telemetry("synthetic-edge-ingest", async () => {
+    calls++;
+    throw new Error("PRIVATE-error");
+  });
+  await failing.start("computah.debugshare.mcp").end("cancelled");
+  assert.equal(calls, 2);
+});
+
+test("DEBUGSHARE logger requires explicit configuration and never enables the generic content lane", async () => {
+  const disabled = createRuntimeLogger({
+    service: "debugshare",
+    autoFlush: false,
+  });
+  assert.equal(disabled.stats().enabled, false);
+  await disabled.close();
+  const logger = createRuntimeLogger({
+    ...config,
+    service: "debugshare",
+    autoFlush: false,
+    contentEnabled: true,
+    fetch: async () => new Response("{}"),
+  });
+  assert.equal(
+    logger.content("incoming", { text: "PRIVATE-content" }),
+    undefined,
+  );
+  assert.equal(logger.stats().dropped, 0);
+  assert.ok(
+    logger.emit("operation.completed", {
+      operation: "debugshare.notice",
+      outcome: "queued",
+    }),
+  );
+  assert.equal((await logger.close()).exported, 1);
+});
+
+test("DEBUGSHARE end settles a stalled shared log transport at its deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  let signal: AbortSignal | null | undefined;
+  let calls = 0;
+  const telemetry = new Telemetry(
+    undefined,
+    async (_url, init) => {
+      calls++;
+      signal = init?.signal;
+      return new Promise<Response>(() => {});
+    },
+    Date.now,
+    { logsToken: "synthetic-edge-logs" },
+  );
+  const ending = telemetry.start("computah.debugshare.notice").end("timeout");
+  assert.equal(calls, 1);
+  assert.equal(signal?.aborted, false);
+  t.mock.timers.tick(5000);
+  await ending;
+  assert.equal(signal?.aborted, true);
+  assert.equal(calls, 1);
 });

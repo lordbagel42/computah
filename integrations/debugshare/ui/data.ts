@@ -1,21 +1,5 @@
 import type { Infer } from "apps";
-import {
-  createAppClient,
-  mutationReference,
-  queryReference,
-} from "apps/client";
-import { useAppQuery } from "apps/react";
-import { useMemo } from "react";
-import type { explore, inspectIssue, search, updateIssue } from "../index.js";
-import { Explore, type IndexRow, Inspection, SearchResult } from "../schema.js";
-
-export const client = createAppClient();
-export const exploreAtom = client.queryAtom(
-  queryReference<typeof explore>("explore"),
-  {},
-  Explore,
-);
-export const updateRef = mutationReference<typeof updateIssue>("updateIssue");
+import type { Explore, IndexRow, Inspection, SearchResult } from "../schema.js";
 export type Row = Infer<typeof IndexRow>;
 export type ExploreData = Infer<typeof Explore>;
 export type InspectionData = Infer<typeof Inspection>;
@@ -37,30 +21,41 @@ export const noFilter: Filters = {
   actor: "",
 };
 
-export const useExplore = () => useAppQuery(exploreAtom);
-export function useInspection(id: string) {
-  const atom = useMemo(
-    () =>
-      client.queryAtom(
-        queryReference<typeof inspectIssue>("inspectIssue"),
-        { id },
-        Inspection,
-      ),
-    [id],
-  );
-  return useAppQuery(atom);
+export async function request<T>(
+  path: string,
+  input?: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  const response = await fetch(path, {
+    method: input === undefined ? "GET" : "POST",
+    credentials: "same-origin",
+    cache: "no-store",
+    redirect: "error",
+    signal,
+    ...(input === undefined
+      ? {}
+      : {
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(input),
+        }),
+  });
+  if (response.status === 401 && path.startsWith("/api/tools/"))
+    window.dispatchEvent(new Event("session-expired"));
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as {
+      error?: unknown;
+      message?: unknown;
+    } | null;
+    throw new Error(
+      typeof body?.error === "string"
+        ? body.error
+        : typeof body?.message === "string"
+          ? body.message
+          : `Request failed (${response.status}). Please retry.`,
+    );
+  }
+  return response.status === 204 ? (undefined as T) : response.json();
 }
-export function useSearch(filters: Filters) {
-  const key = JSON.stringify(filters);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed by value
-  const atom = useMemo(
-    () =>
-      client.queryAtom(
-        queryReference<typeof search>("search"),
-        filters,
-        SearchResult,
-      ),
-    [key],
-  );
-  return useAppQuery(atom);
-}
+
+export const tool = <T>(name: string, input: unknown, signal?: AbortSignal) =>
+  request<T>(`/api/tools/${encodeURIComponent(name)}`, input, signal);

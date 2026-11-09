@@ -254,6 +254,7 @@ async function run() {
             "content-type": "application/json",
             "x-computah-timestamp": timestamp,
             "x-computah-signature": signature,
+            ...currentTraceHeaders(),
           },
           body,
           signal: AbortSignal.timeout(10_000),

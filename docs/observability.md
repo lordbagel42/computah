@@ -681,17 +681,29 @@ See [public observatory](public-observatory.md) for stream replay and bounds.
 
 ### Authenticated tracker trace reads
 
-The standalone Executor tracker uses the platform's invocation-owned traced fetch
-for Axiom reads, with host cancellation, a 15-second timeout and fixed failures
-that never echo upstream bodies or credentials. Reads resolve only an existing
-issue's stored capture/transport trace, cap responses at 2 MB/500 spans, and do
-not add an exporter, public observatory fields, background polling or retries.
-Local tests cover timings, parent gaps/cycles, partial responses, denial and
-cancellation. The platform owns invocation/fetch tracing; its spans/logs are not
-currently verified through Computah's core sanitized Axiom exporter. Browser
-row-expand/reload telemetry and live query-account acceptance remain gaps, not
-claims of complete end-to-end tracing. See the
-[tracker](../integrations/debugshare/README.md) for the read-only account boundary.
+The Cloudflare tracker implementation uses shared bounded edge telemetry for HTTP,
+auth, MCP execution, SQLite operations, notice dispatch/retry/ACK and explicit
+reconciliation. The Slack uploader carries current trace context; Worker→DO and
+stored notice→callback preserve parent context independently of authorization.
+Typed MCP denials/errors and cancellation are explicit outcomes. Fixed operation
+categories and scalar outcomes are the only added telemetry; report bodies,
+histories, IDs, callback URLs and credentials never enter this export schema.
+DEBUGSHARE uses an explicitly provisioned ingest credential for sanitized spans
+and shared bounded runtime logs; ambient query credentials cannot enable logging
+or the generic content lane. Local exporter tests inspect sanitized Axiom request
+bodies, correlation, failure/cancellation, backpressure and time bounds. Existing
+observatory users retain their compatible shared edge interface.
+
+Private Axiom reads resolve only an existing issue's recorded capture/transport
+trace, cap at 15 seconds/2 MB/500 spans, and reject arbitrary trace/dataset/APL.
+A separately provisioned read-only token never reaches browser/report/export data.
+The previous Executor deployment retains its platform-owned tracing until actual
+cutover. Source hooks and local workerd tests are not enabled collection or live
+Axiom ingestion proof. Remaining gaps: abrupt-death final span export, browser
+row interactions, complete trace-query typed unavailability classification,
+OAuth JWKS network spans, actual callback receiver continuation and production
+query/ingest credential acceptance. See the
+[tracker](../integrations/debugshare/README.md) for deployment and acceptance gates.
 
 The public [dashboard recreations](public-observatory.md#dashboard-and-saved-query-recreation)
 reuse edge HTTP/poll spans for fixed aggregate queries, explicit failure/partial

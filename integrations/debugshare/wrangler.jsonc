@@ -1,0 +1,45 @@
+{
+  "name": "computah-debugshare",
+  "account_id": "2fa4104b17af8808577f12883fa657b1",
+  "main": "worker.ts",
+  "compatibility_date": "2026-11-09",
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "upload_source_maps": true,
+  "routes": [{ "pattern": "debug.raygen.dev/*", "zone_name": "raygen.dev" }],
+  "assets": {
+    "directory": ".svelte-kit/cloudflare",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "d1_databases": [
+    {
+      "binding": "AUTH_DB",
+      "database_name": "computah-debugshare-auth",
+      "database_id": "25b934db-9163-42a5-9990-1e2c08efb368",
+      "migrations_dir": "auth-migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "TRACKER", "class_name": "IssueTracker" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["IssueTracker"] }],
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "secrets": {
+    "required": [
+      "BETTER_AUTH_SECRET",
+      "BOOTSTRAP_TOKEN",
+      "CAPTURE_SIGNING_SECRET",
+      "NOTICE_TOKEN",
+      "MIGRATION_TOKEN",
+      "AGENT_MCP_TOKEN",
+      "CAPTURE_POLICY",
+      "NOTICE_CALLBACK_URL",
+      "AXIOM_TRACE_READ_TOKEN",
+      "AXIOM_TELEMETRY_TOKEN"
+    ]
+  },
+  "vars": { "CAPTURE_ENABLED": "false", "NOTICE_DELIVERY_ENABLED": "false" },
+  "rules": [{ "type": "Text", "globs": ["**/*.sql"], "fallthrough": true }]
+}
