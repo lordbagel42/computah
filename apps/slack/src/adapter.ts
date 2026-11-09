@@ -140,6 +140,7 @@ export interface Transport {
   acknowledgement?(
     binding: Binding,
     submission: string,
+    signal: AbortSignal,
   ): Promise<string | null>;
   stream?(
     binding: Binding,
@@ -171,6 +172,8 @@ export class SlackAdapter {
   private readonly replyLatency: ReplyLatency;
   private statusFlight?: Promise<void>;
   private statusAbort?: AbortController;
+  private progressFlight?: Promise<void>;
+  private progressAbort?: AbortController;
   private stopping = false;
   private closed = false;
   private statusPaused = false;
@@ -1469,7 +1472,32 @@ export class SlackAdapter {
       );
       const outcome = result.submission?.outcome;
       if (outcome === "accepted" || outcome === "streaming") {
-        await this.progressJob(job, binding);
+        if (!this.progressFlight && !this.stopping) {
+          const abort = new AbortController();
+          this.progressAbort = abort;
+          const timer = setTimeout(
+            () =>
+              abort.abort(
+                new DOMException("Observation deadline", "TimeoutError"),
+              ),
+            2000,
+          );
+          this.progressFlight = this.progressJob(job, binding, abort.signal)
+            .catch(() => {
+              // A failed journal precheck is optional work too, not an unhandled
+              // background rejection or a reason to stop answer delivery.
+              runtimeLog(
+                "runtime.report",
+                { outcome: "error", reason: "storage_failed" },
+                "warn",
+              );
+            })
+            .finally(() => {
+              clearTimeout(timer);
+              this.progressFlight = undefined;
+              this.progressAbort = undefined;
+            });
+        }
         return true;
       }
       this.db
@@ -1692,7 +1720,7 @@ export class SlackAdapter {
     await this.deliver(job, binding, control.reply);
   }
 
-  private async progressJob(job: Job, binding: Binding) {
+  private async progressJob(job: Job, binding: Binding, signal: AbortSignal) {
     if (!job.submission || !this.transport.acknowledgement) return;
     const lifecycle = this.db
       .prepare(
@@ -1716,17 +1744,23 @@ export class SlackAdapter {
         const text = await this.transport.acknowledgement?.(
           binding,
           job.submission ?? "",
+          signal,
         );
         // No model-selected text means silence, not a canned fallback. Missing
         // or failed observations must not consume the durable attempt.
+        // The final answer, cancellation or shutdown may have won while the
+        // optional observation was in flight. Never post stale progress.
+        signal.throwIfAborted();
+        if (this.closed || this.stopping) return;
         if (typeof text !== "string" || !text.trim() || text.length > 3500)
           return;
         const reserved = this.db
           .prepare(
-            `UPDATE job_lifecycle SET progress=1 WHERE job=? AND progress=0
+            `UPDATE job_lifecycle SET progress=1 WHERE job=? AND progress=0 AND terminal=0
+             AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND state='submitted')
              AND NOT EXISTS (SELECT 1 FROM job_lifecycle WHERE kind='stop' AND target=?)`,
           )
-          .run(job.id, job.id);
+          .run(job.id, job.id, job.id);
         if (!reserved.changes) return;
         // Commit before the external effect: uncertain sends never replay.
         await this.transport.post(job.channel, text, lifecycle.origin);
@@ -2135,6 +2169,7 @@ export class SlackAdapter {
 
   async stop() {
     this.stopping = true;
+    this.progressAbort?.abort();
     this.pumpStatus();
     for (const row of this.db
       .prepare(
@@ -2231,6 +2266,7 @@ export class SlackAdapter {
   close() {
     this.closed = true;
     this.statusAbort?.abort();
+    this.progressAbort?.abort();
     this.contextAbort?.abort();
     this.replyLatency.close();
     this.db.close();

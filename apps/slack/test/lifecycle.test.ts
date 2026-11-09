@@ -744,6 +744,80 @@ test("chosen acknowledgement has no age gate; completed polls and stop admitted 
   }
 });
 
+test("pending acknowledgement cannot block answers or stop, and late observations cannot post stale progress", async () => {
+  for (const terminal of ["answer", "stop", "shutdown", "timeout"] as const) {
+    const f = fixture();
+    let release!: (value: string) => void;
+    let reads = 0;
+    let signal: AbortSignal | undefined;
+    f.transport.acknowledgement = async (
+      _binding,
+      _submission,
+      observedSignal,
+    ) => {
+      reads++;
+      signal = observedSignal;
+      return new Promise<string>((resolve) => {
+        release = resolve;
+      });
+    };
+    let pending: Promise<boolean> | undefined;
+    try {
+      f.adapter.admit(input("1", "research"));
+      f.advance();
+      await f.adapter.step();
+      pending = f.adapter.step();
+      assert.equal(
+        await Promise.race([
+          pending.then(() => "ready"),
+          new Promise((resolve) => setTimeout(() => resolve("blocked"), 100)),
+        ]),
+        "ready",
+        "optional observation must not hold the delivery pump",
+      );
+      await f.adapter.step();
+      assert.equal(reads, 1, "only one observation may remain in flight");
+      if (terminal === "answer") {
+        f.outcome("completed");
+        await f.adapter.step();
+        assert.deepEqual(f.posts, [["DOWNER", "final answer", null]]);
+      } else if (terminal === "stop") {
+        f.adapter.admit(input("2", "stop"));
+        await f.adapter.step();
+        assert.match(f.posts[0][1], /Core confirmed cancellation/);
+      } else if (terminal === "shutdown") {
+        await f.adapter.stop();
+        assert.equal(signal?.aborted, true);
+        assert.deepEqual(f.posts, []);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 2100));
+        assert.equal(signal?.aborted, true);
+        assert.equal(signal?.reason.name, "TimeoutError");
+      }
+      const posts = [...f.posts];
+      release("i'll check those sources.");
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(
+        f.posts,
+        posts,
+        "late progress must not follow a terminal outcome",
+      );
+      if (terminal === "timeout") {
+        f.transport.acknowledgement = async () => "i'll check those sources.";
+        await f.adapter.step();
+        assert.deepEqual(f.posts, [
+          ["DOWNER", "i'll check those sources.", null],
+        ]);
+      }
+    } finally {
+      release?.("late observation");
+      await pending;
+      await new Promise((resolve) => setImmediate(resolve));
+      f.close();
+    }
+  }
+});
+
 test("observation reader consumes one bounded resync, ignores text/envelopes and closes the stream", async () => {
   let closed = false;
   const frame = {

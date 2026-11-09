@@ -18,6 +18,15 @@ opt-in now permits bounded OTel GenAI messages on private model spans, as descri
 below; it never broadens the public observatory projection. Source/local proof,
 protected-host activation and independently queried ingestion are separate states.
 
+The Slack acknowledgment observation's background lane keeps the existing
+`slack.status` phase and `slack.core` child under the persisted receipt parent;
+its timeout/error/shutdown cancellation outcomes use the same bounded structured
+logger and sanitized exporter. Local tests verify those outcomes and continuity,
+not live adoption or a five-second actual-answer SLO. A bounded live trace review
+for the ingress-latency report also observed repeated Gmail authority verification
+and provider time on the hot path. Those checks remain intact: no grant/provider
+verification cache or authorization bypass is introduced to meet a latency target.
+
 ## Native Axiom conversations
 
 The injected Models wrapper enriches its existing stream/complete spans (including

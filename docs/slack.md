@@ -485,6 +485,17 @@ No time limit promises delivery: model dispatch, polling and network/backlog can
 delay it, and completed polls skip it. The existing input burst quiet window is
 unchanged; it is admission batching, not an acknowledgment timer.
 
+The optional acknowledgment observation runs in a separate, single-flight lane:
+result polling, final delivery and stop handling do not await its two-second
+deadline. Timeout/failure permits a later observation; an unresolved transport
+still occupies the one slot rather than spawning unbounded work. Shutdown aborts
+the read. Late observations recheck terminal state and retained stop intent before
+reserving a post; an already-started external post cannot be retracted. The
+durable attempt-before-send rule still prevents ambiguous progress reposts.
+Local stalled-read regression and sanitized-export checks cover final delivery,
+stop, shutdown, error/timeout and original receipt parent continuity. Runtime
+adoption and live actual-answer latency improvement require separate acceptance.
+
 Current live inputs, cancellation fences and current source/history grants gate
 core release. A retained stop suppresses a fresh acknowledgment, including a stop
 admitted while observation is awaited. The adapter durably reserves at most one

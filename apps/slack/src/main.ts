@@ -378,7 +378,7 @@ async function run() {
             },
           } satisfies Pick<Transport, "stream">)
         : {}),
-      async acknowledgement(binding, submission) {
+      async acknowledgement(binding, submission, signal) {
         return traceOperation("slack.core", async () => {
           const response = await fetch(
             new URL(
@@ -391,7 +391,7 @@ async function run() {
                 accept: "text/event-stream",
                 ...currentTraceHeaders(),
               },
-              signal: AbortSignal.timeout(2000),
+              signal,
               redirect: "error",
             },
           );

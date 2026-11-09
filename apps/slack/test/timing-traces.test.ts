@@ -42,6 +42,7 @@ test("sanitized traces and logs connect first receive to durable job, retries, r
     channelIds: [],
   };
   let failing = true;
+  let pollOutcome = "cancelled";
   const coreRoots: string[] = [];
   const coreCarriers: string[] = [];
   const transport: Transport = {
@@ -58,7 +59,7 @@ test("sanitized traces and logs connect first receive to durable job, retries, r
         if (failing) throw new Error("private-synthetic-failure");
         return body
           ? { id: "private-submission-handle" }
-          : { submission: { outcome: "cancelled" } };
+          : { submission: { outcome: pollOutcome } };
       });
     },
     async openDm() {
@@ -228,6 +229,44 @@ test("sanitized traces and logs connect first receive to durable job, retries, r
       interleaved[0].split("-")[1],
       interleaved[1].split("-")[1],
     ]);
+    // Background observation retains the receipt parent, including failures and
+    // shutdown cancellation; it must not borrow the next delivery's context.
+    const observations: { trace: string; outcome: string }[] = [];
+    for (const outcome of ["success", "error", "timeout", "cancelled"]) {
+      // Allow the bounded private-content exporter to drain between scenarios.
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await traceOperation("slack.receive", async () => {
+        observations.push({
+          trace: currentTraceHeaders().traceparent.split("-")[1],
+          outcome,
+        });
+        adapter.admit({
+          ...input,
+          event_id: outcome,
+          event: { ...input.event, ts: outcome },
+        });
+      });
+      pollOutcome = "streaming";
+      transport.acknowledgement = async (_binding, _submission, signal) =>
+        traceOperation("slack.core", async () => {
+          if (outcome === "cancelled")
+            await new Promise<void>((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), {
+                once: true,
+              });
+            });
+          if (outcome === "timeout")
+            throw new DOMException("private timeout", "TimeoutError");
+          if (outcome === "error") throw new Error("private observation error");
+          return "private-synthetic-acknowledgement";
+        });
+      await adapter.step();
+      await adapter.step();
+      if (outcome === "cancelled") await adapter.stop();
+      await new Promise((resolve) => setImmediate(resolve));
+      pollOutcome = "completed";
+      await adapter.step();
+    }
     db.close();
     adapter.close();
     await telemetry.close();
@@ -338,6 +377,30 @@ test("sanitized traces and logs connect first receive to durable job, retries, r
     const jobSpans = spans.filter(
       (span) => span.traceId === root.split("-")[1],
     );
+    for (const { trace, outcome } of observations) {
+      const graph = spans.filter((span) => span.traceId === trace);
+      const job = graph.find((span) => span.name === "computah.slack.job");
+      const observation = graph.find(
+        (span) => span.name === "computah.slack.status",
+      );
+      assert.ok(observation);
+      assert.equal(observation.parentSpanId, job?.spanId);
+      assert.ok(
+        graph.some(
+          (span) =>
+            span.name === "computah.slack.core" &&
+            span.parentSpanId === observation.spanId,
+        ),
+      );
+      assert.ok(
+        records.some(
+          (record) =>
+            record.traceId === trace &&
+            record.spanId === observation.spanId &&
+            record.attributes.outcome === outcome,
+        ),
+      );
+    }
     const jobSpan = jobSpans.find((span) => span.spanId === root.split("-")[2]);
     assert.equal(jobSpan?.parentSpanId, receive.split("-")[2]);
     assert.equal(jobSpan?.name, "computah.slack.job");
