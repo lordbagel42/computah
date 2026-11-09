@@ -58,9 +58,12 @@ categories and content-free spans; it is not a second durable workflow engine.
 Each Interaction is keyed by tenant/user/agent. Its task tool is
 `Task({ worker, text, acknowledgement? })`. The optional acknowledgment is plain
 public prose (at most 3,500 UTF-16 units), not a final-answer envelope or Worker
-instruction. Interaction chooses a task-specific acknowledgment when helpful,
-or silence for quick utilities; no host timer invents one. The existing durable
-delegation receipt saves the choice and complete native Task-round call identities.
+instruction. Interaction is instructed to include a brief, natural task-specific
+acknowledgment for substantive work, including investigations, research and
+self-checks, and choose silence for tiny instant utilities. The argument remains
+optional for that silence; no host timer invents one. This is model selection
+guidance, not a guarantee of model compliance or faster execution. The existing
+durable delegation receipt saves the choice and complete native Task-round call identities.
 Only after every Task in that round has an actual Worker admission does observation
 release its first nonempty choice in call order. Missing/denied/uncertain admission
 suppresses it, including a sibling not yet started in a sequential tool round.

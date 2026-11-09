@@ -463,9 +463,12 @@ or pruning a receipt does not erase this durable fence. Single-sender stop still
 describes run-wide effects and no external-effect rollback. This does not provide
 per-message isolated cancellation inside the native run.
 
-Interaction chooses a natural task-specific acknowledgment, or silence, in Task's
-optional `acknowledgement` argument. Quick utilities should omit it and let the
-result be the response. This ports June's actual dispatch policy at `4ca93fb`
+Interaction is instructed to choose a natural, brief task-specific acknowledgment
+for substantive investigations, research and self-checks in Task's optional
+`acknowledgement` argument. Tiny instant utilities should omit it and let the
+result be the response. A short request is not necessarily a quick utility.
+This selection guidance is not a guarantee of model compliance, acknowledgment
+delivery or reduced execution latency. This ports June's actual dispatch policy at `4ca93fb`
 (`src/runtime/prompt.ts`, `scope-catalog.ts`'s `executionDispatchText`, and the
 registry/session dispatch paths), not just its wording. June preserves model text
 only after all expected work is admitted; it adds no queued announcement. Computah

@@ -850,7 +850,7 @@ export function createCore(options: CoreOptions) {
         defineTool({
           name: "Task",
           description:
-            "Delegate to a persistent Worker. Reuse the same worker label for follow-ups. Optional acknowledgement is brief public prose about the task, not a final answer; omit it or use empty text for quick utilities.",
+            "Delegate to a persistent Worker. Reuse the same worker label for follow-ups. For substantive work, including investigations, research and self-checks, include a brief natural task-specific acknowledgement, not a final answer. Omit acknowledgement or use empty text for tiny instant utilities such as a sign-in link. For several Tasks together, select at most one acknowledgement describing the combined work; the host releases it only after all admit.",
           parameters: obj({
             worker: str(),
             text: str(),
