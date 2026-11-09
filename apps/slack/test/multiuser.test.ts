@@ -148,6 +148,7 @@ test("per-person channel subscriptions, immutable retries, introductions, owner 
     await adapter.step();
     await adapter.step();
     assert.equal(submitted.at(-1)?.binding.coreToken, owner.coreToken);
+    assert.equal(posts.at(-1)?.text, "safe answer");
     assert.equal(adapter.admit(event("7", "UOWNER")), "accepted");
     await adapter.step();
     await adapter.step();
@@ -484,7 +485,7 @@ test("introductions follow actual DM/channel delivery and do not repeat uncertai
     await adapter.step();
     await adapter.step();
     assert.equal(posts[0].channel, "DUALICE");
-    assert.match(posts[0].text, /^hi, i'm computah\./);
+    assert.equal(posts[0].text, "hi, i'm computah.\n\nsafe answer");
     destination = "thread";
     adapter.admit(event("2"));
     await adapter.step();

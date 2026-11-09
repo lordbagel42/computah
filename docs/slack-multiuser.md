@@ -114,8 +114,11 @@ RPC cancellation does not promise interruption of an already-running owner actor
 action. Accepted mutations may commit after caller loss/cancellation, so retain
 the same request ID and reconcile receipts rather than invent rollback.
 
-Introductions are brief, once per user and actual delivery audience (DM or channel),
-reserved immediately before the first answer post. Failed submissions do not
+Introductions are brief ("hi, i'm computah."), without unsolicited privacy-boundary
+prose, once per user and actual delivery audience (DM or channel). The verified
+existing owner's DM receives no adapter introduction: enrollment does not make
+that established relationship new. Other introductions are reserved immediately
+before the first answer post. Failed submissions do not
 consume them; uncertain posts remain uncertain and are not blindly resent. A crash
 before a reserved post can omit the introduction rather than spam it on retry.
 Markers survive ordinary seven-day receipt pruning and are capped at 10,000.

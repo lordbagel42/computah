@@ -1964,7 +1964,15 @@ export class SlackAdapter {
             : route?.channel ||
               job.channel ||
               (await this.transport.openDm(binding.slackUserId));
-        if (this.enrollment && !forcePrivate && job.submission) {
+        if (
+          this.enrollment &&
+          !forcePrivate &&
+          job.submission &&
+          !(
+            binding.slackUserId === this.enrollment.ownerSlackUserId &&
+            channel.startsWith("D")
+          )
+        ) {
           const audience = JSON.stringify([
             binding.teamId,
             binding.slackUserId,
@@ -1980,7 +1988,7 @@ export class SlackAdapter {
               .prepare("SELECT 1 FROM introductions WHERE binding=? AND job=?")
               .get(audience, job.id)
           )
-            text = `hi, i'm computah. i keep your private chats separate from shared channels.\n\n${text}`;
+            text = `hi, i'm computah.\n\n${text}`;
         }
         runtimeContent("final", {
           source: "slack.delivery",
