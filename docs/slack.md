@@ -1,10 +1,10 @@
 # Slack prototype
 
-Status: routing/status, subscriptions/burst batching and bounded first-mention
-context are implemented in source, pending canonical publication and a separately
-coordinated runtime upgrade. This packet leaves the published manifest, permissions
-and installed app untouched. Wider app grants requested earlier are not established
-by this source change. No live upgraded routing or typing proof is claimed. It uses
+Status: routing/status, subscriptions/burst batching, bounded first-mention context
+and opt-in [multi-user identity](slack-multiuser.md) are implemented in source.
+The source manifest adds public-channel history/events; installed app grants and
+runtime enrollment remain separately coordinated and unverified. No live upgraded
+routing, multi-user or typing proof is claimed. It uses
 official `@slack/socket-mode` 3.1.1 and `@slack/web-api` 8.3.0, no separate model,
 Pi instance or bot history. Protected core REST admission/result calls reuse the
 existing tenant/user/agent Interaction and persistent Task/Worker. There is no
@@ -44,15 +44,15 @@ still name workspace T0266FRGM, plus explicit `enterpriseId:E09V59WQY1E`; never
 replace workspace identity with the enterprise ID. Exact per-event team/user and
 channel allowlists remain mandatory. This is not permission for other workspaces.
 
-The published manifest is retained unchanged: only `app_mentions:read`, `im:history`,
-`im:write`, `chat:write`, with `app_mention` and `message.im` events. Ordinary DM
-chat needs no expansion. The source can handle subscribed channel replies, but
-Slack must first be configured to deliver `message.channels`/`message.groups`
-with corresponding observed history grants before that feature can work live.
+The source manifest now adds `channels:history` and `message.channels` to
+`app_mentions:read`, `im:history`, `im:write`, `chat:write`, `app_mention` and
+`message.im`. Ordinary DM chat needs no expansion. Slack must actually install
+the channel scope/event before subscribed public-channel replies work live;
+private-channel `message.groups`/history is not added here.
 Native status additionally needs observed `assistant:write` and explicit runtime
 opt-in. Bounded thread context skips retrieval without the appropriate history
-grant. These are runtime/install dependencies, not new permission requests in this
-packet. No public ingress or broader workspace enrollment is introduced.
+grant. These are runtime/install dependencies. Broader enrollment is default-off
+and requires protected exact-workspace/channel policy; no public ingress is added.
 
 An earlier owner-requested experiment copied the 44 bot/30 user scope lists from
 June revision `4ca93fb3973f2106013f90cc50bedd4943ff00a9`, validated/synced an Agent
@@ -140,7 +140,10 @@ Startup verifies the bot installation team (or exact explicit enterprise for an
 organization token) and every binding against `/v1/viewer`,
 including `task.send`/`history.read`; the bearer principal owns actor identity.
 Restart to rotate/revoke bindings/tokens. Already-running core work is not cancelled.
-No default binding, auto-enrollment or email lookup exists.
+This paragraph describes legacy static mode. Optional protected multi-user
+enrollment supersedes channel bindings with per-user/channel scopes and retains
+only the verified owner's private mapping; see [identity/security](slack-multiuser.md).
+No display-name or email lookup grants authority.
 
 Run exactly **one adapter process** per journal/installation. Keep journal and
 WAL files private; they contain input text and scoped result handles, not secrets

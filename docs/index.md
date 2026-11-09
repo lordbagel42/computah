@@ -69,6 +69,11 @@ cores decline compaction until its retry boundary can enforce current source gra
 - **Agent-selected Slack routing implemented in source:** finite host-offered
   destinations with durable choice and private/shared audience checks; no core
   identity switch or arbitrary destination IDs. Live acceptance remains separate.
+- **Opt-in multi-user Slack implemented in source:** [identity/security](slack-multiuser.md)
+  derives per-person/private-or-channel actors from authenticated Slack metadata,
+  fixed low-risk grants, explicit channel facts, owner proposals and private
+  declarative plugins. Installed grants, protected enrollment and live two-user
+  acceptance remain pending; this is not anonymous Internet publication.
 - **Durable DEBUGSHARE implemented in source:** the authenticated Slack adapter
   commits an opaque issue-ID-to-origin mapping before ACK, captures bounded actual issue
   context and retries an optional authenticated tracker upload without model/core

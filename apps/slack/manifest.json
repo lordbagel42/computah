@@ -1,7 +1,7 @@
 {
   "display_information": {
     "name": "Computah",
-    "description": "Private durable Computah interaction"
+    "description": "Per-user durable Computah conversations"
   },
   "features": {
     "bot_user": { "display_name": "Computah", "always_online": false },
@@ -12,11 +12,19 @@
   },
   "oauth_config": {
     "scopes": {
-      "bot": ["app_mentions:read", "im:history", "im:write", "chat:write"]
+      "bot": [
+        "app_mentions:read",
+        "im:history",
+        "im:write",
+        "chat:write",
+        "channels:history"
+      ]
     }
   },
   "settings": {
-    "event_subscriptions": { "bot_events": ["app_mention", "message.im"] },
+    "event_subscriptions": {
+      "bot_events": ["app_mention", "message.im", "message.channels"]
+    },
     "socket_mode_enabled": true,
     "org_deploy_enabled": true,
     "token_rotation_enabled": false

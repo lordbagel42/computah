@@ -228,6 +228,9 @@ importers:
 
   apps/slack:
     dependencies:
+      '@computah/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@computah/observability':
         specifier: workspace:*
         version: link:../../packages/observability

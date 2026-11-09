@@ -708,3 +708,14 @@ continuity, failure/cancellation and secret canaries. This does not establish
 production configuration, live Executor discovery or live Axiom ingestion.
 No background auth/refresh/retry path is added; abrupt-death and interrupted
 execute-intent replay trace continuity remain unverified.
+
+## Multi-user Slack community boundary
+
+`community.access`, `community.read` and `community.plugin` use the shared sanitized
+span exporter and bounded lifecycle logger. Tool-to-owner RPC carries trace headers;
+scope checks, durable receipt conflicts/capacity, failure, cancellation and recovery
+remain operation outcomes rather than recording fact/proposal/template contents.
+Caller read cancellation/deadline does not imply remote owner action rollback or
+cancellation: already accepted owner mutations run durably in background context.
+Local synthetic export checks are distinct from enabled collection and live Axiom
+ingestion. Full remote cancellation continuity and abrupt-death export remain gaps.

@@ -10,6 +10,11 @@ import type {
   Viewer,
   WireError,
 } from "@computah/contracts";
+import {
+  type SlackEnrollment,
+  slackCapabilities,
+  verifySlackIdentity,
+} from "@computah/contracts/slack-identity";
 import { registerContentSecrets } from "@computah/observability";
 import type {
   Cursor,
@@ -168,6 +173,7 @@ export function createHttpServer(options: {
   ready?: () => boolean;
   secret: string;
   principals: Map<string, Principal>;
+  slackEnrollment?: SlackEnrollment;
   bind(scope: Scope): CoreSession;
   operatorRedactValues?: readonly string[];
   privilegedUrlPrefixes?: readonly string[];
@@ -231,9 +237,21 @@ export function createHttpServer(options: {
       const bearer = /^Bearer (\S+)$/i.exec(
         request.headers.authorization ?? "",
       )?.[1];
-      const principal = bearer
+      let principal = bearer
         ? options.principals.get(tokenHash(bearer))
         : undefined;
+      if (!principal && bearer && options.slackEnrollment) {
+        const identity = verifySlackIdentity(options.slackEnrollment, bearer);
+        if (identity)
+          principal = {
+            tenantId: identity.tenantId,
+            userId: identity.userId,
+            agentId: identity.agentId,
+            tokenHash: tokenHash(bearer),
+            displayName: identity.userId,
+            capabilities: [...slackCapabilities],
+          };
+      }
       if (!principal) throw new HttpError(401, "unauthenticated");
       registerContentSecrets(bearer ? [bearer] : []);
       const session = options.bind({
@@ -252,6 +270,30 @@ export function createHttpServer(options: {
         clientMutationId: record.requestId?.replace(/^input:/, "") ?? "unknown",
         outcome: outcome(record),
       });
+      if (request.method === "POST" && url.pathname === "/v1/community") {
+        permit("task.send");
+        const input = await body(request);
+        if (
+          Object.keys(input).sort().join(",") !==
+            "action,message,requestId,text" ||
+          ![input.action, input.message, input.requestId, input.text].every(
+            (part) => typeof part === "string",
+          ) ||
+          !["share", "propose", "retract"].includes(input.action as string)
+        )
+          throw new HttpError(400, "invalid-request");
+        const records = await session.community({
+          action: input.action as string,
+          text: input.text as string,
+          requestId: input.requestId as string,
+          message: input.message as string,
+        });
+        reply(200, {
+          id: records[0]?.id ?? null,
+          status: records[0]?.retracted ? "withdrawn" : "recorded",
+        });
+        return;
+      }
       if (
         request.method === "GET" &&
         ["/v1/operator/snapshot", "/v1/operator/history"].includes(url.pathname)

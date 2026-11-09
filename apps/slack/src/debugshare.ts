@@ -54,7 +54,7 @@ export function redactDiagnostic(
     safe = safe.replaceAll(secret, "[redacted]");
   return safe
     .replace(
-      /\b(?:xox[baprs]-[\w-]+|sk-[\w-]{12,}|gh[pousr]_[\w]{16,})\b/g,
+      /\b(?:slack1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|xox[baprs]-[\w-]+|sk-[\w-]{12,}|gh[pousr]_[\w]{16,})\b/g,
       "[redacted]",
     )
     .replace(/\bBearer\s+[\w.+/-]+=*/gi, "Bearer [redacted]");

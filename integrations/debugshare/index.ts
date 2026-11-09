@@ -30,6 +30,7 @@ import {
   Summary,
   statuses,
 } from "./schema.js";
+import { captureScopeAllowed } from "./scope.js";
 import { readTrace, TraceResult } from "./traces.js";
 
 // This account identifies the uploader, not an upstream API credential.
@@ -624,6 +625,11 @@ const config = object({
   tenantId: string(),
   userId: string(),
   agentId: string(),
+  enrollment: object({
+    channelIds: array(string()),
+    deniedUserIds: array(string()),
+    ownerSlackUserId: string(),
+  }).optional(),
 });
 const empty = object({});
 const capture = {
@@ -632,7 +638,7 @@ const capture = {
   state: empty,
   setup: {
     instructions:
-      "Copy callback URL and generated signing secret directly into the protected Slack runtime environment, never into chat. Configure COMPUTAH_DEBUGSHARE_INGEST_URL and COMPUTAH_DEBUGSHARE_SIGNING_SECRET. Pin this subscription to exactly one trusted Slack/core scope. Set COMPUTAH_DEBUGSHARE_REPORT_URL to the authenticated app URL.",
+      "Copy callback URL and generated signing secret directly into the protected Slack runtime environment, never into chat. Configure COMPUTAH_DEBUGSHARE_INGEST_URL and COMPUTAH_DEBUGSHARE_SIGNING_SECRET. Pin the trusted owner Slack/core scope. Optional enrollment must match the adapter's exact workspace, owner Slack ID, allowed channel IDs and denied user IDs. It accepts only requester-bound per-user scopes, never arbitrary scope prefixes. Set COMPUTAH_DEBUGSHARE_REPORT_URL to the authenticated app URL.",
     signingSecret: "executor",
   },
   async handle(ctx, { request, secret, config }) {
@@ -684,12 +690,7 @@ const capture = {
     if (!valid) return new Response(null, { status: 401 });
     try {
       const report = Report.parse(JSON.parse(body));
-      if (
-        report.source.team !== config.team ||
-        report.scope.tenantId !== config.tenantId ||
-        report.scope.userId !== config.userId ||
-        report.scope.agentId !== config.agentId
-      )
+      if (!captureScopeAllowed(report, config))
         return new Response(null, { status: 403 });
       return Response.json(receive(ctx.sql, report));
     } catch {

@@ -172,11 +172,12 @@ test("canonical bytes page without Unicode damage, pin changes and reject paths,
       ids.push(...page.entries.map((entry) => entry.id));
       next = page.nextOffset;
     }
-    expect(new Set(ids).size).toBe(24);
+    expect(new Set(ids).size).toBe(25);
     expect(ids).toContain("self-docs");
     expect(ids).toContain("procedures");
     expect(ids).toContain("browser");
     expect(ids).toContain("executor");
+    expect(ids).toContain("slack-multiuser");
   } finally {
     await rm(base, { recursive: true, force: true });
   }

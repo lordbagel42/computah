@@ -3,6 +3,10 @@ import { mkdir, readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+  readSlackEnrollment,
+  slackIdentity,
+} from "@computah/contracts/slack-identity";
+import {
   currentTraceHeaders,
   runtimeLog,
   startObservability,
@@ -18,7 +22,12 @@ import {
   type Transport,
 } from "./adapter.js";
 import type { DebugReport } from "./debugshare.js";
-import { CoreDenied, readAcknowledgement, taskUpdates } from "./lifecycle.js";
+import {
+  CoreDenied,
+  CoreRejected,
+  readAcknowledgement,
+  taskUpdates,
+} from "./lifecycle.js";
 import { presentSlack } from "./presentation.js";
 import { startTimingBroker } from "./timing-broker.js";
 
@@ -38,6 +47,7 @@ async function main() {
 
 async function run() {
   process.umask(0o077);
+  const enrollment = readSlackEnrollment(process.env);
   const required = (name: string) => {
     const value = process.env[name];
     if (!value) throw new Error("Missing configuration");
@@ -140,6 +150,11 @@ async function run() {
   const auth = await traceOperation("slack.api", () => web.auth.test());
   if (
     !auth.user_id ||
+    (enrollment &&
+      (enrollment.ownerSlackUserId === auth.user_id ||
+        (auth.is_enterprise_install
+          ? enrollment.enterpriseId !== auth.enterprise_id
+          : enrollment.teamId !== auth.team_id))) ||
     bindings.some(
       (b) =>
         b.slackUserId === auth.user_id ||
@@ -265,15 +280,37 @@ async function run() {
         signal: AbortSignal.timeout(30_000),
         redirect: "error",
       });
+      if (
+        path === "/v1/community" &&
+        [400, 403, 409, 413, 429].includes(response.status)
+      )
+        throw new CoreRejected();
       if (response.status === 401 || response.status === 403)
         throw new CoreDenied();
       if (!response.ok) throw new Error("Core unavailable");
       return response.json();
     });
-  for (const binding of bindings.flatMap((b) => [
-    b,
-    ...(b.channelBindings ?? []).map((channel) => ({ ...b, ...channel })),
-  ])) {
+  for (const binding of [
+    ...bindings.flatMap((b) => [
+      b,
+      ...(b.channelBindings ?? []).map((channel) => ({ ...b, ...channel })),
+    ]),
+    ...(enrollment
+      ? [
+          {
+            teamId: enrollment.teamId,
+            slackUserId: enrollment.ownerSlackUserId,
+            channelIds: enrollment.channelIds,
+            ...slackIdentity(
+              enrollment,
+              enrollment.teamId,
+              enrollment.ownerSlackUserId,
+              "dm",
+            )!,
+          },
+        ]
+      : []),
+  ]) {
     const result = (await request(binding, "/v1/viewer")) as {
       viewer?: Partial<Binding> & { capabilities?: string[] };
     };
@@ -504,6 +541,7 @@ async function run() {
     1200,
     true,
     diagnosticSecrets,
+    enrollment,
   );
   let stopping = false;
   socket.on("slack_event", async ({ body, ack }) => {

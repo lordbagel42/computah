@@ -25,6 +25,7 @@ const documents = [
   "bus",
   "events",
   "slack",
+  "slack-multiuser",
   "observability",
   "logging",
   "analytics",

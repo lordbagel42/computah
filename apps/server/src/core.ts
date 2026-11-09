@@ -1,4 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import type { SlackEnrollment } from "@computah/contracts/slack-identity";
 import {
   createTraceCarrier,
   currentTraceHeaders,
@@ -62,6 +63,14 @@ import {
   createBrowserExtension,
 } from "./browser.js";
 import { createAgentOSBrowser } from "./browser-agentos.js";
+import {
+  CommunityError,
+  type CommunityRecord,
+  type CommunityRequest,
+  type CommunityResult,
+  communityInstructions,
+  createCommunity,
+} from "./community.js";
 import {
   createExecutor,
   createExecutorExtension,
@@ -285,6 +294,7 @@ export function workerId(scope: Scope, label = "primary"): string {
 }
 
 export interface CoreOptions {
+  slackEnrollment?: SlackEnrollment;
   /** Stable server-only key, never a browser credential. Keep it across restarts. */
   connectionSecret: string;
   /** Must consult trusted standing grants, not model arguments or browser claims. */
@@ -1099,6 +1109,35 @@ export function createCore(options: CoreOptions) {
   const selfDocs = createSelfDocs();
   interactionTools.install(selfDocs.extension);
   workerTools.install(selfDocs.extension);
+  const community: ReturnType<typeof createCommunity> | undefined =
+    options.slackEnrollment
+      ? createCommunity({
+          policy: options.slackEnrollment,
+          authorize: options.authorize,
+          scope: async (api, context) =>
+            (await api.snapshot(Binding, context))?.scope ?? null,
+          access: async (
+            scope,
+            request,
+            parent,
+            signal,
+          ): Promise<CommunityRecord[]> => {
+            const actor = handle(
+              controlClient(),
+              "interaction",
+              scopeKey(options.slackEnrollment!.ownerScope),
+              signal,
+            );
+            const result = await actor.communityAccess(scope, request, parent);
+            if ("error" in result)
+              throw new CoreError(
+                result.error === "capacity" ? "conflict" : result.error,
+              );
+            return result.records;
+          },
+        })
+      : undefined;
+  if (community) interactionTools.install(community.extension);
 
   if (options.axiomMcp) {
     interactionTools.install(
@@ -1306,6 +1345,34 @@ export function createCore(options: CoreOptions) {
     },
     actions: {
       captureAnalytics,
+      communityAccess: async (
+        c: { key: string[]; pi: Harness },
+        requester: Scope,
+        request: CommunityRequest,
+        parent: Record<string, string>,
+      ): Promise<CommunityResult> => {
+        if (
+          !community ||
+          !options.slackEnrollment ||
+          JSON.stringify(c.key) !==
+            JSON.stringify(scopeKey(options.slackEnrollment.ownerScope))
+        )
+          throw new CoreError("denied");
+        try {
+          return {
+            records: await community.run(
+              requester,
+              request,
+              c.pi,
+              BACKGROUND_CONTEXT,
+              parent,
+            ),
+          };
+        } catch (error) {
+          if (error instanceof CommunityError) return { error: error.code };
+          throw error;
+        }
+      },
       procedureDraft: async (
         c: { key: string[]; pi: Harness },
         request: DraftRequest,
@@ -1640,14 +1707,22 @@ export function createCore(options: CoreOptions) {
       const sourceTools = options.sources?.available(scopeOf(c.key))
         ? (sourceHooks.tools ?? [])
         : [];
+      const communityTools = (await community?.available(scopeOf(c.key))) ?? [];
+      const communityNames = new Set(
+        (community?.extension.tools ?? []).map((tool) => tool.name),
+      );
       await root.configure(
         {
           tools: [
             ...interactionTools
               .snapshot()
               .tools()
-              .filter(({ tool }) => tool.name !== "gmail_read")
+              .filter(
+                ({ tool }) =>
+                  tool.name !== "gmail_read" && !communityNames.has(tool.name),
+              )
               .map(({ tool }) => tool),
+            ...communityTools,
             ...sourceTools,
           ],
           instructions:
@@ -1655,7 +1730,8 @@ export function createCore(options: CoreOptions) {
               ? `${interactionInstructions}\n\n${operationalInstructions}`
               : interactionInstructions) +
             (options.axiomMcp ? `\n\n${axiomInstructions}` : "") +
-            `\n\n${selfDocsInstructions}`,
+            `\n\n${selfDocsInstructions}` +
+            (community ? `\n\n${communityInstructions}` : ""),
           model: modelRef(options.model),
           ...(options.thinkingLevel
             ? { thinkingLevel: options.thinkingLevel }
@@ -1800,7 +1876,7 @@ export function createCore(options: CoreOptions) {
   function attach(client: Client<typeof registry>) {
     /** Call only after authenticating the user on the server; never bind request-body identities. */
     return function bind(trustedScope: Scope) {
-      const scope = Object.freeze({ ...trustedScope });
+      const scope = Object.freeze(scopeOf(scopeKey(trustedScope)));
       const ownedKey = scopeKey(scope);
       const resolve = async (
         id: string,
@@ -1871,6 +1947,26 @@ export function createCore(options: CoreOptions) {
       return {
         interactionId: interactionId(scope),
         workerId: (label = "primary") => workerId(scope, label),
+        community: async (request: CommunityRequest) => {
+          if (!community || !options.slackEnrollment)
+            throw new CoreError("denied");
+          await permit(scope, "task.send");
+          const actor = handle(
+            client,
+            "interaction",
+            scopeKey(options.slackEnrollment.ownerScope),
+          );
+          const result = await actor.communityAccess(
+            scope,
+            request,
+            currentTraceHeaders(),
+          );
+          if ("error" in result)
+            throw new CoreError(
+              result.error === "capacity" ? "conflict" : result.error,
+            );
+          return result.records;
+        },
         /** Trusted local-only draft control; no public HTTP authority or egress. */
         procedureDraft: (id: string, request: DraftRequest) =>
           traceOperation("procedures.draft", async () => {

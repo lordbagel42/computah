@@ -2,6 +2,10 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  slackCapabilities,
+  slackScopeAllowed,
+} from "@computah/contracts/slack-identity";
+import {
   runtimeMetric,
   startObservability,
   traceEvent,
@@ -83,8 +87,11 @@ async function main() {
     ]),
   );
   const authorize: CoreOptions["authorize"] = (scope, capability) =>
-    byScope.get(principalKey(scope))?.capabilities.includes(capability) ??
-    false;
+    scope.tenantId.startsWith("slack:") && config.slackEnrollment
+      ? Boolean(slackScopeAllowed(config.slackEnrollment, scope)) &&
+        slackCapabilities.some((grant) => grant === capability)
+      : (byScope.get(principalKey(scope))?.capabilities.includes(capability) ??
+        false);
   const timing = readTransportTimingConfig(process.env);
   let bind: ((scope: Scope) => CoreSession) | undefined;
   const gmailSettings = gmailConfig(process.env, config.principals.values());
@@ -107,6 +114,7 @@ async function main() {
       })
     : undefined;
   const core = createCore({
+    slackEnrollment: config.slackEnrollment,
     connectionSecret: config.secret,
     authorize,
     transportTiming: timing

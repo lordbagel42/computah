@@ -6,6 +6,11 @@ export class CoreDenied extends Error {
     super("Core operation denied");
   }
 }
+export class CoreRejected extends Error {
+  constructor() {
+    super("Core command rejected");
+  }
+}
 
 export type Progress = "interaction" | "worker" | null;
 

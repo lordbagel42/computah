@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import {
+  type SlackEnrollment,
+  slackIdentity,
+} from "@computah/contracts/slack-identity";
+import {
   createTraceCarrier,
   currentTraceHeaders,
   registerContentSecrets,
@@ -23,6 +27,7 @@ import {
 } from "./debugshare.js";
 import {
   CoreDenied,
+  CoreRejected,
   isStop,
   type ProgressStream,
   type StreamEnd,
@@ -103,6 +108,9 @@ const ingressId = (body: Ingress) =>
     .update(JSON.stringify([body.team_id, body.event_id]))
     .digest("hex")}`;
 
+const communityCommand = (text: string) =>
+  /^(SHAREFACT|PROPOSE|FORGETFACT)(?:\s|$)/.exec(text);
+
 interface ReplyOptions {
   requestId: string;
   originThread: string;
@@ -161,7 +169,6 @@ export interface Transport {
 export class SlackAdapter {
   private readonly db: DatabaseSync;
   private readonly replyLatency: ReplyLatency;
-  private readonly bindings: Map<string, Binding>;
   private statusFlight?: Promise<void>;
   private statusAbort?: AbortController;
   private stopping = false;
@@ -180,11 +187,24 @@ export class SlackAdapter {
     private readonly debounceMs = 0,
     private readonly agentRouting = false,
     private readonly diagnosticSecrets: readonly string[] = [],
+    private readonly enrollment?: SlackEnrollment,
   ) {
     const bindings = [...privateBindings];
     const scope = (b: Pick<Binding, "tenantId" | "userId" | "agentId">) =>
       JSON.stringify([b.tenantId, b.userId, b.agentId]);
     const privateScopes = new Set(privateBindings.map(scope));
+    if (enrollment && privateScopes.size !== privateBindings.length)
+      throw new Error("Private Slack users must have distinct scopes");
+    if (
+      enrollment &&
+      !privateBindings.some(
+        (b) =>
+          b.teamId === enrollment.teamId &&
+          b.slackUserId === enrollment.ownerSlackUserId &&
+          scope(b) === scope(enrollment.ownerScope),
+      )
+    )
+      throw new Error("Verified owner binding required for enrollment");
     const audiences = new Map<string, string>();
     for (const binding of privateBindings) {
       const channels = new Set<string>();
@@ -203,11 +223,9 @@ export class SlackAdapter {
         bindings.push({ ...binding, ...channel, channelBindings: undefined });
       }
     }
-    this.bindings = new Map(
-      bindings.map((binding) => [bindingKey(binding), binding]),
-    );
     registerContentSecrets([
       ...diagnosticSecrets,
+      ...(enrollment ? [enrollment.secret] : []),
       ...bindings.map((binding) => binding.coreToken),
     ]);
     if (
@@ -216,6 +234,9 @@ export class SlackAdapter {
     )
       throw new Error("Duplicate Slack binding");
     this.db = new DatabaseSync(path);
+    this.db.exec(
+      "CREATE TABLE IF NOT EXISTS introductions (binding TEXT PRIMARY KEY, job TEXT NOT NULL)",
+    );
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY, binding TEXT NOT NULL, text TEXT NOT NULL,
@@ -348,6 +369,71 @@ export class SlackAdapter {
     }
   }
 
+  private userBinding(team: string, user: string): Binding | undefined {
+    const existing = this.privateBindings.find(
+      (b) => b.teamId === team && b.slackUserId === user,
+    );
+    if (!this.enrollment) return existing;
+    if (team !== this.enrollment.teamId) return undefined;
+    const identity = slackIdentity(this.enrollment, team, user, "dm");
+    if (!identity) return undefined;
+    return {
+      ...(user === this.enrollment.ownerSlackUserId && existing
+        ? existing
+        : identity),
+      teamId: team,
+      slackUserId: user,
+      enterpriseId: this.enrollment.enterpriseId,
+      channelIds: this.enrollment.channelIds,
+      channelBindings: this.enrollment.channelIds.map((channelId) => ({
+        channelId,
+        ...slackIdentity(
+          this.enrollment as SlackEnrollment,
+          team,
+          user,
+          channelId,
+        )!,
+      })),
+    };
+  }
+
+  private currentBinding(key: string): Binding | undefined {
+    try {
+      const [team, user, , , , channel] = JSON.parse(key) as string[];
+      const owner = this.userBinding(team, user);
+      if (!owner) return undefined;
+      if (channel && !owner.channelIds.includes(channel)) return undefined;
+      const binding = channel
+        ? owner.channelBindings?.find((b) => b.channelId === channel)
+        : owner;
+      if (!binding) return undefined;
+      const resolved = {
+        ...owner,
+        ...binding,
+        ...(channel ? { channelBindings: undefined } : {}),
+      };
+      return bindingKey(resolved) === key ? resolved : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private reportAllowed(report: DebugReport): boolean {
+    const owner = this.userBinding(report.source.team, report.requestedBy);
+    const binding = report.source.channel.startsWith("D")
+      ? owner
+      : owner?.channelIds.includes(report.source.channel) &&
+        owner?.channelBindings?.find(
+          (b) => b.channelId === report.source.channel,
+        );
+    return Boolean(
+      binding &&
+        binding.tenantId === report.scope.tenantId &&
+        binding.userId === report.scope.userId &&
+        binding.agentId === report.scope.agentId,
+    );
+  }
+
   /** Called before Socket Mode ACK. Repeated event IDs cannot reroute a job. */
   admit(
     body: Ingress,
@@ -364,12 +450,11 @@ export class SlackAdapter {
       !event.text ||
       event.subtype ||
       event.bot_id ||
+      event.channel_type === "mpim" ||
       event.user === this.botUserId
     )
       return "ignored";
-    let binding = this.privateBindings.find(
-      (b) => b.teamId === body.team_id && b.slackUserId === event.user,
-    );
+    let binding = this.userBinding(body.team_id, event.user);
     if (!binding) return "ignored";
     const dm =
       event.type === "message" &&
@@ -388,12 +473,15 @@ export class SlackAdapter {
       // Channel authorization is not permission to disclose the private Interaction.
       if (!channel) return "ignored";
       binding = { ...binding, ...channel, channelBindings: undefined };
-      audience = JSON.stringify([
-        binding.teamId,
-        binding.tenantId,
-        binding.userId,
-        binding.agentId,
-      ]);
+      audience =
+        this.enrollment && binding.tenantId.startsWith("slack:")
+          ? JSON.stringify([binding.teamId, "enrolled", event.channel])
+          : JSON.stringify([
+              binding.teamId,
+              binding.tenantId,
+              binding.userId,
+              binding.agentId,
+            ]);
       const subscribed =
         event.thread_ts &&
         this.db
@@ -419,7 +507,13 @@ export class SlackAdapter {
       )
         contextBefore = event.ts;
     }
-    let text = event.text.replaceAll(`<@${this.botUserId}>`, "").trim();
+    const addressed = event.text.trimStart();
+    let text = this.enrollment
+      ? (addressed.startsWith(`<@${this.botUserId}>`)
+          ? addressed.slice(this.botUserId.length + 3)
+          : event.text
+        ).trim()
+      : event.text.replaceAll(`<@${this.botUserId}>`, "").trim();
     // Per-message, anchored instructions only; quoted/model text cannot reroute output.
     const preference = dm
       ? /^(?:please )?reply (in (?:a |this )?thread|top[ -]level):\s*/i.exec(
@@ -471,7 +565,10 @@ export class SlackAdapter {
     const control = isStop(text);
     const origin = event.thread_ts ?? null;
     const pending =
-      this.debounceMs > 0 && !isDebugshare(text) && !control
+      this.debounceMs > 0 &&
+      !isDebugshare(text) &&
+      !control &&
+      !(this.enrollment && communityCommand(text))
         ? (this.db
             .prepare(
               "SELECT j.*,l.origin AS source_origin,l.origin_known AS source_known,EXISTS(SELECT 1 FROM job_lifecycle c WHERE c.kind='stop' AND c.target=j.id) AS controlled FROM jobs j LEFT JOIN job_lifecycle l ON l.job=j.id WHERE j.binding=? AND j.channel=? AND j.thread IS ? AND j.state='queued' AND j.created>? AND j.ready>? ORDER BY j.created DESC,j.rowid DESC LIMIT 1",
@@ -496,6 +593,7 @@ export class SlackAdapter {
       pending.source_origin === origin &&
       !pending.controlled &&
       !isDebugshare(pending.text) &&
+      !(this.enrollment && communityCommand(pending.text)) &&
       !isStop(pending.text) &&
       pending.text.length + text.length + 2 <= 20_000 &&
       (
@@ -508,14 +606,61 @@ export class SlackAdapter {
     const count = this.db.prepare("SELECT count(*) AS n FROM jobs").get() as {
       n: number;
     };
+    const usefulControl =
+      control &&
+      (this.db
+        .prepare(
+          "SELECT j.id FROM jobs j JOIN job_lifecycle l ON l.job=j.id WHERE j.binding=? AND j.channel=? AND l.origin IS ? AND l.origin_known=1 AND l.kind='work' AND l.terminal=0 AND j.state IN ('queued','preparing','admitting','submitted') ORDER BY j.created DESC,j.rowid DESC LIMIT 1",
+        )
+        .get(key, event.channel, origin) as { id: string } | undefined);
+    const controlExempt = this.enrollment ? Boolean(usefulControl) : control;
+    if (
+      this.enrollment &&
+      usefulControl &&
+      this.db
+        .prepare(
+          "SELECT 1 FROM jobs j JOIN job_lifecycle l ON l.job=j.id WHERE l.kind='stop' AND l.target=? AND j.state IN ('queued','preparing','admitting','submitted')",
+        )
+        .get(usefulControl.id)
+    )
+      return "ignored";
     if (!batch && count.n >= 5000) throw new Error("Slack inbox full");
+    if (this.enrollment && !batch && !controlExempt && count.n >= 4500)
+      throw new Error("Slack inbox reserved for cancellation");
     const active = this.db
       .prepare(
         "SELECT count(*) AS n FROM jobs WHERE state IN ('queued','preparing','admitting','submitted')",
       )
       .get() as { n: number };
-    if (!batch && !control && active.n >= 100)
+    if (!batch && !controlExempt && active.n >= 100)
       throw new Error("Slack inbox busy");
+    if (this.enrollment && !batch) {
+      const owned = this.db
+        .prepare(
+          "SELECT count(*) AS retained, sum(state IN ('queued','preparing','admitting','submitted')) AS active FROM jobs WHERE json_extract(binding,'$[0]')=? AND json_extract(binding,'$[1]')=?",
+        )
+        .get(binding.teamId, binding.slackUserId) as {
+        retained: number;
+        active: number | null;
+      };
+      if (
+        owned.retained >= (controlExempt ? 120 : 100) ||
+        (!controlExempt && (owned.active ?? 0) >= 5)
+      )
+        throw new Error("Slack user inbox busy");
+      if (isDebugshare(text)) {
+        const reports = this.db
+          .prepare(
+            "SELECT count(*) AS total, sum(json_extract(report,'$.requestedBy')=? AND json_extract(report,'$.source.team')=?) AS owned FROM debugshares",
+          )
+          .get(binding.slackUserId, binding.teamId) as {
+          total: number;
+          owned: number | null;
+        };
+        if (reports.total >= 5000 || (reports.owned ?? 0) >= 50)
+          throw new Error("Diagnostic capacity reached");
+      }
+    }
     this.db.exec("BEGIN IMMEDIATE");
     try {
       if (batch)
@@ -552,7 +697,11 @@ export class SlackAdapter {
                 } satisfies ReplyOptions)
               : null,
           );
-      if (!batch && !isDebugshare(text)) {
+      if (
+        !batch &&
+        !isDebugshare(text) &&
+        !(this.enrollment && communityCommand(text))
+      ) {
         const target = control
           ? (this.db
               .prepare(
@@ -591,7 +740,11 @@ export class SlackAdapter {
           "INSERT INTO receipt_timing(event,received,sender_ts) VALUES(?,?,?)",
         )
         .run(id, receivedAt, event.ts);
-      if (!control && !isDebugshare(text))
+      if (
+        !control &&
+        !isDebugshare(text) &&
+        !(this.enrollment && communityCommand(text))
+      )
         this.replyLatency.admit(id, receivedAt ?? admissionStarted);
       if (isDebugshare(text)) {
         const carrier = this.timing(id)?.traceparent?.split("-");
@@ -743,7 +896,7 @@ export class SlackAdapter {
       .get(requestId.slice("input:".length)) as
       | { id: string; binding: string }
       | undefined;
-    const binding = job && this.bindings.get(job.binding);
+    const binding = job && this.currentBinding(job.binding);
     if (
       !job ||
       !binding ||
@@ -932,7 +1085,7 @@ export class SlackAdapter {
   }
 
   private async runJob(job: Job): Promise<boolean> {
-    const binding = this.bindings.get(job.binding);
+    const binding = this.currentBinding(job.binding);
     if (!binding) {
       this.replyLatency.settle(job.id, "denied", this.now());
       this.finish(job.id, "done");
@@ -944,6 +1097,77 @@ export class SlackAdapter {
         .get(job.id) as { kind: string } | undefined;
       if (lifecycle?.kind === "stop") {
         await this.cancelJob(job, binding);
+        return true;
+      }
+      const command =
+        this.enrollment &&
+        job.state === "queued" &&
+        !job.submission &&
+        communityCommand(job.text);
+      if (command) {
+        if (this.now() - job.created >= 300_000) {
+          await this.deliver(
+            job,
+            binding,
+            "i couldn't confirm this command within five minutes. it may already be recorded; ask the operator to reconcile it before resending.",
+          );
+          return true;
+        }
+        const text = job.text.slice(command[1].length).trim();
+        if (
+          !text ||
+          text.length > 2000 ||
+          (command[1] !== "PROPOSE" && job.channel.startsWith("D"))
+        ) {
+          await this.deliver(
+            job,
+            binding,
+            "use SHAREFACT <fact> or FORGETFACT <id> in a channel, or PROPOSE <explicit proposal> here. keep it within 2000 characters.",
+          );
+          return true;
+        }
+        const source = this.db
+          .prepare(
+            "SELECT source FROM receipts WHERE job=? ORDER BY rowid LIMIT 1",
+          )
+          .get(job.id) as { source: string };
+        let result: { status?: string; id?: string };
+        try {
+          result = (await this.phase(job.id, "submit", () =>
+            this.transport.request(binding, "/v1/community", {
+              action:
+                command[1] === "PROPOSE"
+                  ? "propose"
+                  : command[1] === "SHAREFACT"
+                    ? "share"
+                    : "retract",
+              text,
+              requestId: job.id,
+              message: (JSON.parse(source.source) as string[])[2],
+            }),
+          )) as { status?: string; id?: string };
+        } catch (error) {
+          if (!(error instanceof CoreRejected)) throw error;
+          await this.deliver(
+            job,
+            binding,
+            "this command was rejected by its scope, input or storage limit. no automatic retry will be made.",
+          );
+          return true;
+        }
+        if (result.status !== "recorded" && result.status !== "withdrawn")
+          throw new Error("Community unavailable");
+        await this.deliver(
+          job,
+          binding,
+          result.status === "withdrawn"
+            ? "that fact was already withdrawn. it has not been republished."
+            : command[1] === "PROPOSE"
+              ? "proposal recorded for raygen's agent to review. no global changes were made."
+              : command[1] === "SHAREFACT"
+                ? `fact shared with agents in this channel only. id: ${result.id}`
+                : "your matching shared fact was removed, if present. prior replies may still contain it.",
+        );
         return true;
       }
       // Only untouched queued input is a command, never wrapped/admitting text.
@@ -961,6 +1185,7 @@ export class SlackAdapter {
         }
         if (!stored.captured) {
           const report = stored.report;
+          if (!this.reportAllowed(report)) throw new CoreDenied();
           const traceparent = this.timing(job.id)?.traceparent;
           await traceOperation(
             "debugshare.capture",
@@ -1047,6 +1272,7 @@ export class SlackAdapter {
                 report.limitations.push(
                   "Slack context transport unavailable; originating command retained.",
                 );
+              if (!this.reportAllowed(report)) throw new CoreDenied();
               this.db
                 .prepare(
                   "UPDATE debugshares SET report=?,captured=1 WHERE job=?",
@@ -1554,7 +1780,7 @@ export class SlackAdapter {
         this.endStream(job.id, "unknown");
       const current = this.readStream(job.id);
       if (!current?.terminal) continue;
-      const binding = this.bindings.get(job.binding);
+      const binding = this.currentBinding(job.binding);
       if (current.attempts >= 3) {
         current.state = "closed";
         this.saveStream(job.id, current);
@@ -1694,6 +1920,11 @@ export class SlackAdapter {
     text: string,
     forcePrivate = false,
   ) {
+    if (!this.currentBinding(job.binding)) {
+      this.replyLatency.settle(job.id, "denied", this.now());
+      this.finish(job.id, "done");
+      return;
+    }
     let route: ReplyRoute | undefined;
     if (job.reply_options) {
       const options = JSON.parse(job.reply_options) as ReplyOptions;
@@ -1727,6 +1958,24 @@ export class SlackAdapter {
             : route?.channel ||
               job.channel ||
               (await this.transport.openDm(binding.slackUserId));
+        if (this.enrollment && !forcePrivate && job.submission) {
+          const audience = JSON.stringify([
+            binding.teamId,
+            binding.slackUserId,
+            channel.startsWith("D") ? "dm" : channel,
+          ]);
+          this.db
+            .prepare(
+              "INSERT OR IGNORE INTO introductions SELECT ?,? WHERE (SELECT count(*) FROM introductions)<10000",
+            )
+            .run(audience, job.id);
+          if (
+            this.db
+              .prepare("SELECT 1 FROM introductions WHERE binding=? AND job=?")
+              .get(audience, job.id)
+          )
+            text = `hi, i'm computah. i keep your private chats separate from shared channels.\n\n${text}`;
+        }
         runtimeContent("final", {
           source: "slack.delivery",
           outcome: "attempt",
@@ -1774,10 +2023,7 @@ export class SlackAdapter {
     channel: string,
     thread: string,
   ): ReplyRoute[] {
-    const owner = this.privateBindings.find(
-      (b) =>
-        b.teamId === binding.teamId && b.slackUserId === binding.slackUserId,
-    );
+    const owner = this.userBinding(binding.teamId, binding.slackUserId);
     if (!owner) return [];
     if (channel.startsWith("D")) {
       if (bindingKey(owner) !== bindingKey(binding)) return [];
@@ -1915,6 +2161,8 @@ export class SlackAdapter {
       async () => {
         if (!this.transport.publishDebugshare)
           throw new Error("Tracker unavailable");
+        if (!this.reportAllowed(report))
+          throw new Error("Report authorization revoked");
         const url = new URL(await this.transport.publishDebugshare(report));
         if (url.protocol !== "https:" || url.username || url.password)
           throw new Error("Invalid report URL");
@@ -1943,16 +2191,7 @@ export class SlackAdapter {
       .prepare("UPDATE debugshares SET next_attempt=? WHERE id=?")
       .run(this.now() + 30_000, row.id);
     const report = JSON.parse(row.report) as DebugReport;
-    if (
-      ![...this.bindings.values()].some(
-        (b) =>
-          b.teamId === report.source.team &&
-          b.tenantId === report.scope.tenantId &&
-          b.userId === report.scope.userId &&
-          b.agentId === report.scope.agentId,
-      )
-    )
-      return true;
+    if (!this.reportAllowed(report)) return true;
     try {
       await this.publishDebugshare(report, row.job);
     } catch {

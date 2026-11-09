@@ -326,3 +326,12 @@ within the backend trust boundary. A vault cannot hide secrets from arbitrary
 privileged owner code. Stronger isolation needs a separately controlled broker/host
 boundary. Non-owner agents gain neither backend credentials nor native host shell;
 their privileged requests use scoped owner escalation, not prompt delegation alone.
+
+## Slack-scoped community tools
+
+Opt-in [multi-user Slack](slack-multiuser.md) adds Interaction `channel_facts`,
+owner-only `owner_proposals`, and actor-private declarative `private_plugin`.
+The linked contract specifies all inputs, limits, explicit publication commands,
+idempotency, terminal capacity, cancellation and recovery semantics. Templates are
+data, not executable plugins. No browser/Executor/Axiom/source/maintenance or host
+capability is granted to enrolled users, including the owner's channel actors.

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readSlackEnrollment } from "@computah/contracts/slack-identity";
 import type { Capability, CoreOptions, Scope } from "./core.js";
 import { interactionModel, workerModel } from "./model-policy.js";
 
@@ -28,6 +29,7 @@ const capabilities: Capability[] = [
 ];
 
 export function readConfig(env: NodeJS.ProcessEnv) {
+  const slackEnrollment = readSlackEnrollment(env);
   const mode = env.COMPUTAH_MODE ?? "real";
   if (mode !== "real" && mode !== "faux")
     throw new Error("COMPUTAH_MODE must be real or faux");
@@ -72,6 +74,11 @@ export function readConfig(env: NodeJS.ProcessEnv) {
       capabilities: [...new Set<Capability>(item.capabilities)],
     };
     if (
+      principal.tenantId.startsWith("slack:") ||
+      item.token.startsWith("slack1.")
+    )
+      throw new Error("Slack enrollment namespace is reserved");
+    if (
       principals.has(principal.tokenHash) ||
       scopes.has(principalKey(principal))
     )
@@ -79,6 +86,15 @@ export function readConfig(env: NodeJS.ProcessEnv) {
     principals.set(principal.tokenHash, principal);
     scopes.add(principalKey(principal));
   }
+  if (
+    slackEnrollment &&
+    (!scopes.has(principalKey(slackEnrollment.ownerScope)) ||
+      slackEnrollment.secret === secret ||
+      input.some((item) => item.token === slackEnrollment.secret))
+  )
+    throw new Error(
+      "Enrollment requires a distinct issuer key and an existing owner scope",
+    );
   if (mode === "real" && env.COMPUTAH_MODEL)
     throw new Error(
       "COMPUTAH_MODEL is obsolete; use COMPUTAH_INTERACTION_MODEL and COMPUTAH_WORKER_MODEL",
@@ -181,6 +197,7 @@ export function readConfig(env: NodeJS.ProcessEnv) {
       "Native browser requires both explicit absolute COMPUTAH_BROWSER_EXECUTABLE and COMPUTAH_BROWSER_CHROMIUM paths",
     );
   return {
+    slackEnrollment,
     mode: mode as "real" | "faux",
     secret,
     principals,
@@ -193,6 +210,7 @@ export function readConfig(env: NodeJS.ProcessEnv) {
     apiKeys: key ? { [provider]: key } : undefined,
     operatorRedactValues: [
       secret,
+      slackEnrollment?.secret,
       ...input.map((binding) => binding.token as string),
       key,
       env.COMPUTAH_TAVILY_API_KEY,
