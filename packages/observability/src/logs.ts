@@ -105,6 +105,7 @@ const operations = [
   "operations.discover",
   "operations.query",
   "operations.timing",
+  "executor.catalog",
   "self_docs.discover",
   "self_docs.read",
   "procedures.draft",

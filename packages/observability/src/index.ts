@@ -138,6 +138,7 @@ const operations = new Set([
   "axiom.call",
   "axiom.refresh",
   "axiom.persist",
+  "executor.catalog",
   "start.failed",
   "logs.export",
   "metrics.collect",

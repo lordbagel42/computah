@@ -694,3 +694,17 @@ bootstrap and optional trace emitter remain disabled/unproved in production;
 these source hooks are not live Axiom ingestion evidence. Browser filters/pause/
 refresh and secondary shared-query caller links are not instrumented;
 cancellation of one visitor does not cancel a shared query.
+
+## Native Executor catalog
+
+The [catalog-only Worker increment](executor.md) uses `executor.catalog` through
+the existing sanitized span exporter and bounded lifecycle logger, not another
+exporter. Native Pi parent context covers initialization, grant/source checks,
+catalog read and awaited cleanup. Resolved failures and cancellation are explicit
+error outcomes, never successful empty catalogs. Catalog bodies, selectors,
+account labels and credentials are excluded from telemetry. Local loopback MCP
+and native Worker tests inspect exported spans and linked logs, including parent
+continuity, failure/cancellation and secret canaries. This does not establish
+production configuration, live Executor discovery or live Axiom ingestion.
+No background auth/refresh/retry path is added; abrupt-death and interrupted
+execute-intent replay trace continuity remain unverified.

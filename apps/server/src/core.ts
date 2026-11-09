@@ -62,6 +62,11 @@ import {
   createBrowserExtension,
 } from "./browser.js";
 import { createAgentOSBrowser } from "./browser-agentos.js";
+import {
+  createExecutor,
+  createExecutorExtension,
+  executorInstructions,
+} from "./executor.js";
 import { createFileTools, type FileCapability } from "./files.js";
 import {
   createOperations,
@@ -118,7 +123,8 @@ export type Capability =
   | "browser.read"
   | "operations.read"
   | FileCapability
-  | "axiom.read";
+  | "axiom.read"
+  | "executor.catalog";
 
 export class CoreError extends Error {
   constructor(readonly code: "denied" | "invalid" | "conflict" | "runtime") {
@@ -294,6 +300,8 @@ export interface CoreOptions {
   apiKeys?: PiOptions["apiKeys"];
   /** Host-only credential/test transport. Never model or ingress input. */
   tavily?: { apiKey: string; fetch?: typeof fetch };
+  /** Private organization-bound Executor catalog credential; no app dispatch. */
+  executor?: { pat?: string; organization?: string; fetch?: typeof fetch };
   /** Explicit native VPS paths; embedded agentOS host callback, not guest ELF execution. */
   browser?: Pick<BrowserOptions, "executable" | "chromium" | "timeoutMs">;
   /** Separate dataset-scoped read credential; never reuse an ingest/MCP token. */
@@ -363,6 +371,7 @@ export function createCore(options: CoreOptions) {
     options.tavily?.apiKey ?? "",
     options.operations?.queryToken ?? "",
     options.axiomMcp?.pat ?? "",
+    options.executor?.pat ?? "",
   ]);
   const nativeContent = (
     context: Context,
@@ -1057,6 +1066,28 @@ export function createCore(options: CoreOptions) {
     },
   });
   workerTools.install(procedures.extension);
+  // Executor owns execute-level source/replay fences inside its total deadline;
+  // the generic source wrapper must not add unbounded checks outside that span.
+  const executorExtension = options.executor
+    ? createExecutorExtension({
+        client: createExecutor({
+          ...options.executor,
+          authorize: options.authorize,
+        }),
+        scope: async (api, context) =>
+          (await api.snapshot(Binding, context))?.scope ?? null,
+        current: async (api, context) => {
+          const binding = await api.snapshot(Binding, context);
+          if (!binding?.scope) throw new CoreError("denied");
+          await sourceCheck(
+            binding.scope,
+            (await api.snapshot(SourceLineage, api.conversationId, context))
+              ?.grants ?? [],
+          );
+        },
+      })
+    : undefined;
+  if (executorExtension) workerTools.install(executorExtension);
   if (options.tavily) workerTools.install(tavilyExtension);
   if (browserExtension) workerTools.install(browserExtension);
   const files = createFileTools({
@@ -1663,10 +1694,11 @@ export function createCore(options: CoreOptions) {
             ...fileTools,
             ...browserTools,
             ...sourceTools,
+            ...(executorExtension?.tools ?? []),
             ...(selfDocs.extension.tools ?? []),
             procedures.tool,
           ],
-          instructions: `${workerInstructions}\n\n${selfDocsInstructions}`,
+          instructions: `${workerInstructions}\n\n${selfDocsInstructions}${executorExtension ? `\n\n${executorInstructions}` : ""}`,
           model: modelRef(options.workerModel ?? options.model),
           ...(options.thinkingLevel
             ? { thinkingLevel: options.thinkingLevel }

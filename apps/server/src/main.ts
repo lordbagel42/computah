@@ -132,6 +132,10 @@ async function main() {
       ? { apiKey: process.env.COMPUTAH_TAVILY_API_KEY }
       : undefined,
     browser: config.browser,
+    executor: {
+      pat: process.env.COMPUTAH_EXECUTOR_PAT,
+      organization: process.env.COMPUTAH_EXECUTOR_ORGANIZATION,
+    },
     operations: { queryToken: process.env.COMPUTAH_AXIOM_QUERY_TOKEN },
     axiomMcp: {
       pat: process.env.COMPUTAH_AXIOM_MCP_PAT,

@@ -24,6 +24,7 @@ const capabilities: Capability[] = [
   "files.read",
   "files.write",
   "axiom.read",
+  "executor.catalog",
 ];
 
 export function readConfig(env: NodeJS.ProcessEnv) {

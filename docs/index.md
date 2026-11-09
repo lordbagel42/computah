@@ -141,6 +141,8 @@ cores decline compaction until its retry boundary can enforce current source gra
   Gmail/Executor, runtime secret references and later provider decisions.
 - [Tavily integration and tools inventory](tavily.md): native bounded web evidence,
   explicit principal grants, current-versus-reusable source and verification limits.
+- [Executor catalog](executor.md): native Worker skills/search/describe, private
+  organization PAT provisioning and explicit grants; no app execution.
 - [Native browser launcher](browser.md): opt-in embedded agentOS host function,
   fresh agent-browser/Chromium sessions, native VPS execution and network limits.
 - [Gmail runtime and source authority](gmail.md): protected account setup, GET-only

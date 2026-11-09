@@ -3,7 +3,10 @@
 This page is a **product contract and integration plan**. Native
 [Tavily search/extract](tavily.md) is implemented with protected configuration and
 explicit principal grants; key presence alone is not activation. Browser,
-Executor and Composio/Gmail remain separate integrations. Safe DTOs/fixtures
+Executor and Composio/Gmail remain separate integrations. The native Worker
+[Executor catalog slice](executor.md) implements skills/search/describe only,
+default-disabled without private provisioning and an explicit principal grant;
+app execution/account/Procedure enforcement remains future work. Safe DTOs/fixtures
 contain no real accounts, tokens or provider setup.
 
 ## Operational data discovery
