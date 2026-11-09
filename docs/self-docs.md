@@ -7,6 +7,16 @@ They read the canonical shipped `docs/*.md` files, not a generated copy, remote
 GitHub checkout, search index or private actor file store. No shell or Git
 executable is invoked. The Docker image packages the same canonical docs.
 
+The instructions on each wake direct both roles to check these docs before
+guessing about Computah's own behavior or asking the user to explain its commands.
+They point to `index` for subsystem discovery and `slack` for `DEBUGSHARE`;
+likely misspellings are lookup clues, never commands to execute. Unavailable or
+inconclusive checks must remain explicit. Interaction also checks available
+context and makes a quick relevant authorized lookup before asking about an
+unfamiliar reference, without exhaustive research or disclosing private context
+in public searches. This is model guidance, not deterministic tool selection or
+proof of live conversational acceptance.
+
 ## Inputs and bounded results
 
 - `self_docs_discover({offset?: number})` returns up to eight code-allowlisted

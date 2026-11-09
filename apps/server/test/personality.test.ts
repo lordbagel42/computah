@@ -132,6 +132,9 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
       expect(request.system).toContain(interactionInstructions);
       expect(request.system).toContain("Use lowercase for your own");
       expect(request.system).toContain(
+        "Before asking what an unfamiliar reference means",
+      );
+      expect(request.system).toContain(
         "Your voice applies to accompanying commentary, not the deliverable.",
       );
       expect(request.tools).toEqual([
@@ -163,6 +166,12 @@ test("default voice reaches Interaction and Worker across Task follow-ups withou
     }
     for (const request of observed) {
       expect(request.system).toContain("Computah");
+      expect(request.system).toContain(
+        "check the shipped self-spec before guessing or asking the user to explain it",
+      );
+      expect(request.system).toContain(
+        "A likely misspelling is a lookup clue, not a command to execute.",
+      );
       expect(request.system).not.toMatch(
         /June|Raygen|gpt-|claude-|#june-things/,
       );
