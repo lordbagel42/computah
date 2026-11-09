@@ -4,7 +4,6 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 export interface SlackEnrollment {
   teamId: string;
   enterpriseId?: string;
-  channelIds: string[];
   deniedUserIds: string[];
   ownerSlackUserId: string;
   ownerScope: { tenantId: string; userId: string; agentId: string };
@@ -43,11 +42,7 @@ export function readSlackEnrollment(
     !/^T[A-Z0-9]+$/.test(policy.teamId) ||
     (policy.enterpriseId !== undefined &&
       !/^E[A-Z0-9]+$/.test(policy.enterpriseId)) ||
-    !Array.isArray(policy.channelIds) ||
-    policy.channelIds.length > 100 ||
-    !policy.channelIds.every(
-      (id: unknown) => typeof id === "string" && /^[CG][A-Z0-9]+$/.test(id),
-    ) ||
+    policy.channelIds !== undefined ||
     !Array.isArray(policy.deniedUserIds) ||
     policy.deniedUserIds.length > 1000 ||
     !policy.deniedUserIds.every(
@@ -66,7 +61,6 @@ export function readSlackEnrollment(
       userId: policy.ownerScope.userId,
       agentId: policy.ownerScope.agentId,
     },
-    channelIds: [...new Set<string>(policy.channelIds)],
     deniedUserIds: [...policy.deniedUserIds],
     secret,
   };
@@ -82,7 +76,7 @@ export function slackIdentity(
     team !== policy.teamId ||
     !/^[UW][A-Z0-9]+$/.test(user) ||
     policy.deniedUserIds.includes(user) ||
-    (audience !== "dm" && !policy.channelIds.includes(audience))
+    (audience !== "dm" && !/^[CG][A-Z0-9]+$/.test(audience))
   )
     return undefined;
   const tenantId = `slack:${team}`;

@@ -7,8 +7,9 @@ in it; it is not a general multi-tenant customer portal. Do not publish its sour
 as a public Executor app listing. Source in this repository contains no reports.
 
 Multi-user uploads require the capture subscription's optional `enrollment` policy
-(`channelIds`, `deniedUserIds`, `ownerSlackUserId`) to match the adapter's protected
-workspace policy. Scope is independently derived from exact requester/channel,
+(`deniedUserIds`, `ownerSlackUserId`) to match the adapter's protected workspace
+policy; all Slack-delivered conversations are eligible without a channel list.
+Scope is independently derived from exact requester/channel,
 never accepted by tenant prefix alone. The legacy configured owner scope is then
 accepted only for the verified owner's DM. Existing deployments do not acquire
 this policy from source publication; unsupported reports remain local. See the

@@ -26,7 +26,9 @@ Workspace enrollment must be explicitly host-enabled. Authenticated Socket Mode
 team/user/channel metadata, never display names or message text, selects identity.
 Each user gets a private DM scope and separate per-user shared-channel scopes.
 Private memory never enters shared-channel model input. Shared-channel facts are
-public only to that explicitly configured channel audience, not the Internet.
+shared only with that conversation's audience, not the Internet. Any new human
+who mentions Computah in any conversation where Slack delivers the event gets
+their own durable Computah automatically; no per-user/channel enrollment approval.
 New users receive no global, secret, host, config, operator or admin capabilities.
 Verified existing owner capabilities remain private to the protected owner scope.
 
@@ -41,31 +43,42 @@ authority-bearing tasks or private history forwarding.
 Both backend and Slack adapter require the same protected
 `COMPUTAH_SLACK_ENROLLMENT_JSON` and distinct random
 `COMPUTAH_SLACK_ENROLLMENT_SECRET` (at least 32 characters). JSON fields are
-`teamId`, optional `enterpriseId`, `channelIds`, `deniedUserIds`,
+`teamId`, optional `enterpriseId`, `deniedUserIds`,
 `ownerSlackUserId` and `ownerScope:{tenantId,userId,agentId}`. The owner must
 already have an exact static core principal and private adapter binding.
 No enrollment configuration means existing static behavior, not open admission.
+Enrollment covers every Slack-delivered channel/private-channel/group-DM mention
+and direct message in that installation's workspace. There is no channel allowlist;
+the former `channelIds` enrollment field is rejected rather than silently ignored.
+Slack still controls installation membership, invitations and event delivery: it
+does not deliver a mention from a conversation the app cannot access. Other
+workspaces require their own authenticated installation, not a workspace wildcard.
 
 Canonical versioned HMAC bearers encode only authenticated workspace/user/audience.
 Backend verification independently derives `slack:<team> / <Slack user> / private`
-for DMs or `channel:<channel>` for a configured channel. The namespace is reserved
+for DMs or `channel:<channel>` for the actual shared conversation. The namespace is reserved
 even while disabled. Grants are exactly `task.send`, `history.read`,
 `task.control`, `files.read`, `files.write`; source, browser, Axiom, Executor,
 operator, config, secrets and maintenance authority are not inherited. Verified
 owner private DMs keep the old scope/grants. Owner channel messages are unprivileged
 and separate too. No legacy channel history is migrated into new actors.
+Raygen's owner agent retains standing self-edit/self-shipping authority: no new
+per-change approval or two-person rule is introduced. Other users can modify their
+own scoped templates; global changes remain proposals to the owner agent, not
+privileged execution by the requesting user.
 
 These deterministic bearers are replayable credentials, not proof of current
-Slack membership. Denied users, removed channels, disabled enrollment and issuer
+Slack membership. Denied users, disabled enrollment and issuer
 rotation revoke subsequent access; actor recovery reconstructs current policy
 without an initial HTTP enrollment call. Membership/deactivation events and Slack
 Connect membership verification are not implemented. Policy admits authenticated
-speakers in explicitly enabled audiences, including external participants Slack
-delivers there; do not enable such channels if that is not the intended audience.
+speakers wherever the installed bot receives mentions/DMs, including external or
+shared-channel participants Slack delivers there, as requested by Raygen.
 
 Mentions establish bounded 90-day channel-thread subscriptions; other authenticated
 participants in that thread use their own actor. No anonymous/public HTTP ingress,
-MPIM, bot/subtype processing or arbitrary channel addressing is added. The adapter
+bot/subtype processing or arbitrary channel addressing is added. Group DMs use
+shared conversation scopes, never a participant's private DM scope. The adapter
 rechecks exact scope and current location before recovered execution and delivery.
 Shared output can only use a shared actor's context, never its user's DM history.
 
@@ -122,7 +135,7 @@ DM conversation, excluding replies in other threads; it never fetches another DM
 Capture and inline/recovered upload recheck original team/requester/location/core
 scope against current policy. No private actor histories or bulk channels are
 exported. Tracker enrollment must independently configure the same exact workspace,
-owner Slack ID, allowed channels and denied users; unsupported scopes remain local
+owner Slack ID and denied users; unsupported scopes remain local
 with upload unavailable. Reports and tracker access remain authenticated operator
 data, never anonymous Internet publication.
 
@@ -131,18 +144,20 @@ data, never anonymous Internet publication.
 Local synthetic checks use real durable actors/native Workers and HTTP with fake
 model/Slack transports, including private file/template canaries, forged credentials,
 audience splits, retries/reopen, owner sleep, retraction replay, admission saturation
-and diagnostic revocation. This is not installed/runtime acceptance. Runtime adoption
-belongs to the existing protected deployment owner. Live acceptance requires two
-consenting real Slack participants, exact installed event/history grants and a
-revision-matched core/adapter; no unsolicited messages or real model tests are
-authorized by local synthetic checks.
+and diagnostic revocation. Synthetic two-user tests are engineering verification,
+not an enrollment requirement, two-person approval or a demand that Raygen recruit
+testers. Runtime adoption belongs to the existing protected deployment owner and
+requires actual installed event/history grants and a revision-matched core/adapter.
+Do not hold activation for selected channels or human test participants. Real
+multi-user smoke checks can observe naturally arriving requests after adoption;
+no unsolicited messages or real model tests are authorized by local synthetic checks.
 
 Adoption must coordinate backend, adapter, protected enrollment and tracker policy.
-The source manifest adds `channels:history` and `message.channels`; it does not
-establish installed grants. Real acceptance must exercise two people mentioning
-Computah in an enabled channel/thread, their separate DMs, one brief introduction,
-private canary non-disclosure, explicit same-channel fact sharing/retraction,
-proposal receipt/owner review, scoped template isolation, denied global tools,
-DEBUGSHARE by both users, and restart/revocation. Verify emitted sanitized traces
-separately from actual live Axiom ingestion. No real participant/model calls have
-been made by this implementation work.
+The source manifest includes public/private-channel and group-DM history/events
+(`channels:history`, `groups:history`, `mpim:history`, `message.channels`,
+`message.groups`, `message.mpim`); it does not establish installed grants. Local
+fixtures exercise newly seen users/locations without preconfiguration, separate
+DM/channel memory, one brief introduction, explicit fact sharing/retraction,
+proposals, template isolation, denied global tools, diagnostics and restart/revocation.
+Verify runtime adoption and live Axiom ingestion separately from source proof.
+No real participant/model calls have been made by this implementation work.

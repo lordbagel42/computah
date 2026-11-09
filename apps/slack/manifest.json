@@ -17,13 +17,21 @@
         "im:history",
         "im:write",
         "chat:write",
-        "channels:history"
+        "channels:history",
+        "groups:history",
+        "mpim:history"
       ]
     }
   },
   "settings": {
     "event_subscriptions": {
-      "bot_events": ["app_mention", "message.im", "message.channels"]
+      "bot_events": [
+        "app_mention",
+        "message.im",
+        "message.channels",
+        "message.groups",
+        "message.mpim"
+      ]
     },
     "socket_mode_enabled": true,
     "org_deploy_enabled": true,

@@ -4,7 +4,6 @@ export interface CapturePolicy {
   userId: string;
   agentId: string;
   enrollment?: {
-    channelIds: string[];
     deniedUserIds: string[];
     ownerSlackUserId: string;
   };
@@ -41,7 +40,7 @@ export function captureScopeAllowed(
   const channel = report.source.channel;
   const audience = /^D[A-Z0-9]+$/.test(channel)
     ? "private"
-    : /^[CG][A-Z0-9]+$/.test(channel) && enrollment.channelIds.includes(channel)
+    : /^[CG][A-Z0-9]+$/.test(channel)
       ? `channel:${channel}`
       : null;
   return (

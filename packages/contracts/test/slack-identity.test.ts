@@ -16,7 +16,6 @@ test("Slack credentials bind exact canonical user/workspace/audience and never c
       teamId: "TTEST",
       ownerSlackUserId: "UOWNER",
       ownerScope: { tenantId: "tenant", userId: "owner", agentId: "default" },
-      channelIds: ["CONE", "CTWO"],
       deniedUserIds: ["UBLOCKED"],
     }),
   };
@@ -24,6 +23,17 @@ test("Slack credentials bind exact canonical user/workspace/audience and never c
   assert.equal(readSlackEnrollment({}), undefined);
   assert.throws(() =>
     readSlackEnrollment({ ...env, COMPUTAH_SLACK_ENROLLMENT_SECRET: "short" }),
+  );
+  assert.throws(
+    () =>
+      readSlackEnrollment({
+        ...env,
+        COMPUTAH_SLACK_ENROLLMENT_JSON: JSON.stringify({
+          ...JSON.parse(env.COMPUTAH_SLACK_ENROLLMENT_JSON),
+          channelIds: ["COLD"],
+        }),
+      }),
+    "stale channel-list configuration must not silently broaden",
   );
   const alice = slackIdentity(policy, "TTEST", "UALICE", "dm")!;
   assert.deepEqual(
@@ -34,7 +44,10 @@ test("Slack credentials bind exact canonical user/workspace/audience and never c
   for (const [team, user, audience] of [
     ["TOTHER", "UALICE", "dm"],
     ["TTEST", "UBLOCKED", "dm"],
-    ["TTEST", "UALICE", "COTHER"],
+    ["TTEST", "UALICE", "XOTHER"],
+    ["TTEST", "UALICE", "DPRIVATE"],
+    ["TTEST", "UALICE", "channel:CONE"],
+    ["TTEST", "UALICE", ""],
     ["TTEST", "../owner", "dm"],
   ] as const)
     assert.equal(slackIdentity(policy, team, user, audience), undefined);
@@ -43,6 +56,8 @@ test("Slack credentials bind exact canonical user/workspace/audience and never c
     slackIdentity(policy, "TTEST", "UALICE", "CONE")!,
     slackIdentity(policy, "TTEST", "UALICE", "CTWO")!,
     slackIdentity(policy, "TTEST", "UOWNER", "CONE")!,
+    slackIdentity(policy, "TTEST", "UALICE", "CNEVERCONFIGURED")!,
+    slackIdentity(policy, "TTEST", "UALICE", "GNEVERCONFIGURED")!,
   ];
   assert.equal(
     new Set(
@@ -50,8 +65,10 @@ test("Slack credentials bind exact canonical user/workspace/audience and never c
         JSON.stringify([scope.tenantId, scope.userId, scope.agentId]),
       ),
     ).size,
-    5,
+    7,
   );
+  for (const identity of variants)
+    assert.deepEqual(verifySlackIdentity(policy, identity.coreToken), identity);
   for (const invalid of [
     alice.coreToken + ".extra",
     alice.coreToken.replace("slack1.", "slack2."),

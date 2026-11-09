@@ -369,7 +369,11 @@ export class SlackAdapter {
     }
   }
 
-  private userBinding(team: string, user: string): Binding | undefined {
+  private userBinding(
+    team: string,
+    user: string,
+    channel?: string,
+  ): Binding | undefined {
     const existing = this.privateBindings.find(
       (b) => b.teamId === team && b.slackUserId === user,
     );
@@ -377,6 +381,10 @@ export class SlackAdapter {
     if (team !== this.enrollment.teamId) return undefined;
     const identity = slackIdentity(this.enrollment, team, user, "dm");
     if (!identity) return undefined;
+    const shared =
+      channel && /^[CG][A-Z0-9]+$/.test(channel)
+        ? slackIdentity(this.enrollment, team, user, channel)
+        : undefined;
     return {
       ...(user === this.enrollment.ownerSlackUserId && existing
         ? existing
@@ -384,23 +392,16 @@ export class SlackAdapter {
       teamId: team,
       slackUserId: user,
       enterpriseId: this.enrollment.enterpriseId,
-      channelIds: this.enrollment.channelIds,
-      channelBindings: this.enrollment.channelIds.map((channelId) => ({
-        channelId,
-        ...slackIdentity(
-          this.enrollment as SlackEnrollment,
-          team,
-          user,
-          channelId,
-        )!,
-      })),
+      channelIds: shared && channel ? [channel] : [],
+      channelBindings:
+        shared && channel ? [{ channelId: channel, ...shared }] : [],
     };
   }
 
   private currentBinding(key: string): Binding | undefined {
     try {
       const [team, user, , , , channel] = JSON.parse(key) as string[];
-      const owner = this.userBinding(team, user);
+      const owner = this.userBinding(team, user, channel);
       if (!owner) return undefined;
       if (channel && !owner.channelIds.includes(channel)) return undefined;
       const binding = channel
@@ -419,7 +420,11 @@ export class SlackAdapter {
   }
 
   private reportAllowed(report: DebugReport): boolean {
-    const owner = this.userBinding(report.source.team, report.requestedBy);
+    const owner = this.userBinding(
+      report.source.team,
+      report.requestedBy,
+      report.source.channel,
+    );
     const binding = report.source.channel.startsWith("D")
       ? owner
       : owner?.channelIds.includes(report.source.channel) &&
@@ -450,18 +455,19 @@ export class SlackAdapter {
       !event.text ||
       event.subtype ||
       event.bot_id ||
-      event.channel_type === "mpim" ||
+      (!this.enrollment && event.channel_type === "mpim") ||
       event.user === this.botUserId
     )
       return "ignored";
-    let binding = this.userBinding(body.team_id, event.user);
+    let binding = this.userBinding(body.team_id, event.user, event.channel);
     if (!binding) return "ignored";
     const dm =
       event.type === "message" &&
       event.channel_type === "im" &&
       event.channel.startsWith("D");
     const mention =
-      event.type === "app_mention" &&
+      (event.type === "app_mention" ||
+        (event.type === "message" && event.channel_type === "mpim")) &&
       binding.channelIds.includes(event.channel) &&
       event.text.includes(`<@${this.botUserId}>`);
     let audience = "";
@@ -2023,7 +2029,11 @@ export class SlackAdapter {
     channel: string,
     thread: string,
   ): ReplyRoute[] {
-    const owner = this.userBinding(binding.teamId, binding.slackUserId);
+    const owner = this.userBinding(
+      binding.teamId,
+      binding.slackUserId,
+      channel,
+    );
     if (!owner) return [];
     if (channel.startsWith("D")) {
       if (bindingKey(owner) !== bindingKey(binding)) return [];

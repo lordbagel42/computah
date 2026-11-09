@@ -39,7 +39,6 @@ const policy: SlackEnrollment = {
   teamId: "TTEST",
   ownerSlackUserId: "UOWNER",
   ownerScope: owner,
-  channelIds: ["CONE", "CTWO"],
   deniedUserIds: [],
   secret: "synthetic-issuer-secret-not-a-real-key",
 };

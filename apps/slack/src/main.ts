@@ -300,7 +300,7 @@ async function run() {
           {
             teamId: enrollment.teamId,
             slackUserId: enrollment.ownerSlackUserId,
-            channelIds: enrollment.channelIds,
+            channelIds: [],
             ...slackIdentity(
               enrollment,
               enrollment.teamId,
@@ -400,12 +400,16 @@ async function run() {
       },
       ...(publishDebugshare ? { publishDebugshare } : {}),
       async diagnosticContext(source) {
-        const scope = source.channel.startsWith("D")
-          ? "im:history"
-          : source.channel.startsWith("G")
-            ? "groups:history"
-            : "channels:history";
-        if (!auth.response_metadata?.scopes?.includes(scope))
+        // Channel prefixes do not reliably distinguish private channels from MPIMs.
+        // Slack authorizes the exact conversation; this is only an observed-grant gate.
+        const scopes = source.channel.startsWith("D")
+          ? ["im:history"]
+          : ["channels:history", "groups:history", "mpim:history"];
+        if (
+          !scopes.some((scope) =>
+            auth.response_metadata?.scopes?.includes(scope),
+          )
+        )
           throw new Error("Diagnostic context unavailable");
         const root =
           source.thread ??
@@ -458,10 +462,11 @@ async function run() {
         );
       },
       async threadContext(channel, thread, before, signal) {
-        const scope = channel.startsWith("G")
-          ? "groups:history"
-          : "channels:history";
-        if (!auth.response_metadata?.scopes?.includes(scope))
+        if (
+          !["channels:history", "groups:history", "mpim:history"].some(
+            (scope) => auth.response_metadata?.scopes?.includes(scope),
+          )
+        )
           throw new Error("Thread context unavailable");
         // One bounded page from the invoked thread, no search, profiles, DMs or pagination.
         const url = new URL("https://slack.com/api/conversations.replies");

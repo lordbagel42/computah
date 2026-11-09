@@ -27,7 +27,6 @@ const policy: SlackEnrollment = {
   teamId: "TTEST",
   ownerSlackUserId: "UOWNER",
   ownerScope: { tenantId: "tenant", userId: "owner", agentId: "default" },
-  channelIds: ["CONE", "CTWO"],
   deniedUserIds: [],
   secret: "synthetic-issuer-secret-not-a-real-key",
 };
@@ -162,9 +161,35 @@ test("per-person channel subscriptions, immutable retries, introductions, owner 
         event: { ...event("10").event, subtype: "message_changed" },
       },
       event("11", "UBOT"),
-      event("12", "UALICE", "COTHER"),
+      event("12", "UALICE", "XOTHER"),
     ])
       assert.equal(adapter.admit(bad), "ignored");
+    for (const channel of ["CNEVERCONFIGURED", "GPRIVATE", "GMULTI"]) {
+      const incoming = event(`fresh-${channel}`, "UFIRSTTIME", channel);
+      if (channel === "GMULTI") {
+        incoming.event = {
+          ...incoming.event,
+          type: "message",
+          channel_type: "mpim",
+        };
+        assert.equal(
+          adapter.admit({
+            ...incoming,
+            event: { ...incoming.event, text: "not addressing the bot" },
+          }),
+          "ignored",
+        );
+      }
+      assert.equal(adapter.admit(incoming), "accepted");
+      adapter.close();
+      adapter = open();
+      await adapter.step();
+      await adapter.step();
+      assert.equal(submitted.at(-1)?.binding.userId, "UFIRSTTIME");
+      assert.equal(submitted.at(-1)?.binding.agentId, `channel:${channel}`);
+      assert.equal(posts.at(-1)?.channel, channel);
+      assert.match(posts.at(-1)!.text, /^hi, i'm computah\./);
+    }
     const before = submitted.length;
     assert.equal(adapter.admit(event("13", "UALICE", "CTWO")), "accepted");
     adapter.close();
@@ -264,12 +289,23 @@ test("DEBUGSHARE enrolls any permitted requester but upload rechecks requester, 
       userId: "owner",
       agentId: "default",
       enrollment: {
-        channelIds: ["CONE"],
         deniedUserIds: [],
         ownerSlackUserId: "UOWNER",
       },
     };
     assert.equal(captureScopeAllowed(reports[0], capturePolicy), true);
+    for (const channel of ["CNEVERCONFIGURED", "GPRIVATE", "GMULTI"])
+      assert.equal(
+        captureScopeAllowed(
+          {
+            ...reports[0],
+            source: { ...reports[0].source, channel },
+            scope: { ...reports[0].scope, agentId: `channel:${channel}` },
+          },
+          capturePolicy,
+        ),
+        true,
+      );
     for (const report of [
       { ...reports[0], requestedBy: "UBOB" },
       { ...reports[0], source: { ...reports[0].source, channel: "CTWO" } },
@@ -284,7 +320,7 @@ test("DEBUGSHARE enrolls any permitted requester but upload rechecks requester, 
       false,
     );
     adapter.close();
-    current.channelIds = ["CTWO"];
+    current.deniedUserIds.push("UALICE");
     now += 31_000;
     adapter = open();
     await adapter.step();

@@ -626,7 +626,6 @@ const config = object({
   userId: string(),
   agentId: string(),
   enrollment: object({
-    channelIds: array(string()),
     deniedUserIds: array(string()),
     ownerSlackUserId: string(),
   }).optional(),
@@ -638,7 +637,7 @@ const capture = {
   state: empty,
   setup: {
     instructions:
-      "Copy callback URL and generated signing secret directly into the protected Slack runtime environment, never into chat. Configure COMPUTAH_DEBUGSHARE_INGEST_URL and COMPUTAH_DEBUGSHARE_SIGNING_SECRET. Pin the trusted owner Slack/core scope. Optional enrollment must match the adapter's exact workspace, owner Slack ID, allowed channel IDs and denied user IDs. It accepts only requester-bound per-user scopes, never arbitrary scope prefixes. Set COMPUTAH_DEBUGSHARE_REPORT_URL to the authenticated app URL.",
+      "Copy callback URL and generated signing secret directly into the protected Slack runtime environment, never into chat. Configure COMPUTAH_DEBUGSHARE_INGEST_URL and COMPUTAH_DEBUGSHARE_SIGNING_SECRET. Pin the trusted owner Slack/core scope. Optional enrollment must match the adapter's exact workspace, owner Slack ID and denied user IDs. Enrollment covers all conversations where Slack delivers the bot's messages; it accepts only exact requester/location-bound per-user scopes, never arbitrary scope prefixes. Set COMPUTAH_DEBUGSHARE_REPORT_URL to the authenticated app URL.",
     signingSecret: "executor",
   },
   async handle(ctx, { request, secret, config }) {

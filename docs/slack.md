@@ -41,18 +41,22 @@ Owner does **not** need to repeat login, approval or manual app creation.
 Real `auth.test` returned `is_enterprise_install:true`, with both `team_id` and
 `enterprise_id` equal to E09V59WQY1E, bot user U0CFU8W96M8. Runtime bindings must
 still name workspace T0266FRGM, plus explicit `enterpriseId:E09V59WQY1E`; never
-replace workspace identity with the enterprise ID. Exact per-event team/user and
-channel allowlists remain mandatory. This is not permission for other workspaces.
+replace workspace identity with the enterprise ID. Exact per-event team/user
+identity remains mandatory. Legacy static mode uses channel allowlists; opted-in
+multi-user mode enrolls automatically wherever Slack delivers the bot's events.
+This is not permission for other workspaces.
 
-The source manifest now adds `channels:history` and `message.channels` to
+The source manifest now adds `channels:history`, `groups:history`, `mpim:history`
+and `message.channels`, `message.groups`, `message.mpim` to
 `app_mentions:read`, `im:history`, `im:write`, `chat:write`, `app_mention` and
 `message.im`. Ordinary DM chat needs no expansion. Slack must actually install
-the channel scope/event before subscribed public-channel replies work live;
-private-channel `message.groups`/history is not added here.
+the scopes/events before subscribed public/private-channel or group-DM replies
+work live. Slack's own app membership/invitation rules still control event delivery.
 Native status additionally needs observed `assistant:write` and explicit runtime
 opt-in. Bounded thread context skips retrieval without the appropriate history
 grant. These are runtime/install dependencies. Broader enrollment is default-off
-and requires protected exact-workspace/channel policy; no public ingress is added.
+and requires protected exact-workspace/owner identity policy, not per-channel
+selection or two-person approval; no public ingress is added.
 
 An earlier owner-requested experiment copied the 44 bot/30 user scope lists from
 June revision `4ca93fb3973f2106013f90cc50bedd4943ff00a9`, validated/synced an Agent
