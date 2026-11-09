@@ -719,3 +719,19 @@ Caller read cancellation/deadline does not imply remote owner action rollback or
 cancellation: already accepted owner mutations run durably in background context.
 Local synthetic export checks are distinct from enabled collection and live Axiom
 ingestion. Full remote cancellation continuity and abrupt-death export remain gaps.
+
+## Operational DEBUGSHARE coordinator
+
+The [dedicated Amp receiver](../integrations/debugshare-listener/README.md) uses
+Amp's managed webhook spans and fixed-category
+`computah.debugshare.notice.completed` span-event logs for appended, reconciled,
+duplicate, rejected, failure and cancellation outcomes. Its fixed authenticated
+Worker notice lookup/ACK never logs report contents, raw remote errors, tokens or
+the secret capability URL. Local tests verify these outcomes, including typed HTTP
+denial and late cancelled reads; they are not live Axiom ingestion proof.
+
+This operational-tooling path does not yet use Computah's shared bounded logger
+or sanitized Axiom export. Registration/startup, Worker→Amp→lookup parent/link
+continuity and exporter cancellation/failure proof remain gaps; no competing
+exporter or complete-coverage claim is introduced. Worker outbox collection and
+natural DEBUGSHARE acceptance require separate migration-owner evidence.

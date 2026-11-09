@@ -84,6 +84,14 @@ cores decline compaction until its retry boundary can enforce current source gra
   characters; existing UUID reports remain readable without migration. Older
   identifier-only UUIDs have no retained diagnostic mapping.
   See [Slack command semantics](slack.md).
+- **Dedicated bug coordinator receiver implemented locally:** the
+  [operational Amp receiver](../integrations/debugshare-listener/README.md)
+  accepts bounded report/version notices only after authenticated durable-notice
+  lookup and separately acknowledges a confirmed coordinator append. The selected
+  project-owned tracker migration is `debug.raygen.dev`; Worker/API adoption,
+  private credential configuration and natural capture acceptance are separate.
+  The persistent coordinator routes conversational reports to focused workers;
+  source landing, runtime adoption and acceptance remain distinct.
 - **Imported reference material:** faithful [Figma-to-Rune plan](../ui/IMPORT-PLAN.md),
   recovered standalone Canvas study and source reference images. These are not an
   implemented native app or finished Figma port.
