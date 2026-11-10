@@ -135,6 +135,9 @@ cores decline compaction until its retry boundary can enforce current source gra
 
 ## Read by responsibility
 
+- [Agent-readable self-docs](self-docs.md): discover shipped document IDs, read
+  hash-pinned pages and explain unavailable results; shipped bytes are not proof
+  of current deployment, grants or live capability.
 - [Wire contract and fixtures](contracts.md): version 1, mock/live seam, state and
   replay rules, renderer-neutral generated JSON Schema.
 - [Durable core](core.md): private scoped gateway, Task/Worker lifecycle, native

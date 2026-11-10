@@ -2,8 +2,11 @@
 
 **Source-supported catalog slice; local native MCP/Worker acceptance is separate
 from configured production and live Executor/Axiom acceptance.** This is not
-complete first-party execution support. The authenticated Executor-hosted
-DEBUGSHARE app is a different integration.
+complete first-party execution support. DEBUGSHARE is a different integration:
+its [independent authenticated tracker](../integrations/debugshare/README.md)
+targets `debug.raygen.dev`, replacing the legacy Executor-hosted tracker.
+Source implementation does not establish migration or runtime adoption; neither
+tracker's credentials grant access to this catalog.
 
 Workers expose `executor_skills`, `executor_search` and `executor_describe` through
 the pinned `@earendil-works/pi-mcp` 1.5.0 `McpClient` and Streamable HTTP transport.
