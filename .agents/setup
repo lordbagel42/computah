@@ -93,7 +93,7 @@ done
 
 # Select the experiment's own pinned version explicitly; never rewrite its lockfile.
 step pnpm install --frozen-lockfile
-for workspace in experiments/rune-pi deploy apps/observatory/deploy; do
+for workspace in experiments/rune-pi deploy apps/observatory/deploy integrations/debugshare; do
   (
     cd "$workspace"
     if [[ "$workspace" == experiments/rune-pi ]]; then

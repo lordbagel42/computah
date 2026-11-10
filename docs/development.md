@@ -10,7 +10,8 @@ Executable `.agents/setup` prepares snapshot-ready dependencies: the Dockerfile'
 Node version, the root manifest's pnpm version, both pinned Rust toolchains with
 Clippy/rustfmt, and Linux native build/graphics prerequisites. It installs frozen
 dependencies for the root workspace, the independent Rune experiment (using its
-own pnpm pin), and both deployment workspaces. Cargo fetches both locked native
+own pnpm pin), both deployment workspaces, and the independent DEBUGSHARE workspace
+used by CI. Cargo fetches both locked native
 workspaces for the Linux host without compiling them. Warm setup reuses installed
 toolchains and package caches; login shells inherit their paths.
 
