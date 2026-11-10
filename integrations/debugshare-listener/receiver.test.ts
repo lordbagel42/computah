@@ -17,8 +17,14 @@ function fixture() {
   let appendUncertain = false;
   const intents = new Set<string>();
   const controller = new AbortController();
+  let dispatches = 0;
   const tracker = {
     token: async () => "synthetic-notice-token",
+    assigned: async () => true,
+    dispatch: async () => {
+      dispatches++;
+      return "T-00000000-0000-0000-0000-000000000001";
+    },
     begin: async (id: string) => {
       const first = !intents.has(id);
       intents.add(id);
@@ -77,6 +83,7 @@ function fixture() {
     messages,
     logs,
     controller,
+    dispatches: () => dispatches,
     failLookup: () => {
       lookupFails = true;
     },
@@ -158,6 +165,7 @@ test("denied, mismatched and oversized lookup responses never append", async () 
       createReceiver(f.tracker).handle(event, f.ctx),
     ).rejects.toThrow();
     expect(f.messages).toHaveLength(0);
+    expect(f.dispatches()).toBe(0);
     expect(JSON.stringify(f.logs)).not.toContain("sensitive-response-canary");
   }
 });
@@ -191,10 +199,38 @@ test("a late lookup after cancellation cannot append or ACK", async () => {
   release(Response.json({ issue: id, version: 1, acknowledged: "" }));
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(f.messages).toHaveLength(0);
+  expect(f.dispatches()).toBe(0);
   expect(f.logs.at(-1)).toEqual([
     "computah.debugshare.notice.completed",
     "cancelled",
   ]);
+});
+
+test("ACKed notice without retained association fails closed rather than creating another owner", async () => {
+  const f = fixture();
+  f.tracker.fetch = (async () =>
+    Response.json({
+      issue: id,
+      version: 1,
+      acknowledged: "2026-11-10T00:00:00Z",
+    })) as typeof fetch;
+  f.tracker.assigned = async () => false;
+  await expect(createReceiver(f.tracker).handle(event, f.ctx)).rejects.toThrow(
+    "acknowledged_bug_assignment_missing",
+  );
+  expect(f.dispatches()).toBe(0);
+  expect(f.messages).toHaveLength(0);
+});
+
+test("assignment failure prevents coordinator append and notice ACK", async () => {
+  const f = fixture();
+  f.tracker.dispatch = async () => {
+    throw new Error("bug_creation_uncertain");
+  };
+  await expect(createReceiver(f.tracker).handle(event, f.ctx)).rejects.toThrow(
+    "bug_creation_uncertain",
+  );
+  expect(f.messages).toHaveLength(0);
 });
 
 test("untrusted fields, unknown report and cancellation cannot manufacture a notice", async () => {

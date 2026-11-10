@@ -765,8 +765,20 @@ Worker notice lookup/ACK never logs report contents, raw remote errors, tokens o
 the secret capability URL. Local tests verify these outcomes, including typed HTTP
 denial and late cancelled reads; they are not live Axiom ingestion proof.
 
+Durable focused-child dispatch now precedes notice ACK. Local tests cover retry,
+reload, uncertain remote creation/prompt delivery, late cancelled creation and
+resolution/archival uncertainty. Coordinator lifecycle tools emit fixed-category
+`computah.debugshare.workflow.completed` outcomes for inspect, main-landing notice,
+recorded resolution, archive and failure. Child-idle subscriptions wake verified
+pending cleanup without polling; fixed `computah.debugshare.cleanup.wake_failed`
+diagnostics reveal lost wakes. No raw reports or credentials enter these events.
+Actual child creation/Space membership, terminal archive receipts and natural
+capture acceptance still need live proof after migration gates clear.
+
 This operational-tooling path does not yet use Computah's shared bounded logger
 or sanitized Axiom export. Registration/startup, Worker→Amp→lookup parent/link
 continuity and exporter cancellation/failure proof remain gaps; no competing
 exporter or complete-coverage claim is introduced. Worker outbox collection and
 natural DEBUGSHARE acceptance require separate migration-owner evidence.
+Background child-state callbacks/startup reconciliation also lack sanitized Axiom
+parent/link proof; managed tool/webhook events do not close that gap.

@@ -87,7 +87,13 @@ cores decline compaction until its retry boundary can enforce current source gra
 - **Dedicated bug coordinator receiver implemented locally:** the
   [operational Amp receiver](../integrations/debugshare-listener/README.md)
   accepts bounded report/version notices only after authenticated durable-notice
-  lookup and separately acknowledges a confirmed coordinator append. The selected
+  lookup, durably creates/reuses a focused Medium+Fast coordinator child before
+  ACK, and retains report→thread, main-landing and explicit verified-cleanup state.
+  Coordinator-only lifecycle tools verify actual main/trailer/Amp linkage and
+  acceptance/recurrence-transfer receipts before non-forcing archive; post-idle
+  cleanup is event-driven. Finite production checks follow verified adoption,
+  separate from webhook-only ingestion. Plugin-child Space membership and natural capture→thread acceptance
+  remain live gates. The selected
   project-owned tracker migration is `debug.raygen.dev`; Worker/API adoption,
   private credential configuration and natural capture acceptance are separate.
   The persistent coordinator routes conversational reports to focused workers;
