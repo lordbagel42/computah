@@ -63,6 +63,16 @@ Worker reconstructs public fields before retaining anything. Public spans add
 only optional `lifecycle` and `observedAt`; no raw IDs, incoming fields, errors,
 content or bearer tokens enter SSE, resume tokens or stored public state.
 
+Node producers batch starts/ends and refresh active observations every five seconds,
+with at most one request start per five seconds per process, including SDK flush
+and shutdown. HTTP/transport failures back off from 10 seconds to five minutes;
+recent records retry without replacing newer revisions. Observations older than
+25 seconds expire locally; settled Axiom history remains the fallback for lost
+terminal updates. This is bounded best-effort telemetry, not lossless delivery.
+The [producer budget](observability.md#live-public-timing-channel) includes queue,
+byte and freshness limits. More producers or process restarts consume additional
+budget; the cap does not cover visitor traffic or platform logging.
+
 Public live state is capped at 1,000 spans/15 minutes since last observation;
 merged responses additionally stop below 512 KiB, marking truncation and
 recomputing missing relationships. This prevents link-heavy snapshots from
@@ -86,6 +96,15 @@ EventSource while hidden/paused and reopen with a full reset. Demo remains
 explicitly synthetic, never an automatic fallback for unavailable production data.
 
 ## Deployment and activation
+
+**Operational hold, 2026-11-10:** the emergency-containment owner reports workers.dev
+and previews disabled and the custom-domain route detached, with Worker code,
+secrets, Durable Object namespace/data and Alchemy state preserved. Keep routing
+paused pending explicit restoration approval. The existing Alchemy definition
+enables workers.dev and declares the custom domain: ordinary deployment would
+restore routing, so it is not a safe way to publish only the producer fix.
+Backend/Slack must adopt the producer source separately through their host owner;
+source publication and local tests alone do not establish live request reduction.
 
 Alchemy 2.0.0-beta.85 Cloudflare stack lives in `apps/observatory/deploy`, with its
 own pinned workspace/lockfile. Install there with `pnpm install --frozen-lockfile`.

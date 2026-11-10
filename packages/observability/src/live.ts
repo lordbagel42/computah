@@ -15,6 +15,7 @@ export class LiveSpanProcessor implements SpanProcessor {
   private closed = false;
   private dropped = 0;
   private nextFlush = 0;
+  private failures = 0;
   constructor(
     private service: string,
     private safeName: (name: string) => string,
@@ -39,9 +40,10 @@ export class LiveSpanProcessor implements SpanProcessor {
       return;
     }
     this.timer = setInterval(() => {
+      if (this.closed) return;
       for (const item of this.active.values()) this.record(item, false);
       void this.flush();
-    }, 1000);
+    }, 5000);
     this.timer.unref();
   }
   onStart(span: Span, _parentContext: Context): void {
@@ -53,7 +55,6 @@ export class LiveSpanProcessor implements SpanProcessor {
     const item = { span: span as ReadableSpan, revision: 0 };
     this.active.set(span.spanContext().spanId, item);
     this.record(item, false);
-    void this.flush();
   }
   onEnd(span: ReadableSpan): void {
     if (!this.timer || this.closed) return;
@@ -64,7 +65,6 @@ export class LiveSpanProcessor implements SpanProcessor {
     item.span = span;
     this.active.delete(span.spanContext().spanId);
     this.record(item, true);
-    void this.flush();
   }
   private drop() {
     this.dropped = Math.min(1_000_000, this.dropped + 1);
@@ -110,11 +110,19 @@ export class LiveSpanProcessor implements SpanProcessor {
       observed_at: observed,
     });
   }
-  private flush(force = false): Promise<void> {
+  private flush(): Promise<void> {
     if (this.pending) return this.pending;
     if (!this.queued.size || !this.timer) return Promise.resolve();
-    if (!force && Date.now() < this.nextFlush) return Promise.resolve();
-    this.nextFlush = Date.now() + 200;
+    if (Date.now() < this.nextFlush) return Promise.resolve();
+    // Prune before selecting a batch: the receiver rejects observations older
+    // than 30 seconds. Leave room for the two-second transport deadline.
+    for (const [key, record] of this.queued) {
+      if (Date.now() - (record.observed_at as number) > 25_000) {
+        this.queued.delete(key);
+        this.drop();
+      }
+    }
+    if (!this.queued.size) return Promise.resolve();
     const batch: [string, Record<string, unknown>][] = [];
     let bytes = 256;
     for (const entry of this.queued) {
@@ -124,10 +132,16 @@ export class LiveSpanProcessor implements SpanProcessor {
       bytes += size;
     }
     for (const [key] of batch) this.queued.delete(key);
-    this.pending = (async () => {
+    this.pending = Promise.resolve().then(async () => {
       let ok = false;
       try {
         const transport = this.transport;
+        const body = JSON.stringify({
+          version: 1,
+          records: batch.map(([, record]) => record),
+          dropped: this.dropped,
+        });
+        this.nextFlush = Date.now() + 5000;
         const response = await transport(this.config.url as string, {
           method: "POST",
           headers: {
@@ -135,20 +149,28 @@ export class LiveSpanProcessor implements SpanProcessor {
             Authorization: `Bearer ${this.config.token}`,
             traceparent: `00-${batch[0][1].trace_id}-${batch[0][1].span_id}-01`,
           },
-          body: JSON.stringify({
-            version: 1,
-            records: batch.map(([, record]) => record),
-            dropped: this.dropped,
-          }),
+          body,
           signal: AbortSignal.timeout(2000),
           redirect: "error",
         });
         await response.body?.cancel();
         ok = response.ok;
-        if (!response.ok) this.drop();
       } catch {
-        this.drop();
+        // Delivery is best effort; retain recent records for bounded retry.
       } finally {
+        if (ok) {
+          this.failures = 0;
+        } else {
+          this.failures = Math.min(6, this.failures + 1);
+          this.nextFlush =
+            Date.now() + Math.min(300_000, 5000 * 2 ** this.failures);
+          for (const [key, record] of batch) {
+            // A newer end/active revision queued during transport wins.
+            if (this.queued.has(key)) continue;
+            if (this.queued.size >= 1024) this.drop();
+            else this.queued.set(key, record);
+          }
+        }
         runtimeLog("operation.completed", {
           operation: "export",
           outcome: ok ? "success" : "error",
@@ -157,14 +179,13 @@ export class LiveSpanProcessor implements SpanProcessor {
         });
         this.pending = undefined;
       }
-    })();
+    });
     return this.pending;
   }
   async forceFlush(): Promise<void> {
     await this.pending;
-    // At most eight bounded batches; no unbounded shutdown drain.
-    for (let index = 0; index < 8 && this.queued.size; index++)
-      await this.flush(true);
+    // SDK flush/shutdown must not bypass the process request budget or backoff.
+    await this.flush();
   }
   async shutdown(): Promise<void> {
     this.closed = true;

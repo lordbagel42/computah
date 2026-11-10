@@ -671,12 +671,35 @@ positive projection and HMAC mapping. This is separate from private content capt
 
 The live channel holds at most 512 active operations and 1,024 queued latest
 records, posts batches of at most 128/120 KiB with one request in flight, a two-second
-deadline and at most five attempts/second (outside bounded shutdown flushing).
-Active operations update once/second. Short operations can coalesce directly to
-their end state. Failed batches are dropped rather than blocking runtime work;
-later updates and settled Axiom history reconcile gaps. Shutdown closes admission
-and drains at most eight batches. Fixed outcome/count logs accompany delivery;
+deadline and at least five seconds between request starts per process, including
+SDK force-flush and shutdown. Starts/ends enqueue rather than sending immediately;
+active observations refresh every five seconds. Short operations can coalesce
+directly to their end state. At steady state this caps one continuously active
+producer at 17,280 requests/day (34,560 for two); process restarts reset the budget,
+and browser/API traffic is additional. Link-heavy or saturated queues can delay
+active updates beyond the UI's 15-second freshness threshold; the UI must retain
+its explicit unconfirmed state rather than invent freshness.
+
+Failures retain recent records without overwriting a newer queued revision and
+back off 10, 20, 40, 80, 160, then 300 seconds between attempts, capped at 300
+seconds until success resets the cadence. Observations older than 25 seconds are
+dropped before sending, leaving headroom inside the receiver's 30-second window.
+Active spans refresh during backoff; expired terminal observations rely on settled
+Axiom history, not a lossless retry promise. Shutdown closes admission and attempts
+at most one eligible batch; the cooldown is never bypassed, and queued remainder
+is discarded. The settled OTLP export is unchanged. Fixed outcome/count logs accompany delivery;
 `computah.logs.export` is excluded from this channel to avoid a logging feedback loop.
+
+Local request-budget proof on 2026-11-10 ran the same ten-minute virtual-time
+workload (6,000 short spans plus one active span) before/after: 3,001 → 120
+healthy requests, with all 6,000 short terminal records delivered, and 3,001 → six
+attempts during sustained HTTP 503. Native fetch against a loopback receiver using
+the real public projection delivered all 529 completed spans in 11 requests over
+61 seconds. A parallel hung-fetch/503/recovery run aborted the hung request and
+used five requests; active-to-error identity, declared parent/links and positive
+projection survived recovery. Expired short terminal records were intentionally
+lost during outage. These are local component/receiver proofs, not Cloudflare
+billing attribution, production adoption or live Axiom ingestion receipts.
 
 Initial live delivery enabled on backend and Slack at checked source `2477de6` on
 2026-11-08 (backend ready 10:01:36.356Z; Slack ready 10:02:39Z). The actual public
