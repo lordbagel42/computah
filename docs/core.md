@@ -393,7 +393,12 @@ Current grant checks remain independent of that immutable fingerprint.
 
 Pi1.5 generation hooks swallow errors. `source-models.ts` therefore requires a
 fresh native invocation-signal authority check at the actual Models boundary and
-each actual HTTP attempt, rather than trusting a hook throw. Fenced requests use
+each actual HTTP attempt, rather than trusting a hook throw. With that wrapper
+installed, the hook registers the fresh check and prepares evidence without an
+additional provider verification: the Models boundary rereads committed binding
+and lineage after all hooks and before underlying model invocation. Without the
+wrapper, the hook retains its existing check before private-evidence injection.
+No successful verification is cached or shared across boundaries. Fenced requests use
 SSE because WebSocket retries bypass injected fetch. Codex invokes its payload
 hook only once, so that hook alone cannot protect its transport retry loop. The
 same transport fence checks queued Sentinel reviews against their frozen grants.

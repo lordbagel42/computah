@@ -210,6 +210,14 @@ a fixed latency SLO or separate human presentation acceptance.
   independent provider probes after account validation and await both even on
   failure, keeping work inside the existing authority operation lifetime. No
   verification result is cached and native generation/retry/release fences remain.
+  Source-wrapped generation omits the duplicate hook-level verification, retaining
+  the later fresh Models-boundary authority span and its linked completion log.
+  Local native/faux generation proof observes one admission plus one generation
+  verification before model invocation (previously three checks total), unchanged
+  authorized evidence, and sanitized authority spans/linked logs including denial.
+  This removes work, not its instrumentation. Unwrapped injection checks and
+  payload/HTTP-attempt/tool/release fences are unchanged; no cancellation or retry
+  coverage beyond the existing boundary checks is implied.
   These local checks are not post-change production latency acceptance.
   The Slack formatting regression check exercises the production executable with
   synthetic Socket/core/Web API boundaries: JSON-decoded multiline mrkdwn reaches

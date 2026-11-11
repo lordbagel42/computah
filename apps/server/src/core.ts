@@ -602,7 +602,11 @@ export function createCore(options: CoreOptions) {
             api.conversationId,
             context,
           );
-          await sourceCheck(binding.scope, lineage?.grants ?? []);
+          // The installed Models boundary rereads committed lineage and checks
+          // authority after all hooks, before invoking the underlying provider.
+          // Keep the injection fence when that fail-closed wrapper is absent.
+          if (!sourceBoundary)
+            await sourceCheck(binding.scope, lineage?.grants ?? []);
           const inputs =
             (await api.snapshot(LiveDoc, api.conversationId, context))?.run
               ?.inputs ?? [];
